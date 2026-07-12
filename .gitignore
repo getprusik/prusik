@@ -24,8 +24,8 @@ worktrees/
 # v0.17.0: brief templates per Type ship under artifacts/briefs/ — NOT
 # operator-authored briefs/. Explicitly include these template files
 # despite the `briefs/` ignore above.
-!kit/templates/artifacts/briefs/
-!kit/templates/artifacts/briefs/*.md
+!prusik/templates/artifacts/briefs/
+!prusik/templates/artifacts/briefs/*.md
 
 # Example project — only README + briefs/ scaffolding are tracked
 examples/*/.claude/
