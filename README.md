@@ -1,6 +1,6 @@
 # Prusik
 
-[![PyPI version](https://img.shields.io/pypi/v/prusik)](https://pypi.org/project/prusik/)
+[![PyPI version](https://img.shields.io/pypi/v/prusik)](https://pypi.org/project/prusik/) [![Python versions](https://img.shields.io/pypi/pyversions/prusik)](https://pypi.org/project/prusik/) [![License](https://img.shields.io/pypi/l/prusik)](https://github.com/getprusik/prusik/blob/main/LICENSE)
 
 An iron-clad autonomous harness for Claude Code agent teams. Phase gates, pure-code triage, deterministic discovery, schema-enforced artifacts, and a ledger that closes the feedback loop — so quality depends on prusik, not on anyone remembering the playbook.
 
