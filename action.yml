@@ -1,0 +1,148 @@
+name: "Prusik PR check + comment"
+description: >
+  Run a prusik check (prove / scan / verify-loop / findings) and post the
+  result as a GitHub PR comment. Decision-support for the reviewer by default —
+  opt in to fail-on-findings to make it a gate. With source=prove it's the
+  anti-fabrication gate: prove the test/lint/type command actually ran clean.
+
+inputs:
+  source:
+    description: >
+      Which prusik check to run: "prove" (anti-fabrication gate — prove the
+      `command` actually ran clean), "scan", "verify-loop", "findings", or
+      "file" to format a pre-generated JSON file at `json-path".
+    required: false
+    default: "scan"
+  command:
+    description: >
+      Test/lint/type command to prove (source=prove), e.g. "pytest -q".
+    required: false
+    default: ""
+  kind:
+    description: "prove kind: tests | lint | types (source=prove)."
+    required: false
+    default: "tests"
+  min:
+    description: "Minimum executed tests required (source=prove, kind=tests)."
+    required: false
+    default: "1"
+  path:
+    description: "Directory to scan (source=scan). Defaults to the repo root."
+    required: false
+    default: "."
+  feature:
+    description: "Feature slug (required when source=verify-loop)."
+    required: false
+    default: ""
+  json-path:
+    description: "Path to a pre-generated findings JSON (used when source=file)."
+    required: false
+    default: ""
+  fail-on-findings:
+    description: >
+      When "true", the step exits non-zero if the check reports a problem
+      (scan flags / unclosed verify-loop / prove NOT PROVEN). Default "false"
+      keeps it as non-gating signal. For source=prove you almost always want
+      "true" — the point is to gate on whether the command actually ran.
+    required: false
+    default: "false"
+  pr-number:
+    description: "PR number to comment on. Defaults to the triggering PR."
+    required: false
+    default: ${{ github.event.pull_request.number }}
+  python-version:
+    description: "Python version to install prusik under."
+    required: false
+    default: "3.12"
+  github-token:
+    description: "Token for `gh pr comment`. Defaults to the workflow token."
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install prusik
+      shell: bash
+      run: pip install "$GITHUB_ACTION_PATH"
+
+    - name: Generate findings JSON
+      id: gen
+      shell: bash
+      run: |
+        out="${RUNNER_TEMP}/prusik-findings.json"
+        rc=0
+        case "${{ inputs.source }}" in
+          prove)
+            if [ -z "${{ inputs.command }}" ]; then
+              echo "::error::source=prove requires the 'command' input (e.g. 'pytest -q')"
+              exit 2
+            fi
+            # raw command output → stderr (visible in logs); pure JSON → $out.
+            # rc=1 means NOT PROVEN; surfaced via fail-on-findings as a gate.
+            prusik prove --kind "${{ inputs.kind }}" --min "${{ inputs.min }}" --json \
+              -- ${{ inputs.command }} > "$out" || rc=$?
+            ;;
+          scan)
+            prusik scan "${{ inputs.path }}" --json > "$out" || rc=$?
+            ;;
+          verify-loop)
+            if [ -z "${{ inputs.feature }}" ]; then
+              echo "::error::source=verify-loop requires the 'feature' input"
+              exit 2
+            fi
+            prusik verify-loop check --feature "${{ inputs.feature }}" --json > "$out" || rc=$?
+            ;;
+          findings)
+            prusik findings > "$out" || rc=$?
+            ;;
+          file)
+            if [ ! -f "${{ inputs.json-path }}" ]; then
+              echo "::error::source=file but json-path '${{ inputs.json-path }}' not found"
+              exit 2
+            fi
+            cp "${{ inputs.json-path }}" "$out"
+            ;;
+          *)
+            echo "::error::unknown source '${{ inputs.source }}'"
+            exit 2
+            ;;
+        esac
+        echo "json=$out" >> "$GITHUB_OUTPUT"
+        echo "rc=$rc" >> "$GITHUB_OUTPUT"
+
+    - name: Format comment
+      id: fmt
+      shell: bash
+      run: |
+        body="${RUNNER_TEMP}/prusik-comment.md"
+        prusik ci-comment "${{ steps.gen.outputs.json }}" > "$body"
+        echo "body=$body" >> "$GITHUB_OUTPUT"
+
+    - name: Post PR comment
+      if: ${{ inputs.pr-number != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        body="${{ steps.fmt.outputs.body }}"
+        # Edit our prior comment when present so re-runs don't spam the thread;
+        # fall back to creating one on the first run / older gh versions.
+        gh pr comment "${{ inputs.pr-number }}" --body-file "$body" --edit-last 2>/dev/null \
+          || gh pr comment "${{ inputs.pr-number }}" --body-file "$body"
+
+    - name: Enforce gate
+      if: ${{ inputs.fail-on-findings == 'true' }}
+      shell: bash
+      run: |
+        rc="${{ steps.gen.outputs.rc }}"
+        if [ "$rc" != "0" ]; then
+          echo "::error::fail-on-findings is set and the check reported findings (rc=$rc)"
+          exit 1
+        fi
+        echo "No findings — gate passes."

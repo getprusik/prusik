@@ -1,0 +1,52 @@
+# Example workflow: post prusik findings as a PR comment.
+#
+# Drop this into your repo at `.github/workflows/prusik.yml`. It runs
+# `prusik scan` on every PR and posts the flags as a comment — decision-support
+# for the reviewer, not a gate. Set `fail-on-findings: "true"` to make it block.
+#
+# The action lives in the prusik repo; pin it to a tag (e.g. @v0.29.1) in real use.
+
+name: prusik
+
+on:
+  pull_request:
+
+permissions:
+  contents: read        # checkout
+  pull-requests: write  # post the comment
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Anti-fabrication gate: prove the test suite ACTUALLY ran clean
+      # (catches "tests pass ✅" when nothing executed). fail-on-findings:
+      # "true" makes a NOT-PROVEN result fail the check.
+      - uses: getprusik/prusik@main
+        with:
+          source: prove
+          command: pytest -q
+          fail-on-findings: "true"
+
+      # scan variant — decision-support binding/test-reach flags as a comment:
+      - uses: getprusik/prusik@main
+        with:
+          source: scan
+          path: .
+          fail-on-findings: "false"
+
+      # verify-loop variant — needs a recorded T0 checkpoint for the feature:
+      #
+      # - uses: getprusik/prusik@main
+      #   with:
+      #     source: verify-loop
+      #     feature: my-feature-slug
+      #
+      # pre-generated JSON variant — format a file your own step produced:
+      #
+      # - uses: getprusik/prusik@main
+      #   with:
+      #     source: file
+      #     json-path: out/findings.json

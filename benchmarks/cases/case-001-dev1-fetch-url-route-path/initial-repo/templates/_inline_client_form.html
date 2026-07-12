@@ -1,0 +1,12 @@
+<div id="inline-client-form">
+  <button type="button" hx-get="/clients/search">Search</button>
+</div>
+
+<script>
+  document.querySelector('#inline-client-form button')
+    .addEventListener('click', () => {
+      fetch('/clients/search?q=' + encodeURIComponent('demo'))
+        .then(r => r.json())
+        .then(data => console.log(data));
+    });
+</script>

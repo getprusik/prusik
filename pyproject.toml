@@ -1,0 +1,111 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prusik"
+# Single source of truth = prusik/__init__.py __version__ (read dynamically below)
+# so the packaged version can never drift from the code again (was static 0.193.0
+# while the code was 0.196.0 — fixed for PyPI publish hygiene).
+dynamic = ["version"]
+description = "Iron-clad autonomous harness for Claude Code agent teams — phase gates, scoping, triage, evidence, binding-mismatch detection, and closed-loop verification."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Rajasekhar Yakkali" }]
+keywords = ["claude-code", "ai-agents", "autonomous", "sdlc", "agent-orchestration",
+            "code-review", "llm", "verification"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Build Tools",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "PyYAML>=6.0",
+    "ruamel.yaml>=0.18",
+]
+
+[project.urls]
+Repository = "https://github.com/getprusik/prusik"
+Changelog = "https://github.com/getprusik/prusik/blob/main/CHANGELOG.md"
+
+[project.scripts]
+prusik = "prusik.__main__:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+version = { attr = "prusik.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["prusik*"]
+
+[tool.setuptools.package-data]
+prusik = [
+    "templates/**/*",
+    "templates/.claude/**/*",
+    "templates/.claude/*",
+    "templates/**/.*",
+    "templates/.*",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.14",
+    "mypy>=1.19",
+    "types-PyYAML>=6.0",
+    "pytest-cov>=5.0",
+]
+
+# Test collection. prusik's own suite lives in tests/. benchmarks/ and
+# examples/ hold SAMPLE-REPO data — fake projects used as detector/eval
+# fixtures — whose `test_*.py` files reference fixtures (e.g. a Flask/FastAPI
+# `client`) that exist only inside those fake repos. They must NEVER be
+# collected as prusik tests. `testpaths` makes bare `pytest` target tests/;
+# `norecursedirs` keeps `pytest .` (root recursion) clean too — so the suite
+# is functional from any entry point, not just the maintainer's habit.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["benchmarks", "examples", "build", "dist", ".venv*", "*.egg-info"]
+
+# Lint discipline for prusik itself. Principle: enforce correctness and
+# dead-code rules (the F-series: unused imports/vars/redefinitions catch real
+# bugs); allow stylistic latitude (line length, one-line compound statements,
+# co-located lazy imports) that is a deliberate convention in this codebase.
+# Dogfooded: this repo's own sprint-config project_policy runs `ruff check`.
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E501",  # line length — many pre-existing long strings; not enforced
+    "E701",  # multiple statements (colon) — allowed: `if x: return`
+    "E702",  # multiple statements (semicolon) — allowed in test teardowns
+    "E402",  # module import not at top — intentional co-located/lazy imports
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Split test files re-import shared helpers via `from ._common import *`
+# (wildcard re-export), and set sys.path before importing prusik.
+"tests/**" = ["F403", "F405", "F811"]
+"tests/_common.py" = ["F401"]
+
+# Type discipline (gradual). Default mypy — does not demand annotations on
+# every def, but catches None-safety / wrong-type bugs in annotated code.
+# Source only (prusik/); tests are loosely typed by design. Dogfooded:
+# project_policy + tests/test_lint.py enforce mypy-clean fail-closed.
+[tool.mypy]
+python_version = "3.10"
+files = ["prusik"]

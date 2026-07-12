@@ -1,0 +1,21 @@
+# Source-distribution contents. The wheel ships `prusik*` only (see
+# pyproject [tool.setuptools.packages.find]); this controls the sdist.
+
+graft prusik/templates
+recursive-include prusik/templates *
+recursive-include prusik/templates .*
+include LICENSE NOTICE README.md CHANGELOG.md
+
+# NEVER publish internal / HQ / strategy material — explicit defense-in-depth
+# beyond .gitignore, so these can never reach PyPI even if ignore rules change:
+#   strategy/   — internal product-build strategy (operator: never even commit)
+#   hq/         — HQ-only fleet/feedback/metrics/proof-card code (boundary thesis)
+#   benchmarks/ docs/  — eval fixtures + design docs, not shipped product
+prune strategy
+prune hq
+prune benchmarks
+prune docs
+prune examples
+
+global-exclude __pycache__
+global-exclude *.py[cod]

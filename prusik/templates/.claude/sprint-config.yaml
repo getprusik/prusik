@@ -1,0 +1,377 @@
+version: 1
+kit_version: "0.1.0"
+
+# v0.82.0 (opt-in) — require a PROVEN full test suite (green) at building exit,
+# not just a builder's own new tests + type-check. Catches a structural change's
+# regressions at the SOURCE in seconds, instead of a phase later at the reviewing
+# sentinel (field finding #14). Builders run `prusik prove --kind tests -- <full cmd>`;
+# the gate then blocks building→reviewing until a green full-suite proof is
+# recorded. A learned baseline (.sprint/test-suite-size.json — the largest green
+# tests count seen) tells a real full-suite proof from a just-my-new-tests subset.
+# v0.143.0 (fb-90cfcfa8b918): the SAME check also runs at the INTEGRATION gate
+# (reviewing→integrating) — a touched-set green at reviewing is false confidence (one
+# sprint: 133 touched tests passed, the full suite caught 24 fan-out regressions), so
+# integration requires a FRESH full-suite prove recorded that reviewing phase.
+# Off by default: best for a full-worktree build model where a builder can run the
+# whole suite; a partial-mirror model may prefer the reviewing sentinel as the
+# authoritative full-suite gate.
+# require_full_suite_at_build: true
+
+# v0.96.0 (field finding #1) — blast-radius prediction becomes a reviewing GATE, not
+# ignored prose. At plan time prusik computes which tests outside the plan's
+# module set reference a contract the sprint changes (`prusik plan-reach`); at
+# reviewing, `prusik blast-verify <feature>` flags any that were never updated —
+# a predicted-regressing test left untouched may pass VACUOUSLY (a guard added to
+# a route it exercises invalidates its old assumption). Off by default (advisory);
+# set true to HARD-BLOCK reviewing→integrating until every prediction is consumed.
+# require_blast_radius_verified: true
+
+# v0.194.0/v0.196.0 — the self-learning loop. The out-of-diff recall detectors
+# (absence/narrative/ui-coverage) ship ADVISORY (rc 0 even when they flag). You can
+# promote one to GATING — its check then returns rc≠0 wherever it runs — by listing
+# it below, or with `prusik calibrate apply <detector>`. This is an OPERATOR decision
+# (you own the false-block risk), informed by `prusik trust-report` / the recall
+# instrument: the recall detectors are rare-by-design with asymmetric precision, so
+# the cross-fleet AUTO-promotion loop (`python -m hq.calibrate`, HQ-only) deliberately
+# does NOT auto-promote them — it stays dormant until a high-volume tunable detector
+# exists. Tightening-only either way: never disables a gate, never tunes a preventive
+# control. The actuator also writes a machine-owned `.sprint/calibration.json`
+# overlay; this list is the committed channel (they're UNIONed). Reserved:
+# delta_detector stays human-adjudicated PER-FLAG (never a blanket gate).
+# gate_on:
+#   - absence_detector
+
+# v0.86.0 — no-skew guarantee (ON by default). When the prusik PACKAGE is upgraded
+# but this project's templates weren't `prusik refresh`ed, the engine and the
+# `.claude/agents/*` drift silently. `prusik gate sprint-start` now auto-syncs the
+# templates to the installed engine so a sprint can NEVER start on stale agents —
+# nothing to remember. Set false only if you manage templates by hand.
+# auto_refresh_on_skew: false
+
+# v0.85.0 (field finding #18) — test markers DEFERRED out of the pre-integration runs
+# (the building full-suite proof + the reviewing regression-sentinel). A browser
+# smoke that drives the LIVE server can't pass pre-integration: the sprint code
+# lives in worktrees/* while the running server is still the OLD binary, so a new
+# route's smoke fails with a REAL assertion error — a false-FAIL the sentinel
+# can't tell from a regression (the mirror of the server-DOWN false-PASS `prove`
+# closed). These tests are gated at SPRINT-COMPLETE instead, by their browser-
+# level criteria.yaml verify_command (prove-wrapped, run after the server is
+# restarted on integrated code). Default covers the common marker; add yours.
+reviewing_defer_markers:
+  - browser_smoke      # @pytest.mark.browser_smoke / -m browser_smoke
+
+# v0.125.0 (fb-91c75e51c214) — a fresh git worktree does NOT inherit
+# gitignored files. If your project keeps real secrets in a gitignored .env that
+# tests read, secret-dependent tests FALSE-RED inside a worktree (the keys are
+# invisible there) and those false reds mask the 1 real failure the full-suite
+# gate exists to catch. `prusik worktree-setup` always WARNS about root .env*
+# files missing from the worktree; list the ones to auto-link below (symlinked to
+# the canonical root file — no secret copy on disk) to remove the friction. Empty
+# = warn only (prusik never surfaces secrets into a worktree unless you ask).
+# worktree_env_files:
+#   - .env
+#   - ".env.*.local"
+
+# Global escape hatch: paths writable regardless of active phase.
+# Use for meta-artifacts that span multiple sprints, cross-session
+# communication channels, or agent-local state that isn't part of
+# the per-feature project model.
+# Patterns support ~ expansion and $VAR for paths outside project root.
+# Checked BEFORE the project-root containment rule, so absolute paths work.
+always_writable:
+  - "reports/kit-trial/**"         # trial journals, retros across sprints
+  - ".kit-trial/**"                # alternate location for trial scaffolding
+  - "~/.claude/prusik/bridges/**"     # cross-session bridge files (prusik-author ↔ live-cc)
+  - "~/.claude/projects/**"        # Claude Code's own memory store (auto-memory writes)
+  - ".sprint/status/**"            # v0.6.1: per-role heartbeat files. Roles emit
+                                    # heartbeats from any phase; gating per-phase
+                                    # would surface false `gate_blocked` events
+                                    # in the ledger and block long-running roles.
+
+# Phase FSM.
+# Each phase declares writable patterns (enforced by the PreToolUse hook),
+# exit artifacts (enforced by the Stop hook and /sprint-advance), and an
+# optional token budget.
+phases:
+  - name: scoping
+    writable:
+      - "design/{feature}/scope.md"
+      - "design/{feature}/trivial.md"
+      - "reports/{feature}/scope-approval.txt"
+    exit_artifacts:
+      - path: "design/{feature}/scope.md"
+        validator: scope_schema
+      - path: "reports/{feature}/scope-approval.txt"
+        must_contain: "APPROVED"
+    # v0.11.0 #2 — proportional-ceremony lane. Used ONLY when the sprint
+    # was started with `--trivial` (brief Type guarded to bug_fix/doc/
+    # config/test/chore). Collapses scope.md + scope-critic into one
+    # lightweight artifact; the orchestrator then advances scoping →
+    # solo_execute (skipping triage + planning + plan-critic). The
+    # reviewing correctness floor (regression + conventions PASS) and the
+    # brief-critic pre-sprint gate are NOT skipped.
+    trivial_exit_artifacts:
+      - path: "design/{feature}/trivial.md"
+        required_sections:
+          - "## Change"
+          - "## How verified"
+
+  - name: triage
+    writable:
+      - "decisions/{feature}.json"
+    exit_artifacts:
+      - path: "decisions/{feature}.json"
+        validator: triage_decision
+
+  - name: planning
+    writable:
+      - "design/{feature}/plan.md"
+      - "reports/{feature}/plan-approval.txt"
+    exit_artifacts:
+      - path: "design/{feature}/plan.md"
+        required_sections:
+          - "## Modules touched"
+          - "## Test plan"
+          - "## Risks"
+      - path: "reports/{feature}/plan-approval.txt"
+        must_contain: "APPROVED"
+    budget_tokens: 150000
+
+  - name: solo_execute
+    writable:
+      - "worktrees/solo/**"
+    deny_commands:
+      - "git push"
+      - "git merge"
+    budget_tokens: 400000
+
+  - name: building
+    writable:
+      - "worktrees/*/**"
+    deny_commands:
+      - "git push"
+      - "git merge"
+    budget_tokens: 1000000
+
+  - name: reviewing
+    writable:
+      - "reports/{feature}/**"
+    exit_artifacts:
+      - path: "reports/{feature}/regression.txt"
+        must_contain: "PASS"
+      # v0.12.0 (F) — a PASS token is honored only against prusik-captured
+      # execution evidence (real exit + executed count from the tool's own
+      # output, bound to the worktree hash). Closes the false-clean where a
+      # gate emits PASS while the gated work silently did not run. The
+      # reviewer produces this via `prusik gate capture` (see role-spec); it is
+      # NOT agent-writable narration. Carry-forward-coherent (v0.11.0 #1): a
+      # verdict carried at an unchanged hash satisfies it without re-run.
+      - path: "reports/{feature}/regression.evidence.json"
+        validator: execution_evidence
+      - path: "reports/{feature}/conventions.txt"
+        must_contain: "PASS"
+      - path: "reports/{feature}/conventions.evidence.json"
+        validator: execution_evidence
+    budget_tokens: 300000
+
+  - name: integrating
+    writable:
+      - "design/{feature}/retro.md"
+      - "**"  # integrator has broad write; controlled by role permissions
+    exit_artifacts:
+      - path: "design/{feature}/retro.md"
+        required_sections:
+          - "## What happened"
+          - "## What surprised"
+          - "## Updates to CLAUDE.md"
+
+# Pre-sprint gates — run BEFORE the sprint enters scoping.
+# Engine checks artifacts; /sprint-start command tells Claude which role to invoke.
+pre_sprint_gates:
+  brief_critique:
+    enabled: true
+    require_artifact: "reports/{feature}/brief-critique.txt"
+    must_contain: "PASS"
+    hint: "invoke brief-critic role first; it produces reports/{feature}/brief-critique.txt"
+
+  map_freshness:
+    enabled: true
+    check: map_freshness
+    # Two-layer staleness. (1) GLOBAL drift: total % of modules added/removed vs the
+    # map-fingerprint exceeds max_drift_pct → stale. (2) FEATURE-SCOPED drift (An adopter
+    # fb-76ff51b273de): a drifted module whose path matches the FEATURE's subsystem
+    # (derived from the slug + brief Goal) fails REGARDLESS of the global % — a single
+    # subsystem's change dilutes below the global threshold, yet scoping would read a
+    # stale map of exactly what it scopes. Feature-scoped drift compares the fingerprint
+    # against a FRESH module walk, so a dependency merged after the map was generated is
+    # visible even when the cached dep-graph predates it.
+    max_drift_pct: 30
+    hint: "run `prusik discovery all`, re-invoke cartographer, then `prusik discovery fingerprint-map`"
+    scoped_hint: "the feature's own subsystem changed since the map — re-run cartographer, then `prusik discovery fingerprint-map`"
+
+  # Opt-in: pair with a top-level `behavior_regression` block (see below).
+  # Fails sprint-start if behavior_regression.enabled is true but the
+  # declared test directory is empty — prevents the carve-out from rotting
+  # silently. No-op when behavior_regression is absent / disabled.
+  # behavior_regression:
+  #   enabled: true
+  #   check: behavior_regression
+  #   test_dir: "tests/behavior"
+  #   pattern: "test_*.py"
+  #   hint: "add at least one test under tests/behavior/ or disable behavior_regression"
+
+# Behavior-regression suite (opt-in).
+# When enabled, regression-sentinel runs `command` from project root during
+# the reviewing phase, in addition to the project's general test command.
+# Failure of either fails the regression check. Use for user-acceptance-level
+# scenarios that unit tests systematically miss (destructive-on-populated
+# paths, default-flag handling, golden snapshots).
+#
+# behavior_regression:
+#   enabled: true
+#   command: "pytest tests/behavior/ -v"
+#   description: "Golden-snapshot behavior-regression suite."
+
+# Project-policy pipeline (v0.8.0, opt-in).
+# When enabled, regression-sentinel runs the project's commit-time / push-time
+# enforcement pipeline as part of the reviewing phase. Prusik doesn't try to
+# replicate this layer (multi-tenant isolation hooks, secret detection,
+# schema-migration linkage, license compliance, custom lint rules, etc.) —
+# it composes with it. This closes the false-confidence gap where a sprint
+# passes prusik's gates but fails the project's pre-commit/pre-push hooks when
+# the operator tries to ship.
+#
+# project_policy:
+#   enabled: true
+#   command: "npm run lint-staged -- --all-files"     # or:
+#   # command: "pre-commit run --all-files"
+#   description: "Commit-time policy enforcement."
+
+# Triage heuristics — pure-code routing.
+# Rules are AND-matched; first match wins. `else` routes the remainder.
+triage:
+  heuristics:
+    auto_solo_if:
+      - type: bug_fix
+      - type: doc
+      - type: config
+      - type: test       # v0.6.1: test-only sprints (coverage, flake fixes)
+      - type: chore      # v0.6.1: operational chores (CI, deps, formatting)
+      - size: S
+        domains_count: 1
+    auto_team_if:
+      - size: L
+      - size: XL
+      - type: new_feature
+        domains_count: ">=2"
+      - type: migration
+    else: solo
+
+# Permission tiers (reference only — enforcement lives in settings.json
+# matcher rules and the writable/deny_bash declarations above).
+permissions:
+  tiers:
+    readonly:
+      deny: ["Write", "Edit", "NotebookEdit", "Bash(git push *)", "Bash(git merge *)",
+             "Bash(rm -rf *)"]
+    scoped_writer:
+      allow_write_patterns: ["worktrees/{teammate}/**"]
+      deny: ["Bash(git push *)", "Bash(git merge *)"]
+    integrator:
+      allow: ["Bash(git merge *)", "Bash(git push *)"]
+
+budgets:
+  total_tokens: 3000000
+
+watchdog:
+  heartbeat_stale_min: 30
+  max_phase_hours: 24
+  # v0.49.0 — convergence-stall: pause + escalate to a human when a feature
+  # rewinds this many times without converging (the canonical thrash was 8
+  # rewinds across 2 sprints, no remediation). The Nth+1 rewind fails closed:
+  # the sprint is PAUSED and a `convergence_stall` event recorded — it does NOT
+  # churn autonomously. The budget RESETS on a fresh sprint or after `prusik
+  # resume`, so a human who reviews and resumes gets a clean window. Set to 0
+  # to disable (an explicit opt-out, not a silent one).
+  max_rewinds_before_escalation: 4
+
+# Issue tracker config. Ingested by `prusik issues sync`. Safe defaults = no-op.
+# For GitHub, install `gh` CLI and run `gh auth login`; no token in config.
+# For Linear, implement prusik/issue_plugins/linear.py with LINEAR_API_KEY.
+issues:
+  tracker: none            # one of: none, github, linear
+  repo: ""                 # e.g. "owner/repo" (github only)
+  filter: ""               # e.g. "is:open" (tracker-specific)
+  limit: 500
+
+conventions:
+  packs: []
+
+# brief-lint: extend the known-strings set with project-specific references.
+# The default known set comes from dep-graph paths + scope bullets + issues
+# db titles + existing brief slugs. Use this when your project's IDs live
+# somewhere non-standard (a Python `BACKLOG` list, an ADR markdown tree,
+# etc.) and brief-lint is flagging real IDs as near-misses.
+#
+# Two source types:
+#
+#   path_grep (default): reads a file or walks a directory, regex-extracts tokens.
+#     - path: scripts/build_backlog.py
+#       grep: "BL-\\d+"
+#     - path: design/adr/
+#       grep: "ADR-\\d+"
+#
+#   command: runs a shell command, regex-extracts tokens from stdout.
+#     Use for position-derived IDs that aren't literal in any file —
+#     e.g. generator loops that compute `f"BL-{i:03d}"` at build time.
+#     - type: command
+#       command: "python -c 'from scripts.build_backlog import BACKLOG; [print(f\"BL-{i:03d}\") for i in range(1, len(BACKLOG)+1)]'"
+#       grep: "BL-\\d+"    # optional; applied to stdout
+#
+# Per-brief escape hatch for legitimately new IDs this brief creates
+# (e.g., BL-085 in a backlog-add sprint): add a section to the brief:
+#     ## Proposed new IDs
+#     - BL-085
+#     - BL-086
+# brief-lint admits those tokens to the known set for THAT brief only.
+brief_lint:
+  extra_known_sources: []
+
+# roadmap: opt-in milestone governance (v0.5.0+).
+# When configured, scope.md must declare a `## Milestone` section matching
+# `milestone_pattern`. Triage persists the milestone in decisions/<feature>.json
+# so the ledger + digest can surface milestone progress. Set either `source`
+# (pointer to a human-readable roadmap doc) or `milestone_pattern` (regex) to
+# enable; both optional individually.
+#
+# v0.5 ships DECLARE-ONLY. Order enforcement (blocking a sprint whose
+# milestone predecessor hasn't hit acceptance) is a v0.6+ consideration —
+# we want to observe whether declaration is sufficient governance before
+# adding enforcement.
+#
+# Example:
+# roadmap:
+#   source: design/roadmap.md
+#   milestone_pattern: "M\\d+\\.S\\d+"   # e.g. M1.S1, M2.S3
+roadmap:
+  source: ""
+  milestone_pattern: ""
+
+# feedback delivery (v0.122.0, opt-in). `prusik feedback` always writes findings
+# LOCALLY to .sprint/feedback.jsonl; sharing with HQ is otherwise a deliberate
+# `prusik report --export` you run yourself (telemetry is never auto-transmitted).
+#
+#   feedback_sink — a drop directory. When set, a filed finding is ALSO delivered
+#   here the instant it's filed (anonymized: identity hashed, `detail`+`feature`
+#   stay local), instead of waiting for the next export. Filing a finding IS the
+#   consent to send it, so this is safe to enable; off by default.
+# feedback_sink: "~/hq-drop"            # absolute or ~-expanded path
+#
+#   feedback_include_detail — the TRUST opt-in. By default the verbatim `detail`
+#   (pasted tool output → may carry paths/secrets) stays local; only `has_detail:
+#   true` travels, and HQ pulls the repro on a deliberate share. Turn this ON only
+#   if you've decided to trust HQ with verbatim repro — then `detail` rides both
+#   the export and the sink, giving HQ the fix substrate with no round-trip.
+#   (`feature` stays dropped regardless — product intent is never needed to fix a
+#   prusik finding.)
+# feedback_include_detail: true

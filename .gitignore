@@ -1,0 +1,58 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+.venv/
+venv/
+
+# Kit runtime state
+.sprint/
+!.sprint/.gitkeep
+
+# Self-host sprint artifacts (if kit-on-kit sprints run)
+briefs/
+design/
+reports/
+decisions/
+worktrees/
+# v0.17.0: brief templates per Type ship under artifacts/briefs/ — NOT
+# operator-authored briefs/. Explicitly include these template files
+# despite the `briefs/` ignore above.
+!kit/templates/artifacts/briefs/
+!kit/templates/artifacts/briefs/*.md
+
+# Example project — only README + briefs/ scaffolding are tracked
+examples/*/.claude/
+examples/*/.sprint/
+examples/*/decisions/
+examples/*/design/
+examples/*/reports/
+examples/*/worktrees/
+examples/*/briefs/form-*.md
+
+# Local overrides
+.claude/settings.local.json
+
+# Session scratch — operator's local-only carry-forward notes
+SESSION-CARRY-FORWARD.md
+
+# Internal product-build strategy — NOT part of the shipped product or codebase
+strategy/
+
+# HQ-only operator state — machine-specific product registry + collected exports
+hq/products.local.json
+hq/inbox/
+
+# field-ts corpus: multi-MB raw logs kept local (small shapes ARE committed)
+benchmarks/cases/field-ts/02-vitest-multi.log
+benchmarks/cases/field-ts/03-tsc-r-real-errors.log
+benchmarks/cases/field-ts/07-eslint-json-filepath188.log
+
+# OS
+.DS_Store

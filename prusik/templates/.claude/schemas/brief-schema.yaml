@@ -1,0 +1,50 @@
+version: 1
+name: brief
+description: >
+  Intent contract authored by a human. Five fields maximum.
+  Scope (modules, size, domains, related work) is derived, not declared.
+
+required_fields:
+  goal:
+    section: "## Goal"
+    type: text
+    min_words: 5
+    max_words: 80
+  success:
+    section: "## Success criteria"
+    type: text
+    min_words: 4
+    must_contain_any: ["within", "no more than", "<", ">", "at least", "under",
+                       "after", "before", "%", "every", "without"]
+    # A bare numeric / exit-code / N-of-N success is measurable without any prose
+    # token (fb-acdc57e48ea9). These regexes accept "exits 0", "0 failures",
+    # "100 times", "100/100 pass", "5s/10ms" directly, so authors aren't forced into
+    # filler phrasing and the structural gate stops disagreeing with brief-critic.
+    must_match_any_regex:
+      - 'exit(?:s|ed|ing)?\s+(?:with\s+)?(?:code\s+)?\d+'   # exits 0, exit code 1
+      - '\breturns?\s+\d+\b'                                # returns 0
+      - '\b\d+\s*/\s*\d+\b'                                 # 100/100, N-of-N
+      - '\b(?:\d+|no|zero)\s+(?:new\s+)?(?:failure|error|regression|warning|crash|flake|defect|test|time|run|retry|retries)s?\b'
+      - '\b\d+(?:\.\d+)?\s*(?:ms|s|sec|secs|seconds|minutes?)\b'   # 5s, 200ms
+    must_contain_any_description: >
+      success must be measurable — include a number, threshold, exit code, or
+      observable verb ("within 5s", "at least 95%", "exits 0", "0 new failures")
+  type:
+    section: "## Type"
+    type: enum
+    # v0.6.1: added `test` and `chore` after stitcher-tests M1.S2 hit
+    # the gap. Test-only sprints (add coverage, fix flaky test) and
+    # operational chores (CI tweak, dep bump) had no good fit; brief-critic
+    # was rejecting them as `new_feature` and the least-wrong option
+    # (`refactor`) mis-signaled to downstream roles.
+    values: [bug_fix, new_feature, refactor, migration, doc, config, test, chore]
+
+optional_fields:
+  priority:
+    section: "## Priority"
+    type: enum
+    values: [P0, P1, P2]
+    default: P2
+  notes:
+    section: "## Notes"
+    type: text

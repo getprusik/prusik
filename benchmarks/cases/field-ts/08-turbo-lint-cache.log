@@ -1,0 +1,72 @@
+
+> personal-agent@0.1.0 lint /Users/dev/workspace/python/adopter
+> turbo run lint
+
+• Packages in scope: @adopter/backend, @adopter/config, @adopter/contracts, @adopter/docs, @adopter/frontend, @adopter/shared, @adopter/test-utils
+• Running lint in 7 packages
+• Remote caching disabled
+@adopter/config:build: cache hit, replaying logs a8c2039779fdf090
+@adopter/config:build: 
+@adopter/config:build: > @adopter/config@0.1.0 build /Users/dev/workspace/python/adopter/packages/config
+@adopter/config:build: > tsc
+@adopter/config:build: 
+@adopter/contracts:build: cache hit, replaying logs 114bf975b4c9e5e0
+@adopter/contracts:build: 
+@adopter/contracts:build: > @adopter/contracts@0.1.0 build /Users/dev/workspace/python/adopter/packages/contracts
+@adopter/contracts:build: > tsup src/index.ts --format cjs,esm && tsc --emitDeclarationOnly --declaration --outDir dist
+@adopter/contracts:build: 
+@adopter/contracts:build: CLI Building entry: src/index.ts
+@adopter/contracts:build: CLI Using tsconfig: tsconfig.json
+@adopter/contracts:build: CLI tsup v8.5.1
+@adopter/contracts:build: CLI Target: es2020
+@adopter/contracts:build: CJS Build start
+@adopter/contracts:build: ESM Build start
+@adopter/contracts:build: ESM dist/index.mjs 32.37 KB
+@adopter/contracts:build: ESM ⚡️ Build success in 51ms
+@adopter/contracts:build: CJS dist/index.js 46.66 KB
+@adopter/contracts:build: CJS ⚡️ Build success in 52ms
+@adopter/shared:build: cache hit, replaying logs 9873c46120e6a3d8
+@adopter/shared:build: 
+@adopter/shared:build: > @adopter/shared@0.1.0 build /Users/dev/workspace/python/adopter/packages/shared
+@adopter/shared:build: > tsup
+@adopter/shared:build: 
+@adopter/shared:build: CLI Building entry: src/index.ts, src/errors/index.ts
+@adopter/shared:build: CLI Using tsconfig: tsconfig.json
+@adopter/shared:build: CLI tsup v8.5.1
+@adopter/shared:build: CLI Using tsup config: /Users/dev/workspace/python/adopter/packages/shared/tsup.config.ts
+@adopter/shared:build: CLI Target: es2020
+@adopter/shared:build: CJS Build start
+@adopter/shared:build: ESM Build start
+@adopter/shared:build: ESM dist/index.mjs          18.17 KB
+@adopter/shared:build: ESM dist/errors/index.mjs   2.22 KB
+@adopter/shared:build: ESM dist/chunk-PYVDZNJD.mjs 12.34 KB
+@adopter/shared:build: ESM ⚡️ Build success in 26ms
+@adopter/shared:build: CJS dist/errors/index.js 15.67 KB
+@adopter/shared:build: CJS dist/index.js        32.54 KB
+@adopter/shared:build: CJS ⚡️ Build success in 26ms
+@adopter/shared:build: DTS Build start
+@adopter/shared:build: DTS ⚡️ Build success in 958ms
+@adopter/shared:build: DTS dist/index.d.ts         10.69 KB
+@adopter/shared:build: DTS dist/errors/index.d.ts  7.69 KB
+@adopter/shared:build: DTS dist/index.d.mts        10.69 KB
+@adopter/shared:build: DTS dist/errors/index.d.mts 7.69 KB
+@adopter/backend:lint: cache hit, replaying logs e884df90a3c58a29
+@adopter/backend:lint: 
+@adopter/backend:lint: > @adopter/backend@0.1.0 lint /Users/dev/workspace/python/adopter/packages/backend
+@adopter/backend:lint: > eslint src
+@adopter/backend:lint: 
+@adopter/frontend:lint: cache hit, replaying logs 7c3f0633f5f954f7
+@adopter/frontend:lint: 
+@adopter/frontend:lint: > @adopter/frontend@0.1.0 lint /Users/dev/workspace/python/adopter/packages/frontend
+@adopter/frontend:lint: > eslint
+@adopter/frontend:lint: 
+
+ Tasks:    5 successful, 5 total
+Cached:    5 cached, 5 total
+  Time:    836ms >>> FULL TURBO
+
+
+--- stderr ---
+
+[prusik-prove] ✗ NOT PROVEN — exit 0 but no files-checked signal in the lint output — a clean run that checked NOTHING (wrong include/glob) also exits 0 and silent, so this can't be proven. Re-run with a scope signal: tsc --extendedDiagnostics, or eslint -f json.
+            (turbo replayed from cache — the tool did not actually run, so there is no tool output to read. Re-run with --force / no cache for a real verdict. prove will not parse turbo's banner as evidence — that would be turbo's word, not the tool's execution.)

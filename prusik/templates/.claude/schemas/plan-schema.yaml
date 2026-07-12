@@ -1,0 +1,38 @@
+version: 1
+name: plan
+description: >
+  Actionable plan produced by feature-planner from scope.md. Builders execute
+  against this; reviewers reject deviations from it. plan-critic approves before
+  any builder runs. Required only in team mode (solo sprints skip planning).
+
+required_fields:
+  goal_recap:
+    section: "## Goal recap"
+    type: text
+    min_words: 4
+  modules_touched:
+    section: "## Modules touched"
+    type: list
+    min_items: 1
+  build_order:
+    section: "## Build order"
+    type: list
+    min_items: 1
+  interfaces:
+    section: "## Interfaces"
+    type: text
+  test_plan:
+    section: "## Test plan"
+    type: list
+    min_items: 3
+  risks:
+    section: "## Risks"
+    type: list
+    min_items: 1
+  out_of_scope:
+    section: "## Out of scope"
+    type: text
+  proposed_roles:
+    section: "## Proposed roles"
+    type: list
+    min_items: 1

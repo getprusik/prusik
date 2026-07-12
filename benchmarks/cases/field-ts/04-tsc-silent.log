@@ -1,0 +1,4 @@
+
+--- stderr ---
+
+[prusik-prove] ✗ NOT PROVEN — exit 0 but no files-checked signal in the types output — a clean run that checked NOTHING (wrong include/glob) also exits 0 and silent, so this can't be proven. Re-run with a scope signal: tsc --extendedDiagnostics, or eslint -f json.

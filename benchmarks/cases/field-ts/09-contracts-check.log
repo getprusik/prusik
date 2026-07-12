@@ -1,0 +1,17 @@
+
+> personal-agent@0.1.0 contracts:check /Users/dev/workspace/python/adopter
+> ./scripts/contracts-check.sh
+
+── contracts integrity gate ────────────────────────────────────────
+▸ pnpm type-check
+✓ type-check passes for every package
+▸ pnpm --filter=@adopter/contracts build
+✓ @adopter/contracts builds (CJS + ESM + DTS)
+✓ no legacy api-schemas.ts file
+✓ all validateResponse callers source schemas from @adopter/contracts
+── ✓ contracts integrity gate passed ───────────────────────────────
+
+--- stderr ---
+
+[prusik-prove] ✗ NOT PROVEN — exit 0 but only 0 test(s) executed (need ≥1) — nothing actually ran (auto-skip / no collection / wrong path). Exit 0 with no executed tests is a false-clean.
+            (exit 0 alone does not prove tests ran — this is exactly the fabrication prove exists to catch.)

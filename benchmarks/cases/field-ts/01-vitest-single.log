@@ -1,0 +1,91 @@
+
+> @adopter/frontend@0.1.0 test /Users/dev/workspace/python/adopter/packages/frontend
+> bash -c 'trap "mv postcss.config.mjs.bak postcss.config.mjs 2>/dev/null || true" EXIT; mv postcss.config.mjs postcss.config.mjs.bak 2>/dev/null || true; vitest'
+
+
+ RUN  v3.2.4 /Users/dev/workspace/python/adopter/packages/frontend
+
+ ✓ tests/unit/components/onboarding/StepWizard.test.tsx (43 tests) 530ms
+ ✓ tests/unit/components/legal/CookieConsentBanner.test.tsx (26 tests) 240ms
+ ✓ tests/unit/lib/useApiResource.test.ts (3 tests) 212ms
+ ✓ tests/unit/components/layout/Header.test.tsx (22 tests) 92ms
+ ✓ tests/unit/components/onboarding/InteractiveTutorial.test.tsx (39 tests) 63ms
+ ✓ tests/unit/components/bills/AddBillModal.test.tsx (7 tests) 113ms
+ ✓ tests/unit/lib/useOnlineStatus.test.ts (24 tests) 113ms
+ ✓ tests/unit/components/layout/MobileNav.test.tsx (35 tests) 144ms
+ ✓ tests/unit/components/profile/ConnectedAccounts.test.tsx (6 tests) 94ms
+ ✓ tests/unit/components/onboarding/WelcomeScreen.test.tsx (30 tests) 71ms
+ ✓ tests/unit/components/onboarding/FirstRunInsights.test.tsx (27 tests) 59ms
+ ✓ tests/unit/components/layout/Footer.test.tsx (33 tests) 50ms
+ ✓ tests/unit/components/onboarding/ProgressStep.test.tsx (22 tests) 39ms
+ ✓ tests/unit/components/ui/Skeleton.test.tsx (42 tests) 35ms
+ ✓ tests/unit/components/ui/ErrorBoundary.test.tsx (24 tests) 27ms
+ ✓ tests/unit/components/ui/OfflineBanner.test.tsx (24 tests) 24ms
+ ✓ tests/unit/components/dashboard/dashboard-components.test.tsx (10 tests) 26ms
+ ✓ tests/unit/components/ui/Toast.test.tsx (30 tests) 34ms
+ ✓ tests/unit/components/ui/ResponsiveTable.test.tsx (18 tests) 20ms
+ ✓ tests/unit/components/ui/EmptyState.test.tsx (26 tests) 20ms
+ ✓ tests/unit/components/layout/AppShell.test.tsx (3 tests) 18ms
+ ✓ tests/unit/components/onboarding/LoadingTips.test.tsx (24 tests) 18ms
+ ✓ tests/unit/components/dashboard/InsightsFeed.test.tsx (4 tests) 12ms
+ ✓ tests/unit/components/ui/LoadingSpinner.test.tsx (24 tests) 14ms
+ ✓ tests/unit/components/charts/financial-charts.test.tsx (5 tests) 10ms
+ ✓ tests/unit/components/charts/ChartContainer.test.tsx (3 tests) 8ms
+ ✓ tests/unit/components/legal/useCookieConsent.test.ts (31 tests) 9ms
+ ✓ tests/unit/lib/useOnboarding.test.ts (29 tests) 7ms
+ ✓ tests/unit/app/profile-shell.test.tsx (1 test) 7ms
+ ✓ tests/unit/lib/toast.test.ts (27 tests) 5ms
+ ✓ tests/unit/components/transactions/TransactionRow.test.tsx (7 tests) 5ms
+ ✓ tests/unit/components/accounts/AccountCard.test.tsx (6 tests) 5ms
+ ✓ tests/unit/components/dashboard/KpiStat.test.tsx (7 tests) 4ms
+ ✓ tests/unit/components/dashboard/ConnectionStatus.test.tsx (4 tests) 4ms
+ ✓ tests/unit/hooks/useTheme.test.ts (9 tests) 3ms
+ ✓ tests/unit/components/dashboard/FreshnessStrip.test.tsx (2 tests) 4ms
+ ✓ tests/unit/app/admin-role-gate.test.tsx (1 test) 3ms
+ ✓ tests/unit/components/ui/Badge.test.tsx (3 tests) 2ms
+ ✓ tests/unit/lib/transaction-row-display.test.ts (6 tests) 2ms
+ ✓ tests/unit/lib/financial-analytics-contracts.test.ts (5 tests) 2ms
+ ✓ tests/unit/lib/i18n-plural.test.ts (3 tests) 1ms
+ ✓ tests/unit/components/ui/Card.test.tsx (4 tests) 1ms
+ ✓ src/lib/__tests__/bills-types.test.ts (6 tests) 1ms
+ ✓ tests/unit/lib/use-action-intent.test.tsx (3 tests) 1ms
+ ✓ tests/unit/lib/account-card-display.test.ts (6 tests) 1ms
+ ✓ tests/unit/lib/theme.test.ts (10 tests) 1ms
+ ✓ tests/unit/lib/freshness-display.test.ts (4 tests) 0ms
+ ✓ tests/unit/lib/amount-display.test.ts (2 tests) 0ms
+
+ Test Files  48 passed (48)
+      Tests  730 passed (730)
+   Start at  00:05:23
+   Duration  3.94s (transform 500ms, setup 218ms, collect 1.14s, tests 2.15s, environment 145ms, prepare 47ms)
+
+
+--- stderr ---
+stderr | tests/unit/components/layout/MobileNav.test.tsx > touch event simulation > should handle touch on navigation links
+TypeError: Cannot read properties of undefined (reading 'clientX')
+    at [90m/Users/dev/workspace/python/adopter/packages/frontend/[39msrc/components/layout/MobileNav.tsx:35:40
+    at executeDispatch (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:16368:9)
+    at runWithFiberInDEV (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:1522:13)
+    at processDispatchQueue (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:16418:19)
+    at /Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:17016:9
+    at batchedUpdates$1 (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:3262:40)
+    at dispatchEventForPluginEventSystem (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:16572:7)
+    at dispatchEvent (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:20658:11)
+    at dispatchDiscreteEvent (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:20626:11)
+    at HTMLDivElement.#callDispatchEventListeners (file:///Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/happy-dom@20.0.10/node_modules/[4mhappy-dom[24m/src/event/EventTarget.ts:299:42)
+
+stderr | tests/unit/lib/useOnboarding.test.ts > useOnboarding > persistence > should handle corrupted localStorage data gracefully
+Failed to load onboarding state: SyntaxError: Unexpected token 'i', "invalid json" is not valid JSON
+    at JSON.parse (<anonymous>)
+    at [90m/Users/dev/workspace/python/adopter/packages/frontend/[39msrc/lib/useOnboarding.ts:153:29
+    at Object.react-stack-bottom-frame (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:23949:20)
+    at runWithFiberInDEV (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:1522:13)
+    at commitHookEffectListMount (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:11905:29)
+    at commitHookPassiveMountEffects (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:12028:11)
+    at commitPassiveMountOnFiber (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:13841:13)
+    at recursivelyTraversePassiveMountEffects (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:13815:11)
+    at commitPassiveMountOnFiber (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:13853:11)
+    at flushPassiveEffects (/Users/dev/workspace/python/adopter/node_modules/[4m.pnpm[24m/react-dom@19.1.0_react@19.1.0/node_modules/[4mreact-dom[24m/cjs/react-dom-client.development.js:15737:9)
+
+
+[prusik-prove] ✓ PROVEN — 730 test(s) executed, exit 0

@@ -1,0 +1,13 @@
+defect_class: assertion-depth-fetch-url-js
+mechanism: jsx-fetch-URL vs express-mounted-route-path
+trial_origin: v0.22.0 cross-stack-parity (synthetic-by-mechanism; same mechanism as case-001)
+
+checks:
+  - name: check_bindings
+    invocation: gate.check_bindings
+    on_initial:
+      expect_findings: 1
+      expect_classes: ["fetch_url"]
+      expect_suggested_path: "/invoices/clients/search"
+    on_clean:
+      expect_findings: 0

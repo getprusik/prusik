@@ -1,0 +1,94 @@
+name: publish
+
+# Publishes the wheel + sdist via Trusted Publishing (OIDC — no API token stored
+# anywhere). Two paths:
+#   • REHEARSAL — a manual run (Actions → publish → Run workflow) defaults to
+#     TestPyPI, so the whole pipeline (build → boundary check → upload → install)
+#     can be validated with ZERO public exposure. Pick `pypi` in the dropdown to
+#     do the real thing manually.
+#   • RELEASE — publishing a GitHub Release goes straight to real PyPI.
+#
+# Before upload it re-verifies the never-publish boundary on BOTH artifacts
+# (wheel AND sdist): neither may contain hq/ (fleet/feedback-spine/eng-insights/
+# metrics/proof-cards), strategy/ (internal), benchmarks/, or docs/. The sdist is
+# checked explicitly because it's built from the source tree.
+#
+# One-time setup (operator) — add a Trusted Publisher on EACH index you use:
+#   • TestPyPI: test.pypi.org → Publishing → owner getprusik, repo prusik,
+#     workflow publish.yml, environment testpypi
+#   • PyPI:     pypi.org      → Publishing → owner getprusik, repo prusik,
+#     workflow publish.yml, environment pypi
+# No secrets to manage after that.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Index to publish to"
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # real PyPI on a Release or an explicit `pypi` choice; TestPyPI otherwise.
+    environment: ${{ (github.event_name == 'release' || inputs.target == 'pypi') && 'pypi' || 'testpypi' }}
+    permissions:
+      id-token: write          # Trusted Publishing (OIDC); no token needed
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Build wheel + sdist
+        run: uv build
+      - name: Verify never-publish boundary (wheel AND sdist)
+        run: |
+          python - <<'PY'
+          import glob, sys, tarfile, zipfile
+          internal = {"hq", "strategy", "benchmarks", "docs"}
+
+          def tops_whl(p):
+              return {n.split("/")[0] for n in zipfile.ZipFile(p).namelist()}
+
+          def tops_sdist(p):
+              # sdist members are <name-version>/<top>/...
+              out = set()
+              for m in tarfile.open(p).getmembers():
+                  parts = m.name.split("/")
+                  if len(parts) > 1:
+                      out.add(parts[1])
+              return out
+
+          bad = []
+          for p in glob.glob("dist/*.whl"):
+              leaks = sorted(tops_whl(p) & internal)
+              if leaks:
+                  bad.append(f"wheel {p}: {leaks}")
+          for p in glob.glob("dist/*.tar.gz"):
+              leaks = sorted(tops_sdist(p) & internal)
+              if leaks:
+                  bad.append(f"sdist {p}: {leaks}")
+          if bad:
+              sys.exit("REFUSING TO PUBLISH — never-publish dirs leaked:\n  "
+                       + "\n  ".join(bad))
+          print("both artifacts clean — no hq/strategy/benchmarks/docs")
+          PY
+      - name: Resolve target index
+        id: idx
+        run: |
+          if [ "${{ github.event_name }}" = "release" ] || [ "${{ inputs.target }}" = "pypi" ]; then
+            echo "url=https://upload.pypi.org/legacy/" >> "$GITHUB_OUTPUT"
+            echo "name=PyPI" >> "$GITHUB_OUTPUT"
+          else
+            echo "url=https://test.pypi.org/legacy/" >> "$GITHUB_OUTPUT"
+            echo "name=TestPyPI" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish to ${{ steps.idx.outputs.name }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ steps.idx.outputs.url }}

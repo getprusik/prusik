@@ -1,0 +1,14 @@
+defect_class: assertion-depth-form-name
+mechanism: template-input-name vs handler-form-key
+trial_origin: m4-dev1-jit-inline-client-fix (2026-05-18)
+
+checks:
+  - name: check_bindings
+    invocation: gate.check_bindings
+    on_initial:
+      expect_findings_min: 1
+      expect_classes: ["form_name"]
+      expect_template_name: "new_client_legal_name"
+      expect_handler_key: "inline_client_name"
+    on_clean:
+      expect_findings: 0

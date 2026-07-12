@@ -1,0 +1,17 @@
+defect_class: cross-touch-set-test-reach
+mechanism: out-of-touched-set test references in-touched-set contract
+trial_origin: m4-suspect-skip-audit (2026-05; recurrence-trigger crossed)
+
+# touched_set: tests NOT in this list are scanned for refs INTO this list
+touched_set:
+  - "src/audit.py"
+
+checks:
+  - name: check_test_reach
+    invocation: gate.check_test_reach
+    on_initial:
+      expect_findings_min: 1
+      expect_reaching_file: "tests/test_legacy_audit.py"
+      expect_contract_id: "/audit/skips"
+    on_clean:
+      expect_findings: 0

@@ -1,0 +1,114 @@
+# FastAPI + Postgres preset — derived from an adopter's empirically-tuned config.
+# Use via: prusik init --stack fastapi-postgres
+#
+# What's stack-specific vs generic:
+#   - phases section, exit_artifacts, validators — generic (same as default)
+#   - behavior_regression command — tests/behavior/ via pytest (FastAPI convention)
+#   - project_policy stub — pre-commit (common in FastAPI projects)
+#   - always_writable — adds `alembic/versions/**` for migration work
+#   - brief_lint extra_known_sources — empty default (project adds its own)
+#
+# Prusik's engine-baked invariants (/tmp/**, .runtime/**, .sprint/**,
+# reports/**, briefs/**, scripts/verify/**) apply regardless — this file
+# only adds project-level config, never overrides engine invariants.
+
+phases:
+  - name: scoping
+    writable:
+      - "design/{feature}/scope.md"
+      - "reports/{feature}/scope-approval.txt"
+      - "design/{feature}/trivial.md"
+    exit_artifacts:
+      - path: "design/{feature}/scope.md"
+        validator: scope_schema
+      - path: "reports/{feature}/scope-approval.txt"
+        must_contain: "APPROVED"
+    trivial_exit_artifacts:
+      - path: "design/{feature}/trivial.md"
+        required_sections:
+          - "## Change"
+          - "## How verified"
+
+  - name: triage
+    writable:
+      - "decisions/{feature}.json"
+    exit_artifacts:
+      - path: "decisions/{feature}.json"
+        validator: triage_decision
+
+  - name: planning
+    writable:
+      - "design/{feature}/plan.md"
+      - "reports/{feature}/plan-approval.txt"
+    exit_artifacts:
+      - path: "design/{feature}/plan.md"
+        required_sections:
+          - "## Modules touched"
+          - "## Test plan"
+          - "## Risks"
+      - path: "reports/{feature}/plan-approval.txt"
+        must_contain: "APPROVED"
+    budget_tokens: 150000
+
+  - name: solo_execute
+    writable:
+      - "worktrees/solo/**"
+      - "alembic/versions/**"          # FastAPI+Postgres: migration files
+    deny_commands:
+      - "git push"
+      - "git merge"
+    budget_tokens: 1000000
+
+  - name: building
+    writable:
+      - "worktrees/*/**"
+      - "alembic/versions/**"          # FastAPI+Postgres: migration files
+    deny_commands:
+      - "git push"
+      - "git merge"
+    budget_tokens: 1000000
+
+  - name: reviewing
+    writable:
+      - "reports/{feature}/**"
+    exit_artifacts:
+      - path: "reports/{feature}/regression.txt"
+        must_contain: "PASS"
+      - path: "reports/{feature}/regression.evidence.json"
+        validator: execution_evidence
+      - path: "reports/{feature}/conventions.txt"
+        must_contain: "PASS"
+      - path: "reports/{feature}/conventions.evidence.json"
+        validator: execution_evidence
+    budget_tokens: 300000
+
+  - name: integrating
+    writable:
+      - "design/{feature}/retro.md"
+      - "**"
+    exit_artifacts:
+      - path: "design/{feature}/retro.md"
+        required_sections:
+          - "## What happened"
+          - "## What worked"
+          - "## What to change"
+
+always_writable:
+  # Add project-level cross-phase writables here. FastAPI+Postgres common:
+  - "alembic/versions/**"              # migrations span phases
+
+behavior_regression:
+  enabled: true
+  command: "pytest tests/behavior/ -v --no-cov"
+  description: "Behavior-regression suite for FastAPI app (golden-snapshot / contract tests)."
+
+project_policy:
+  enabled: false                       # opt-in: enable when pre-commit is configured
+  command: "pre-commit run --all-files"
+  description: "Commit-time policy: secret detection + linters + custom hooks."
+
+brief_lint:
+  extra_known_sources: []              # add project-specific brief sources here
+
+roadmap:
+  source: ""                           # set to path of roadmap.md if used

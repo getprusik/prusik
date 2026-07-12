@@ -1,0 +1,44 @@
+version: 1
+name: scope
+description: >
+  Derived understanding produced by the scoping role from brief + map + dep-graph.
+  This is what triage routes from — not the brief.
+
+required_fields:
+  goal_recap:
+    section: "## Goal recap"
+    type: text
+    min_words: 4
+  modules_touched:
+    section: "## Modules touched"
+    type: list
+    min_items: 1
+  blast_radius:
+    section: "## Blast radius"
+    type: list
+  related_work:
+    section: "## Related work"
+    type: list
+  size:
+    section: "## Size"
+    type: enum
+    values: [S, M, L, XL]
+  domains:
+    section: "## Domains"
+    type: list
+    min_items: 1
+    allowed_values: [backend, frontend, infra, data, doc, test]
+  risks:
+    section: "## Risks"
+    type: list
+    min_items: 1
+  open_questions:
+    section: "## Open questions"
+    type: list
+
+optional_fields:
+  milestone:
+    section: "## Milestone"
+    type: text
+    # Conditionally required: validated as required when sprint-config.yaml
+    # roadmap block is configured (see prusik/schema.py _validate_milestone).

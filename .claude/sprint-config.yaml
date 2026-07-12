@@ -1,0 +1,130 @@
+version: 1
+kit_version: "0.1.0"
+
+# Global escape hatch: meta-artifacts + cross-session paths + CC memory.
+always_writable:
+  - "reports/kit-trial/**"
+  - ".kit-trial/**"
+  - "~/.claude/prusik/bridges/**"
+  - "~/.claude/projects/**"
+
+# Self-hosting config: the kit uses itself to develop.
+# Same phases as the shipped template, with an extra allowance for kit
+# developers to edit prusik/ and tests/ during solo_execute and building.
+
+phases:
+  - name: scoping
+    writable:
+      - "design/{feature}/scope.md"
+    exit_artifacts:
+      - path: "design/{feature}/scope.md"
+        validator: scope_schema
+
+  - name: triage
+    writable:
+      - "decisions/{feature}.json"
+    exit_artifacts:
+      - path: "decisions/{feature}.json"
+        validator: triage_decision
+
+  - name: planning
+    writable:
+      - "design/{feature}/plan.md"
+      - "reports/{feature}/plan-approval.txt"
+    exit_artifacts:
+      - path: "design/{feature}/plan.md"
+        required_sections:
+          - "## Modules touched"
+          - "## Test plan"
+          - "## Risks"
+      - path: "reports/{feature}/plan-approval.txt"
+        must_contain: "APPROVED"
+    budget_tokens: 150000
+
+  - name: solo_execute
+    writable:
+      - "worktrees/solo/**"
+      - "prusik/**"
+      - "tests/**"
+    deny_commands:
+      - "git push"
+      - "git merge"
+    budget_tokens: 400000
+
+  - name: building
+    writable:
+      - "worktrees/*/**"
+      - "prusik/**"
+      - "tests/**"
+    deny_commands:
+      - "git push"
+      - "git merge"
+    budget_tokens: 1000000
+
+  - name: reviewing
+    writable:
+      - "reports/{feature}/**"
+    exit_artifacts:
+      - path: "reports/{feature}/regression.txt"
+        must_contain: "PASS"
+      - path: "reports/{feature}/conventions.txt"
+        must_contain: "PASS"
+
+  - name: integrating
+    writable:
+      - "**"
+    exit_artifacts:
+      - path: "design/{feature}/retro.md"
+        required_sections:
+          - "## What happened"
+          - "## What surprised"
+          - "## Updates to CLAUDE.md"
+
+# Dogfood: prusik lint- and type-checks itself in the reviewing phase.
+# regression-sentinel runs this during reviewing; tests/test_lint.py enforces
+# the same invariants fail-closed in CI. Configs in pyproject.toml
+# ([tool.ruff], [tool.mypy]).
+project_policy:
+  enabled: true
+  command: "ruff check prusik tests && mypy prusik"
+  description: "Self-hygiene gate: lint (correctness + dead-code) + types."
+
+pre_sprint_gates:
+  brief_critique:
+    enabled: true
+    require_artifact: "reports/{feature}/brief-critique.txt"
+    must_contain: "PASS"
+    hint: "invoke brief-critic role first; it produces reports/{feature}/brief-critique.txt"
+
+triage:
+  heuristics:
+    auto_solo_if:
+      - type: bug_fix
+      - type: doc
+      - type: config
+      - size: S
+        domains_count: 1
+    auto_team_if:
+      - size: L
+      - size: XL
+      - type: new_feature
+        domains_count: ">=2"
+      - type: migration
+    else: solo
+
+watchdog:
+  heartbeat_stale_min: 30
+  max_phase_hours: 24
+
+issues:
+  tracker: none
+  repo: ""
+  filter: ""
+  limit: 500
+
+conventions:
+  packs: []
+
+# brief-lint extensions (see shipped template for docs).
+brief_lint:
+  extra_known_sources: []

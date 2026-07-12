@@ -1,0 +1,16 @@
+defect_class: assertion-depth-fetch-url
+mechanism: template-fetch-URL vs prefixed-route-path
+trial_origin: m4-dev1-jit-inline-client-fix (2026-05-18)
+
+# Each entry: which check to run + what it should report on initial-repo
+# vs clean. The harness compares actual ledger events / output against
+# this and reports hit/miss.
+checks:
+  - name: check_bindings
+    invocation: gate.check_bindings
+    on_initial:
+      expect_findings: 2          # two consumers: fetch() + hx-get
+      expect_classes: ["fetch_url"]
+      expect_suggested_path: "/invoices/clients/search"
+    on_clean:
+      expect_findings: 0          # FP control: clean code must NOT flag
