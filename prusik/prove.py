@@ -27,7 +27,8 @@ _TIMEOUT_SEC = 1800  # test suites legitimately run long
 
 
 def run(command: list[str] | None, kind: str = "tests",
-        min_executed: int = 1, json_output: bool = False) -> int:
+        min_executed: int = 1, json_output: bool = False,
+        sarif_output: bool = False) -> int:
     cmd = list(command or [])
     if cmd and cmd[0] == "--":
         cmd = cmd[1:]
@@ -54,9 +55,9 @@ def run(command: list[str] | None, kind: str = "tests",
         combined = f"[prusik-prove] failed to spawn: {e}\n"
 
     # Stream the real output through, unaltered, so the human sees the truth.
-    # In --json mode it goes to stderr so stdout stays pure JSON (parseable by
-    # CI / `prusik ci-comment`); still visible in logs.
-    sink = sys.stderr if json_output else sys.stdout
+    # In --json/--sarif mode it goes to stderr so stdout stays pure machine
+    # output (parseable by CI / `prusik ci-comment`); still visible in logs.
+    sink = sys.stderr if (json_output or sarif_output) else sys.stdout
     sink.write(combined)
     if not combined.endswith("\n"):
         sink.write("\n")
@@ -80,16 +81,20 @@ def run(command: list[str] | None, kind: str = "tests",
     except Exception:  # noqa: BLE001 — telemetry must never fail the proof
         pass
 
-    if json_output:
-        print(json.dumps({
-            "command": cmd_str,
-            "kind": kind,
-            "exit_code": exit_code,
-            "executed": executed,
-            "min_executed": min_executed,
-            "proven": proven,
-            "reason": reason,
-        }, indent=2))
+    verdict = {
+        "command": cmd_str,
+        "kind": kind,
+        "exit_code": exit_code,
+        "executed": executed,
+        "min_executed": min_executed,
+        "proven": proven,
+        "reason": reason,
+    }
+    if sarif_output:
+        from prusik import sarif
+        print(json.dumps(sarif.from_prove(verdict), indent=2))
+    elif json_output:
+        print(json.dumps(verdict, indent=2))
     else:
         mark = "✓ PROVEN" if proven else "✗ NOT PROVEN"
         print(f"\n[prusik-prove] {mark} — {reason}")

@@ -593,6 +593,9 @@ def main():
                           help="Max files to walk before truncating (default: 5000)")
     p_scan.add_argument("--json", action="store_true",
                           help="Emit machine-readable JSON instead of text")
+    p_scan.add_argument("--sarif", action="store_true",
+                          help="Emit SARIF 2.1.0 (GitHub code-scanning / CI). "
+                               "Takes precedence over --json")
     p_scan.add_argument("--include-test-reach", action="store_true",
                           help="Also run test-reach detection (usually empty in "
                                "scan-mode since touched-set = whole repo)")
@@ -790,6 +793,9 @@ def main():
                           help="Minimum executed tests required (kind=tests; default 1)")
     p_prove.add_argument("--json", action="store_true",
                           help="Emit machine-readable verdict JSON")
+    p_prove.add_argument("--sarif", action="store_true",
+                          help="Emit SARIF 2.1.0 verdict (GitHub code-scanning / "
+                               "CI); a NOT-PROVEN run is one error result")
     p_prove.add_argument("command", nargs=argparse.REMAINDER,
                           help="-- <verbatim test/lint/type command>")
 
@@ -1017,7 +1023,8 @@ def main():
     if args.cmd == "prove":
         from prusik import prove
         return prove.run(args.command, kind=args.kind,
-                         min_executed=args.min_executed, json_output=args.json)
+                         min_executed=args.min_executed, json_output=args.json,
+                         sarif_output=args.sarif)
     if args.cmd == "plan-reach":
         from prusik import blast_plan
         return blast_plan.run(args.feature, json_output=args.json)
@@ -1065,6 +1072,7 @@ def main():
         return kit_scan.scan(root=root,
                               file_limit=args.limit,
                               json_output=args.json,
+                              sarif_output=args.sarif,
                               include_test_reach=args.include_test_reach,
                               detector_names=names,
                               allow_local=not args.no_local_detectors)

@@ -106,8 +106,8 @@ At each step prusik enforces:
 
 | Command | What it does |
 |---|---|
-| `prusik prove [--kind tests\|lint\|types] [--min N] [--json] -- <cmd>` | Prove a command actually ran clean (no FSM); rc=0 only if proven |
-| `prusik scan [--detectors a,b] [--no-local-detectors]` | Static detectors (binding-mismatch, test-reach) + your own from `.claude/detectors/*.py` |
+| `prusik prove [--kind tests\|lint\|types] [--min N] [--json\|--sarif] -- <cmd>` | Prove a command actually ran clean (no FSM); rc=0 only if proven. `--sarif` for GitHub code-scanning |
+| `prusik scan [--detectors a,b] [--no-local-detectors] [--json\|--sarif]` | Static detectors (binding-mismatch, test-reach) + your own from `.claude/detectors/*.py`. `--sarif` emits SARIF 2.1.0 |
 | `prusik init [--conventions PATH] [--force]` | Scaffold into current project |
 | `prusik gate pre-tool` | PreToolUse hook: block writes/bash outside phase |
 | `prusik gate stop` | Stop hook: block session end if phase artifacts missing |

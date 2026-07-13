@@ -131,6 +131,7 @@ def _scan_rc(all_findings: list, fail_on, total: int) -> int:
 def scan(root: Path | None = None,
          file_limit: int = _DEFAULT_FILE_LIMIT,
          json_output: bool = False,
+         sarif_output: bool = False,
          include_test_reach: bool = False,
          detector_names: list[str] | None = None,
          allow_local: bool = True) -> int:
@@ -151,7 +152,10 @@ def scan(root: Path | None = None,
     files, stats = _collect_files(root, file_limit, include_test_reach)
     if not files:
         msg = f"[prusik-scan] no scannable files under {root}"
-        if json_output:
+        if sarif_output:
+            from prusik import sarif as _sarif
+            print(json.dumps(_sarif.build([], root), indent=2))
+        elif json_output:
             print(json.dumps({"root": str(root), "findings": [],
                               "stats": stats, "message": msg}))
         else:
@@ -183,6 +187,11 @@ def scan(root: Path | None = None,
 
     total_findings = len(all_findings)
     fail_on = cfg.get("fail_on")
+
+    if sarif_output:
+        from prusik import sarif as _sarif
+        print(json.dumps(_sarif.build(all_findings, root), indent=2))
+        return _scan_rc(all_findings, fail_on, total_findings)
 
     if json_output:
         out: dict[str, Any] = {
