@@ -45,8 +45,8 @@ SESSION-CARRY-FORWARD.md
 # Internal product-build strategy — NOT part of the shipped product or codebase
 strategy/
 
-# HQ-only operator state — machine-specific product registry + collected exports
-hq/products.local.json
+# HQ-only operator state — machine-specific registry, triage, collected exports
+hq/*.local.json
 hq/inbox/
 
 # field-ts corpus: multi-MB raw logs kept local (small shapes ARE committed)

@@ -331,8 +331,8 @@ def test_v0100_fix1_reconciliation_summary_quantifies_rot():
 
 def test_v0100_fix1_legacy_fallback_when_no_scope_artifact():
     """Opt-in / non-coupling: a project with no scope.md falls back to the
-    pre-v0.10.0 plan_mods comparison — behavior unchanged for non-kit-scoped
-    projects (design-discipline tenet 5)."""
+    pre-v0.10.0 plan_mods comparison — behavior unchanged for projects that
+    don't opt into scope-based checks; the newer path is strictly additive."""
     tmp = _mktmp_project()
     try:
         f = "feat"

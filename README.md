@@ -2,40 +2,31 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/prusik)](https://pypi.org/project/prusik/) [![Python versions](https://img.shields.io/pypi/pyversions/prusik)](https://pypi.org/project/prusik/) [![License](https://img.shields.io/pypi/l/prusik)](https://github.com/getprusik/prusik/blob/main/LICENSE)
 
-An iron-clad autonomous harness for Claude Code agent teams. Phase gates, pure-code triage, deterministic discovery, schema-enforced artifacts, and a ledger that closes the feedback loop — so quality depends on prusik, not on anyone remembering the playbook.
+**Proof, not opinion.** Prusik verifies that your agent's work actually happened — from the tool's own output, never the agent's word. Start with one zero-ceremony command; scale to a full autonomous harness for Claude Code agent teams when you're ready.
 
-## Why this exists
+## Prove your agent's tests actually ran (30 seconds, zero config)
 
-Claude Code can coordinate agent teams, but without discipline it burns tokens on malformed work, loses context across sessions, and lets specialists freelance outside their scope. Prusik converts discipline into enforcement: hooks block out-of-phase writes, schemas reject shallow artifacts, triage routes between solo execution and team sprints deterministically, a watchdog catches stuck teammates, and a ledger records every transition for audit and self-tuning.
-
-## Install
-
-One line, from git, for any project:
+No `init`, no config, no buy-in — install and prove:
 
 ```bash
-pipx install git+https://github.com/getprusik/prusik.git
-```
+pip install prusik
 
-(Or `pip install git+https://github.com/getprusik/prusik.git` if you don't use pipx.)
-
-This puts a `prusik` command on your PATH.
-
-## Prove your agent's tests actually ran (zero ceremony)
-
-No `init`, no config, no buy-in. Wrap any test/lint/type command and prusik
-proves it *really ran clean* — from the tool's own output, not the agent's word:
-
-```bash
 prusik prove -- pytest -q
 prusik prove --kind types -- mypy src/
 prusik prove --min 20 --json -- pytest tests/
 ```
 
-Exit code reflects the truth: `0` only when the command exited 0 **and** real
-work was observed. The case it exists to catch — *exit 0 but zero tests
-executed* ("tests pass ✅" when nothing actually ran: auto-skip, no collection,
-wrong path) — fails with rc=1. Drop it into CI or a pre-push hook as the
-one-line anti-fabrication check; the full harness below is opt-in from there.
+Prusik wraps any test/lint/type command and proves it *really ran clean* — from the tool's own output, not the agent's word. The exit code reflects the truth: `0` only when the command exited 0 **and** real work was observed.
+
+The case it exists to catch — *exit 0 but zero tests executed* ("tests pass ✅" when nothing actually ran: auto-skip, no collection, wrong path) — fails with `rc=1`. Drop it into CI or a pre-push hook as a one-line anti-fabrication check. That's the whole pitch; everything below is opt-in from here.
+
+## Why this exists
+
+Claude Code can coordinate agent teams, but agents fabricate: they report "tests pass ✅" when nothing ran, burn tokens on malformed work, lose context across sessions, and freelance outside their scope. Prusik converts discipline into enforcement — hooks block out-of-phase writes, schemas reject shallow artifacts, triage routes solo-vs-team deterministically, a watchdog catches stuck teammates, and a ledger records every transition for audit and self-tuning. Every check grounds in deterministic evidence, not an LLM's opinion of its own work. `prove` is the wedge; the full harness is the same principle applied end-to-end.
+
+## The full harness (opt-in from here)
+
+Beyond `prove`, prusik scaffolds into a project as a phase-gated harness for Claude Code agent teams: writable-path enforcement, schema-validated artifacts, deterministic triage, a watchdog, and a ledger that closes the feedback loop. `prusik init` sets it up; nothing below is required to use `prove`.
 
 ## Adopt / pause / remove
 
