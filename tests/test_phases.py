@@ -1552,6 +1552,38 @@ def test_v0111_s_sprint_start_reaps_orphaned_fix_round():
         shutil.rmtree(tmp)
 
 
+def test_v0197_sprint_start_protects_paused_sprints_worktrees():
+    """fb-6d21d48c94f9 (HIGH, data-loss): starting a new sprint must NOT
+    destroy a DIFFERENT, PAUSED sprint's live worktrees. The adversarial
+    assertion is on the target that must be PRESERVED — the paused sprint's
+    uncommitted builder output — and on its phase state; only an explicit
+    --force-clean may discard them."""
+    tmp = _mktmp_project()
+    try:
+        _copy_sprint_config(tmp)
+        # Sprint A paused mid-building with uncommitted builder output.
+        work = _wt_file(tmp, "backend-builder", "svc.py", "print('A work')")
+        phases.set_sprint_state({"feature": "obs-a", "phase": "building"}, root=tmp)
+        assert kit_pause.pause() == 0
+        # Operator starts a quick trivial sprint B (the reported repro).
+        _trivial_brief(tmp, "quick-b", "bug_fix")
+        rc = gate.sprint_start(argparse.Namespace(feature="quick-b", trivial=True))
+        assert rc == 2, "must refuse while A is paused with live worktrees"
+        assert work.exists() and work.read_text() == "print('A work')", \
+            "paused sprint's uncommitted work must be preserved"
+        assert phases.current_sprint_state()["feature"] == "obs-a", \
+            "paused sprint's phase state must not be clobbered"
+        # Explicit opt-out actually discards (and clears the stale pause marker).
+        rc2 = gate.sprint_start(argparse.Namespace(feature="quick-b", trivial=True,
+                                                   force_clean=True))
+        assert rc2 == 0, "--force-clean must proceed"
+        assert not work.exists(), "--force-clean discards the worktree (explicit opt-in)"
+        assert not kit_pause.is_paused(tmp), "force-clean clears the discarded pause marker"
+        assert phases.current_sprint_state()["feature"] == "quick-b"
+    finally:
+        shutil.rmtree(tmp)
+
+
 def test_v0111_s_fix_round_start_reaps_foreign_owner():
     """fix-round start for a feature other than the marker's owner: reap the
     foreign orphan and proceed (don't silently block behind dead state)."""

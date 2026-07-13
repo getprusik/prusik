@@ -776,9 +776,59 @@ _TRIVIAL_ELIGIBLE_TYPES: frozenset[str] = frozenset(
     {"bug_fix", "doc", "config", "test", "chore"})
 
 
+# Phases in which a sprint owns live, uncommitted worktree scratch space. A
+# sprint sitting in one of these (or explicitly paused) has work that must not
+# be destroyed by another sprint's start. (`scoping`/`triage`/`planning` have no
+# worktrees yet, so they're not protected.)
+_PROTECTED_PHASES = frozenset({"solo_execute", "building", "reviewing", "integrating"})
+
+
 def sprint_start(args) -> int:
     feature = args.feature
     root = ledger.project_root()
+
+    # fb-6d21d48c94f9 (HIGH, data-loss): a starting sprint must NOT destroy a
+    # DIFFERENT sprint's live worktrees. sprint-start used to shutil.rmtree every
+    # worktrees/* subdir unconditionally — so starting a quick trivial sprint
+    # while another sprint was PAUSED mid-building force-removed the paused
+    # sprint's uncommitted builder output (17+ files across 3 worktrees,
+    # silently, rc=0). prusik is single-active-sprint by design (.sprint/state.json
+    # holds one sprint), so starting B here also clobbers A's phase state —
+    # half-saving the worktrees would just move the loss from files to state.
+    # Fail closed: refuse when a different sprint is paused or mid-working-phase,
+    # unless the operator explicitly discards it with --force-clean.
+    from prusik import pause as _pause
+    _prior = phases.current_sprint_state(root) or {}
+    _prior_feature = _prior.get("feature")
+    _prior_phase = _prior.get("phase")
+    _paused = _pause.is_paused(root)
+    if (_prior_feature and _prior_feature != feature
+            and (_paused or _prior_phase in _PROTECTED_PHASES)):
+        wt = root / "worktrees"
+        _live = sorted(c.name for c in wt.iterdir() if c.is_dir()) if wt.exists() else []
+        if not getattr(args, "force_clean", False):
+            _label = "paused" if _paused else f"active (phase {_prior_phase})"
+            print(f"[prusik-gate] Refusing to start {feature!r}: sprint "
+                  f"{_prior_feature!r} is {_label}"
+                  + (f" with {len(_live)} worktree(s) of uncommitted work: {_live}"
+                     if _live else "") + ".", file=sys.stderr)
+            print("  prusik holds one active sprint per checkout — starting a new "
+                  "one would discard the other's worktrees AND its phase state.",
+                  file=sys.stderr)
+            print(f"  Finish it first (prusik resume → … → sprint-complete "
+                  f"--feature {_prior_feature}), or pass --force-clean to discard "
+                  f"{_prior_feature!r} and its worktrees.", file=sys.stderr)
+            ledger.append("sprint_start_blocked_active_sprint", feature=feature,
+                          prior_feature=_prior_feature, prior_phase=_prior_phase,
+                          paused=_paused, worktrees=_live)
+            return 2
+        # Explicit opt-out: discard the other sprint cleanly, incl. its stale
+        # pause marker, then fall through to the normal (destructive) start.
+        if _paused:
+            _pause.resume()
+        print(f"[prusik-gate] --force-clean: discarding sprint {_prior_feature!r} "
+              f"and its {len(_live)} worktree(s).")
+
     brief_path = root / "briefs" / f"{feature}.md"
     if not brief_path.exists():
         print(f"[prusik-gate] Brief not found: {brief_path}", file=sys.stderr)

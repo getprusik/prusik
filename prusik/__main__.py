@@ -236,6 +236,11 @@ def main():
                                "brief-critic front gate AND the full reviewing "
                                "correctness floor. Rejected for new_feature/"
                                "refactor/migration briefs (ungameable).")
+    p_start.add_argument("--force-clean", action="store_true",
+                          help="Discard a DIFFERENT paused/active sprint (and its "
+                               "worktrees) that would otherwise block this start. "
+                               "Explicit opt-in to data loss; without it sprint-start "
+                               "refuses rather than destroy another sprint's work.")
     p_sprintinit = gsub.add_parser("sprint-init",
                                     help="Orchestrator: run discovery + fingerprint + "
                                          "sprint-start, guide agent steps")
