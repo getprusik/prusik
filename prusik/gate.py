@@ -931,6 +931,80 @@ def product_fit(args) -> int:
                    do_bootstrap=getattr(args, "bootstrap", False))
 
 
+def _red_baseline_exists(root: Path, feature: str, cid: str, vc: str) -> bool:
+    """True iff a RED baseline was captured for this exact criterion+verify — the
+    proof (via `prusik gate prove-red`) that the verify FAILS without the change,
+    so it is load-bearing rather than vacuous-green. Bound to the verify_command
+    so a red proof on one command can't green-credit a different one."""
+    lf = root / ".sprint" / "ledger.jsonl"
+    if not lf.exists():
+        return False
+    for line in lf.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if (e.get("event") == "criterion_red_baseline"
+                and e.get("feature") == feature and e.get("id") == cid
+                and e.get("verify_command") == vc):
+            return True
+    return False
+
+
+def prove_red(args) -> int:
+    """`prusik gate prove-red --feature F [--id C]` — acceptance-TDD capture.
+
+    For each `prove_red` criterion, run its verify against the CURRENT (pre-change)
+    state and require it to be RED. A verify that PASSES here asserts nothing about
+    the change (vacuous-green — the failure mode that survives execution-evidence);
+    it is rejected until made load-bearing. A RED verify is recorded as the baseline
+    the sprint-complete gate then requires alongside GREEN. Run before implementing.
+    """
+    import subprocess
+    feature = args.feature
+    root = ledger.project_root()
+    criteria_path = schema.criteria_path_for_brief(root / "briefs" / f"{feature}.md")
+    if not criteria_path.exists():
+        print(f"[prusik-gate] no criteria file for {feature!r} "
+              f"({criteria_path})", file=sys.stderr)
+        return 2
+    want_id = getattr(args, "id", None)
+    targets = [c for c in schema.load_criteria(criteria_path)
+               if c.get("prove_red") and (not want_id or c.get("id") == want_id)
+               and str(c.get("verify_in", "")).lower() != "ci"
+               and c.get("verify_command")]
+    if not targets:
+        print(f"[prusik-gate] no local prove_red criteria for {feature!r}"
+              + (f" (id={want_id!r})" if want_id else ""))
+        return 0
+    all_red = True
+    for entry in targets:
+        cid = entry.get("id")
+        vc = entry.get("verify_command", "")
+        expected = entry.get("expected_exit", 0)
+        try:
+            proc = subprocess.run(["/bin/bash", "-c", vc], cwd=str(root),
+                                  capture_output=True, text=True,
+                                  timeout=_VERIFY_DEFAULT_TIMEOUT_SEC, check=False)
+            code = proc.returncode
+        except (subprocess.TimeoutExpired, OSError):
+            code = -3
+        if code != expected:  # RED — the verify fails without the change
+            ledger.append("criterion_red_baseline", feature=feature, id=cid,
+                          verify_command=vc, exit_code=code)
+            print(f"[prusik-gate] ✓ {cid}: RED baseline captured (exit {code} ≠ "
+                  f"expected {expected}) — verify is load-bearing.")
+        else:
+            all_red = False
+            print(f"[prusik-gate] ✗ {cid}: verify PASSES without the change "
+                  f"(exit {code} == expected {expected}) — it asserts nothing / "
+                  f"isn't load-bearing. Make it fail when the behavior is absent "
+                  f"before capturing.", file=sys.stderr)
+    return 0 if all_red else 1
+
+
 def _clean_worktrees(root) -> list[str]:
     """Wipe every subdirectory of worktrees/ and return their names.
 
@@ -1107,6 +1181,21 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
                 passed = False
                 out_text += (f"\n[prusik-gate] execution-evidence FAIL "
                              f"({kind}): {why}\n")
+
+        # prove-it-goes-RED: a criterion marked prove_red asserts NEW behavior, so
+        # a green verify is only credited if the SAME verify was proven RED without
+        # the change (captured via `prusik gate prove-red`). This closes the gap
+        # execution-evidence can't: a verify that runs green while asserting nothing
+        # (vacuous-green) has no RED baseline, so it cannot pass. Load-bearing, proven.
+        if passed and entry.get("prove_red") and not ci_shaped:
+            if not _red_baseline_exists(root, feature, cid, vc):
+                passed = False
+                out_text += ("\n[prusik-gate] prove_red FAIL: no captured RED "
+                             "baseline for this criterion+verify — an acceptance "
+                             "test that was never red proves nothing. Run "
+                             "`prusik gate prove-red --feature "
+                             f"{feature}` before implementing (the verify must FAIL "
+                             "without the change to be load-bearing).\n")
 
         out_path.write_text(out_text)
         if not passed:

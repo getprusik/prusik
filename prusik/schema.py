@@ -423,6 +423,10 @@ def validate_criteria_file(path, project_root: Path | None = None,
             expected_exit: <int 0-255, default 0>
             kind: tests|lint|types           # optional — arms execution-evidence
             min_executed: <int ≥ 1, default 1>  # optional — min real work required
+            prove_red: true                  # optional — require a captured RED baseline
+                                             #   (acceptance-TDD: the verify must FAIL
+                                             #   without the change, proving it's
+                                             #   load-bearing, not vacuous-green)
 
     Rules (errors, not warnings):
         - schema_version must be exactly "1.0"
@@ -542,6 +546,10 @@ def validate_criteria_file(path, project_root: Path | None = None,
         if min_exec is not None and (not isinstance(min_exec, int) or min_exec < 1):
             errors.append(f"{prefix} (id={cid!r}): min_executed must be an int ≥ 1; "
                           f"got {min_exec!r}")
+        pr = entry.get("prove_red")
+        if pr is not None and not isinstance(pr, bool):
+            errors.append(f"{prefix} (id={cid!r}): prove_red must be a boolean; "
+                          f"got {pr!r}")
 
     errors.extend(_validate_requires(data.get("requires")))
     return len(errors) == 0, errors

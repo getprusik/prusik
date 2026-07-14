@@ -253,6 +253,15 @@ def main():
                               "ratify it — this arms the imperative fit gate.")
     p_pfit.add_argument("--json", action="store_true",
                          help="Emit machine-readable JSON instead of text")
+    p_pred = gsub.add_parser("prove-red",
+                             help="Acceptance-TDD: capture the RED baseline for "
+                                  "prove_red criteria — prove each verify FAILS "
+                                  "WITHOUT the change (it's load-bearing, not "
+                                  "vacuous-green). Run BEFORE implementing; "
+                                  "sprint-complete then requires red-baseline + green.")
+    p_pred.add_argument("--feature", required=True, type=_slug)
+    p_pred.add_argument("--id", default=None,
+                         help="Capture just this criterion id (default: all prove_red)")
     p_sprintinit = gsub.add_parser("sprint-init",
                                     help="Orchestrator: run discovery + fingerprint + "
                                          "sprint-start, guide agent steps")
