@@ -302,6 +302,28 @@ def _strip_all_comments(node, _seen=None) -> None:
             _strip_all_comments(v, _seen)
 
 
+def _merge_gates_additive(proj_map, tmpl_map, summary, prefix) -> bool:
+    """Additive merge of a nested mapping (used for pre_sprint_gates). Same
+    philosophy as the phases merge: a template key the project LACKS is added
+    (with its subtree + comments); a key the project HAS is left untouched
+    (project wins — recursing into sub-maps so a new sub-key of an existing gate
+    also flows in, but never overriding a value the adopter set). To opt out of a
+    gate, set `enabled: false` (preserved) rather than deleting it — a deleted key
+    is treated as absent and re-added, exactly like a deleted phase."""
+    changed = False
+    for k, tv in tmpl_map.items():
+        if k not in proj_map:
+            proj_map[k] = tv
+            _untangle_dragged_comment(proj_map, k)
+            summary.setdefault("added_gates", []).append(f"{prefix}.{k}")
+            changed = True
+        elif isinstance(proj_map.get(k), dict) and isinstance(tv, dict):
+            if _merge_gates_additive(proj_map[k], tv, summary, f"{prefix}.{k}"):
+                changed = True
+        # else present scalar/list → project wins, untouched
+    return changed
+
+
 def merge_sprint_config_yaml(template_text: str, project_text: str
                              ) -> tuple[str, dict]:
     """Surgical additive merge of `.claude/sprint-config.yaml`.
@@ -315,7 +337,14 @@ def merge_sprint_config_yaml(template_text: str, project_text: str
             trivial_exit_artifacts by `path`; writable/deny_commands by
             string); existing project items untouched
           * scalar/map value → PROJECT WINS, untouched
-      - top-level key absent in project → add; present → project wins.
+      - top-level key absent in project → add; present → project wins,
+        EXCEPT `pre_sprint_gates`, which is merged additively (nested): a
+        template gate/sub-key the project lacks is added; one it has is
+        untouched (project wins), recursing into sub-maps. This is how newly
+        shipped enforcement gates (e.g. product_fit) reach an adopter who
+        already has a pre_sprint_gates block. Opt out of a gate with
+        `enabled: false` (preserved), not by deleting it (re-added, like a
+        deleted phase).
 
     Returns (merged_text, summary). Raises on unrecognized structure so
     the caller can fall back to a loud, precise skip (never clobber).
@@ -332,6 +361,7 @@ def merge_sprint_config_yaml(template_text: str, project_text: str
         "phase_keys_added": [],      # list["phase.key"]
         "list_additions": {},        # {"phase.key": int}
         "added_top_level_keys": [],  # list[str]
+        "added_gates": [],           # list["pre_sprint_gates.<gate>[.<subkey>]"]
     }
     changed = False
 
@@ -378,6 +408,13 @@ def merge_sprint_config_yaml(template_text: str, project_text: str
             _untangle_dragged_comment(proj, k)   # drop next-key comments ruamel dragged
             summary["added_top_level_keys"].append(k)
             changed = True
+        elif (k == "pre_sprint_gates" and isinstance(proj.get(k), dict)
+              and isinstance(tv, dict)):
+            # Nested additive merge so newly-shipped enforcement gates reach an
+            # adopter who already has a pre_sprint_gates block (fb-80eb508aa7fd
+            # follow-up: otherwise product_fit etc. never land via `prusik update`).
+            if _merge_gates_additive(proj[k], tv, summary, k):
+                changed = True
 
     if not changed:
         return project_text, summary            # byte-identical no-op
