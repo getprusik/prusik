@@ -137,6 +137,33 @@ def test_export_carries_anonymized_feedback():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_export_full_detail_carries_everything_no_anonymization():
+    """HQ-internal `--full`: anonymization is a PUBLIC-prusik concern, so for a
+    product HQ owns the export carries the real feature, verbatim detail, repro,
+    and open-feature NAMES — none of which the default (shareable) export leaks."""
+    import shutil
+
+    from prusik import feedback
+    tmp = _mktmp_project()
+    try:
+        feedback.file_feedback(
+            tmp, "bug", "a finding",
+            detail="verbatim /Users/secret/repro.log errored", severity="high")
+        # default = anonymized: feature + open-feature names dropped
+        anon = report.export_payload(_seed_named(), "x", tmp)
+        assert "feature" not in anon["feedback"][0]
+        assert "open_features" not in anon["metrics"]
+        assert "verbatim /Users/secret" not in json.dumps(anon)
+        # --full = HQ-internal: everything carried
+        full = report.export_payload(_seed_named(), "x", tmp, full_detail=True)
+        fb = full["feedback"][0]
+        assert "feature" in fb and "repro" in fb and fb.get("detail")
+        assert "open_features" in full["metrics"]
+        assert "verbatim /Users/secret/repro.log" in json.dumps(full)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_export_feedback_empty_when_none_filed():
     from pathlib import Path
     p = report.export_payload(_seed_named(), "An adopter", Path("/tmp/whatever"))

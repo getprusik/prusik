@@ -519,6 +519,12 @@ def main():
     p_report.add_argument("--product", default="",
                           help="Human label for this product in the export "
                                "(you control it; default unnamed-product)")
+    p_report.add_argument("--full", dest="export_full", action="store_true",
+                          help="HQ-INTERNAL: full detail, NO anonymization (real "
+                               "feature names + verbatim finding detail + open-"
+                               "feature names). For HQ collecting products you own "
+                               "into the private control room — NEVER for an "
+                               "external adopter's self-export/share.")
     p_report.add_argument("--out", default=None,
                           help="Export file path (default .sprint/report-export.json)")
     p_report.add_argument("--stdout", dest="export_stdout", action="store_true",
@@ -1018,7 +1024,8 @@ def main():
         return report.run(json_output=args.json,
                           export_artifact=args.export_artifact,
                           product=args.product, out=args.out,
-                          to_stdout=args.export_stdout)
+                          to_stdout=args.export_stdout,
+                          full_detail=getattr(args, "export_full", False))
     if args.cmd == "catch":
         from prusik import catch_quality
         return catch_quality.resolve(args.id, args.verdict, reason=args.reason)

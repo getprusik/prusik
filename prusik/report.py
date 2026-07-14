@@ -87,7 +87,8 @@ def timeseries(records: list[dict]) -> list[dict[str, Any]]:
 
 
 def _anonymize_feedback(records: list[dict],
-                        include_detail: bool = False) -> list[dict[str, Any]]:
+                        include_detail: bool = False,
+                        full: bool = False) -> list[dict[str, Any]]:
     """Carry filed findings to the HQ spine (C3). Feedback is DELIBERATELY-AUTHORED,
     opt-in content — the adopter filed it AND chose to export — so unlike the
     aggregate metrics it carries the authored `title` (the finding's one-line
@@ -119,6 +120,16 @@ def _anonymize_feedback(records: list[dict],
         }
         if include_detail and r.get("detail"):
             item["detail"] = r["detail"]           # …unless the partner opted in
+        if full:
+            # HQ-internal full detail (`--full`): the anonymization above is a
+            # PUBLIC-prusik concern (an external adopter's shareable self-export).
+            # When HQ collects a product IT OWNS, redaction is unnecessary — carry
+            # the whole finding (feature intent, verbatim repro, full body).
+            item["feature"] = r.get("feature")
+            item["repro"] = r.get("repro")
+            if r.get("detail"):
+                item["detail"] = r["detail"]
+            item["resolution"] = r.get("resolution")
         out.append(item)
     return out
 
@@ -144,8 +155,13 @@ def _ticket_states(root: Path) -> list[dict[str, Any]]:
         return []
 
 
-def export_payload(records: list[dict], product: str, root: Path) -> dict[str, Any]:
-    """Build the ANONYMIZED, portable artifact an adopter may opt to share.
+def export_payload(records: list[dict], product: str, root: Path,
+                   full_detail: bool = False) -> dict[str, Any]:
+    """Build the portable artifact. Anonymized by default (an adopter's opt-in
+    shareable self-export — a PUBLIC-prusik concern). `full_detail=True` is the
+    HQ-INTERNAL mode: no anonymization — real feature names + verbatim finding
+    detail + open-feature names — for HQ collecting products it owns into the
+    private control room. Never used for an external adopter's self-export.
 
     Composition rule: the same aggregate metrics as build(), MINUS every
     identifying field. Crucially it drops `open_features` (feature NAMES could
@@ -155,8 +171,10 @@ def export_payload(records: list[dict], product: str, root: Path) -> dict[str, A
     from ledger timestamps (data, not wall-clock) so the export is deterministic.
     """
     from prusik import feedback as _feedback
-    findings = _anonymize_feedback(_feedback.load_all(root),
-                                   include_detail=_include_detail(root))
+    findings = _anonymize_feedback(
+        _feedback.load_all(root),
+        include_detail=_include_detail(root) or full_detail,
+        full=full_detail)
     r = build(records)
     ts = sorted(rec["ts"] for rec in records if isinstance(rec.get("ts"), str))
     trust = {
@@ -184,6 +202,9 @@ def export_payload(records: list[dict], product: str, root: Path) -> dict[str, A
             "trust": trust,            # gate names are prusik-internal — safe
             "phases": r["phases"],     # phase names are prusik-internal — safe
             "feedback_count": len(findings),
+            # HQ-internal full detail: the actual open-feature NAMES (the public
+            # export keeps only the count — product intent could leak).
+            **({"open_features": r["open_features"]} if full_detail else {}),
         },
         "feedback": findings,          # C3 — filed findings (feature+detail dropped)
         # Feedback-pipeline operational health (NOT a telemetry metric — kept out of
@@ -198,12 +219,13 @@ def export_payload(records: list[dict], product: str, root: Path) -> dict[str, A
     }
 
 
-def export(records: list[dict], product: str, out: str | None, to_stdout: bool) -> int:
-    """Opt-in export. Writes the anonymized artifact to disk (or stdout) — prusik
-    NEVER transmits it; sharing with HQ is a deliberate act the operator takes
-    afterward with the file."""
+def export(records: list[dict], product: str, out: str | None, to_stdout: bool,
+           full_detail: bool = False) -> int:
+    """Opt-in export. Writes the artifact to disk (or stdout) — prusik NEVER
+    transmits it; sharing with HQ is a deliberate act the operator takes afterward
+    with the file. Anonymized by default; `full_detail` is the HQ-internal mode."""
     root = ledger.project_root()
-    payload = export_payload(records, product, root)
+    payload = export_payload(records, product, root, full_detail=full_detail)
     text = json.dumps(payload, indent=2, default=str)
     if to_stdout:
         print(text)
@@ -232,7 +254,7 @@ def _prec(trust: dict, gate: str) -> str:
 
 def run(json_output: bool = False, export_artifact: bool = False,
         product: str | None = None, out: str | None = None,
-        to_stdout: bool = False) -> int:
+        to_stdout: bool = False, full_detail: bool = False) -> int:
     records = ledger.read_all()
     if not records:
         msg = ("nothing to export yet." if export_artifact
@@ -240,7 +262,8 @@ def run(json_output: bool = False, export_artifact: bool = False,
         print(f"[prusik-report] ledger is empty — {msg}")
         return 0
     if export_artifact:
-        return export(records, product or "", out, to_stdout)
+        return export(records, product or "", out, to_stdout,
+                      full_detail=full_detail)
     r = build(records)
     if json_output:
         print(json.dumps(r, indent=2, default=str))
