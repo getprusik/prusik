@@ -1076,18 +1076,39 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
             out_text = f"[prusik-gate] verify_command failed to spawn: {e}\n"
             timed_out = False
 
-        out_path.write_text(out_text)
         passed = (not timed_out) and (exit_code == expected)
+
+        # Execution-evidence (prove-it-fires, generalized to success criteria). A
+        # criterion may declare kind: tests|lint|types. When it does and exits
+        # clean, we ALSO require real work was OBSERVED — so a verify that exits 0
+        # with nothing executed (the 'tests pass ✅ but nothing ran' false-clean
+        # that brief-time coherence is blind to) FAILS. Same evidence layer as
+        # `prusik prove`. Local-only (a ci_verify status check has no such output).
+        kind = entry.get("kind")
+        executed = None
+        if passed and kind and expected == 0 and not ci_shaped:
+            from prusik import evidence as _ev
+            min_exec = int(entry.get("min_executed", 1))
+            executed = _ev.executed_count(kind, out_text, vc)
+            proven, why = _ev.prove_verdict(kind, exit_code, executed, min_exec)
+            if not proven:
+                passed = False
+                out_text += (f"\n[prusik-gate] execution-evidence FAIL "
+                             f"({kind}): {why}\n")
+
+        out_path.write_text(out_text)
         if not passed:
             all_passed = False
         results.append({
             "id": cid, "passed": passed, "exit_code": exit_code,
             "output_path": str(out_path.relative_to(root)),
             "verify_command": vc, "expected_exit": expected,
+            "kind": kind, "executed": executed,
         })
         ledger.append("success_criterion_verified", feature=feature,
                       id=cid, passed=passed, exit_code=exit_code,
                       verify_command=vc, expected_exit=expected,
+                      kind=kind, executed=executed,
                       verified_via=("ci" if ci_shaped else "local"),
                       output_path=str(out_path.relative_to(root)))
 

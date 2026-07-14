@@ -421,6 +421,8 @@ def validate_criteria_file(path, project_root: Path | None = None,
             description: <prose>
             verify_command: <shell command OR path to an existing script>
             expected_exit: <int 0-255, default 0>
+            kind: tests|lint|types           # optional — arms execution-evidence
+            min_executed: <int ≥ 1, default 1>  # optional — min real work required
 
     Rules (errors, not warnings):
         - schema_version must be exactly "1.0"
@@ -528,6 +530,18 @@ def validate_criteria_file(path, project_root: Path | None = None,
         if not isinstance(exp_exit, int) or not (0 <= exp_exit <= 255):
             errors.append(f"{prefix} (id={cid!r}): expected_exit must be int in "
                           f"[0, 255]; got {exp_exit!r}")
+
+        # Execution-evidence (optional): kind makes the criterion prove REAL WORK
+        # ran, not just exit 0 — a test/lint/type verify that exits clean with
+        # nothing executed then FAILS (the false-clean prove-it-fires catches).
+        kind = entry.get("kind")
+        if kind is not None and kind not in ("tests", "lint", "types"):
+            errors.append(f"{prefix} (id={cid!r}): kind must be one of "
+                          f"tests|lint|types (or omitted); got {kind!r}")
+        min_exec = entry.get("min_executed")
+        if min_exec is not None and (not isinstance(min_exec, int) or min_exec < 1):
+            errors.append(f"{prefix} (id={cid!r}): min_executed must be an int ≥ 1; "
+                          f"got {min_exec!r}")
 
     errors.extend(_validate_requires(data.get("requires")))
     return len(errors) == 0, errors
