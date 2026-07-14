@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import shutil
 
+import json
 import os
 from datetime import datetime, timezone
 
@@ -171,6 +172,46 @@ def test_glossary_linter_dormant_without_aliases():
         assert pf.check("feat", root=tmp)[0], "no aliases → nothing to lint"
     finally:
         shutil.rmtree(tmp)
+
+
+def test_check_emit_records_per_layer_fires():
+    """emit=True records per-layer catch-fires (form/omission) to the ledger —
+    the telemetry that lets HQ see whether each layer actually catches. emit=False
+    (standalone check) stays side-effect-free."""
+    tmp = _mktmp_project()
+    cwd = os.getcwd()
+    try:
+        os.chdir(tmp)  # ledger.append is cwd-scoped
+        _charter(tmp, glossary="- customer: a billed party (aka: client)")
+        _fit(tmp, "feat", advances="- P9 — phantom pillar")  # form fails
+        _brief(tmp, "feat")
+        (tmp / "briefs" / "feat.md").write_text("## Goal\nLet a client pay.\n")  # omission
+        # side-effect-free by default
+        pf.check("feat", root=tmp)
+        assert not (tmp / ".sprint" / "ledger.jsonl").exists() or \
+            not any("product_fit" in line for line in
+                    (tmp / ".sprint" / "ledger.jsonl").read_text().splitlines())
+        # emit=True records both layers
+        pf.check("feat", root=tmp, emit=True)
+        evs = {json.loads(x)["event"] for x in
+               (tmp / ".sprint" / "ledger.jsonl").read_text().splitlines() if x.strip()}
+        assert "product_fit_form_fired" in evs
+        assert "product_fit_omission_fired" in evs
+    finally:
+        os.chdir(cwd)
+        shutil.rmtree(tmp)
+
+
+def test_product_fit_layers_registered_as_catch_families():
+    """Every product-fit fire event maps to a catch-quality family, so the fleet
+    trust view attributes catches per layer (the spine turned on the gates)."""
+    from prusik import catch_quality as cq
+    fires = ["product_fit_form_fired", "product_fit_substance_fired",
+             "product_fit_omission_fired", "criterion_evidence_fired",
+             "criterion_prove_red_fired", "charter_freshness_fired"]
+    for ev in fires:
+        assert ev in cq._GATE_OF, ev
+    assert len(cq.PRODUCT_FIT_LAYERS) == len(fires)
 
 
 def test_charter_staleness_counts_completed_sprints_since_edit():

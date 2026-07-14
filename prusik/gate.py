@@ -909,6 +909,7 @@ def sprint_start(args) -> int:
         from prusik import product_fit as _pf
         _w = _pf.freshness_warning(root, int(_cf.get("max_sprints_stale", 8)))
         if _w:
+            ledger.append("charter_freshness_fired", feature=feature, reason=_w)
             print(f"[prusik-gate] ⚠ {_w}")
     print(f"[prusik-gate] Sprint started: {feature}"
           + ("  [TRIVIAL LANE]" if state.get("lane") == "trivial" else ""))
@@ -1179,6 +1180,8 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
             proven, why = _ev.prove_verdict(kind, exit_code, executed, min_exec)
             if not proven:
                 passed = False
+                ledger.append("criterion_evidence_fired", feature=feature,
+                              id=cid, reason=why)
                 out_text += (f"\n[prusik-gate] execution-evidence FAIL "
                              f"({kind}): {why}\n")
 
@@ -1190,6 +1193,8 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
         if passed and entry.get("prove_red") and not ci_shaped:
             if not _red_baseline_exists(root, feature, cid, vc):
                 passed = False
+                ledger.append("criterion_prove_red_fired", feature=feature,
+                              id=cid, reason="no captured RED baseline (vacuous-green)")
                 out_text += ("\n[prusik-gate] prove_red FAIL: no captured RED "
                              "baseline for this criterion+verify — an acceptance "
                              "test that was never red proves nothing. Run "
@@ -2666,7 +2671,7 @@ def _check_pre_sprint_gates(config: dict, feature: str, root) -> list[str]:
             from prusik import product_fit as _pf
             if _pf.load_charter(root) is None:
                 continue  # dormant — project hasn't declared a product
-            ok, errs = _pf.check(feature, root)
+            ok, errs = _pf.check(feature, root, emit=True)  # emit=True: per-layer telemetry
             if not ok:
                 for e in errs:
                     unmet.append(f"[{gate_name}] {e}")
@@ -2679,6 +2684,8 @@ def _check_pre_sprint_gates(config: dict, feature: str, root) -> list[str]:
             if gate_spec.get("require_critique", False):
                 crit = root / "reports" / feature / "product-fit-critique.txt"
                 if not crit.exists():
+                    ledger.append("product_fit_substance_fired", feature=feature,
+                                  reason="soundness unjudged (critic not run)")
                     unmet.append(
                         f"[{gate_name}] product-fit references RESOLVE (form) but "
                         f"soundness is UNJUDGED — run the product-fit-critic role; "
@@ -2687,6 +2694,8 @@ def _check_pre_sprint_gates(config: dict, feature: str, root) -> list[str]:
                 else:
                     first = (crit.read_text().strip().splitlines() or [""])[0].strip()
                     if first != "PASS":
+                        ledger.append("product_fit_substance_fired", feature=feature,
+                                      reason="product-fit-critic FAIL")
                         unmet.append(
                             f"[{gate_name}] product-fit-critic did not PASS "
                             f"(first line: {first!r}) — the reconciliation is "

@@ -59,7 +59,25 @@ _GATE_OF = {
     "narrative_flagged":           ("narrative_detector", "high"),
     "delta_flagged":               ("delta_detector", "low"),
     "ui_e2e_flagged":              ("ui_coverage_detector", "high"),
+    # product-fit layers (v0.197.16) — per-layer telemetry so the fleet can see
+    # whether each product-fit gate actually CATCHES or is ceremony (an adopter:
+    # "a gate that never catches is ceremony → prune it"). Each fires only when it
+    # blocks/flags; catch_quality then derives true-catch vs friction as usual.
+    "product_fit_form_fired":      ("product_fit_form", "medium"),
+    "product_fit_substance_fired": ("product_fit_substance", "high"),
+    "product_fit_omission_fired":  ("product_fit_omission", "medium"),
+    "criterion_evidence_fired":    ("criterion_evidence", "high"),
+    "criterion_prove_red_fired":   ("criterion_prove_red", "high"),
+    "charter_freshness_fired":     ("charter_freshness", "low"),
 }
+
+# The product-fit family names, in brief→build order — so HQ can list EVERY layer
+# (including ones with zero fleet-wide fires = ceremony candidates), not only the
+# ones that happened to fire.
+PRODUCT_FIT_LAYERS = [
+    "product_fit_form", "product_fit_substance", "product_fit_omission",
+    "criterion_evidence", "criterion_prove_red", "charter_freshness",
+]
 
 _BLOCK_EVENTS = {"gate_blocked", "advance_blocked",
                  "sprint_init_blocked", "sprint_start_blocked"}

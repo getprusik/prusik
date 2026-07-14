@@ -201,11 +201,17 @@ def _parse_concept(entry: str) -> tuple[str, str, str]:
     return term, m.group(1).lower(), (m.group(2) or "").strip()
 
 
-def check(feature: str, root: Path | None = None) -> tuple[bool, list[str]]:
+def check(feature: str, root: Path | None = None, *,
+          emit: bool = False) -> tuple[bool, list[str]]:
     """Evidence-resolution gate. (True, []) when the acknowledgement's references
     all resolve — OR when the gate is dormant (no charter). (False, errors)
     when a charter exists but the acknowledgement is missing or a reference
-    fails to resolve."""
+    fails to resolve.
+
+    emit=True records a per-layer catch-fire to the ledger (product_fit_form /
+    product_fit_omission) when that layer blocks — the telemetry that lets HQ see
+    whether each layer actually catches or is ceremony. The gate passes emit=True;
+    a standalone `prusik gate product-fit` check stays side-effect-free."""
     root = root or ledger.project_root()
     charter = load_charter(root)
     if charter is None:
@@ -213,6 +219,9 @@ def check(feature: str, root: Path | None = None) -> tuple[bool, list[str]]:
 
     fit = fit_path(root, feature)
     if not fit.exists():
+        if emit:
+            ledger.append("product_fit_form_fired", feature=feature,
+                          reason="missing product-fit acknowledgement")
         return False, [
             f"missing product-fit acknowledgement {fit.relative_to(root)} — the "
             f"brief must reconcile against design/product.md before the sprint "
@@ -275,12 +284,24 @@ def check(feature: str, root: Path | None = None) -> tuple[bool, list[str]]:
             errors.append(f"## Concepts entry {c!r} must tag each term "
                           f"[canonical] or [new: <definition>]")
 
+    form_fired = bool(errors)  # advances / related / concepts = the .8 form layer
+
     # Omission linter — the brief must speak the canonical vocabulary, not a
     # declared near-synonym (the definition-drift that's invisible until costly).
+    omission = []
     for alias, canonical in lint_glossary(feature, root, charter):
-        errors.append(f"brief uses {alias!r} but the charter canonicalizes it as "
-                      f"{canonical!r} — use the canonical term, or add {alias!r} to "
-                      f"the glossary as its own term if it is genuinely distinct")
+        omission.append(f"brief uses {alias!r} but the charter canonicalizes it as "
+                        f"{canonical!r} — use the canonical term, or add {alias!r} to "
+                        f"the glossary as its own term if it is genuinely distinct")
+    errors.extend(omission)
+
+    if emit:
+        if form_fired:
+            ledger.append("product_fit_form_fired", feature=feature,
+                          reason=errors[0])
+        if omission:
+            ledger.append("product_fit_omission_fired", feature=feature,
+                          reason=omission[0])
 
     return (not errors), errors
 
