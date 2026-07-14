@@ -222,6 +222,13 @@ pre_sprint_gates:
   product_fit:
     enabled: true
     check: product_fit
+    # require_critique: reference-resolution (form) is only a FLOOR — a fit.md can
+    # cite a real pillar/feature/term and still be hollow "citation-ceremony". When
+    # true (default once a charter exists), the product-fit-critic must judge the
+    # reconciliation SOUND (writes reports/<feature>/product-fit-critique.txt = PASS)
+    # before the sprint starts. Set false to run form-only (not recommended — a
+    # form-pass is not a fit signal).
+    require_critique: true
 
   # Opt-in: pair with a top-level `behavior_regression` block (see below).
   # Fails sprint-start if behavior_regression.enabled is true but the

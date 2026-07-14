@@ -136,6 +136,64 @@ def test_untagged_concept_blocks():
         shutil.rmtree(tmp)
 
 
+def _critique(tmp, feature, verdict="PASS"):
+    d = tmp / "reports" / feature
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "product-fit-critique.txt").write_text(f"{verdict}\n")
+
+
+_PF_GATE = {"pre_sprint_gates": {"product_fit": {
+    "enabled": True, "check": "product_fit", "require_critique": True}}}
+
+
+def test_require_critique_blocks_until_critic_passes():
+    """The substance layer: reference-resolution (form) is a floor; when
+    require_critique is on, the product-fit-critic must PASS before start."""
+    from prusik import gate
+    tmp = _mktmp_project()
+    try:
+        _charter(tmp)
+        _fit(tmp, "feat")  # form resolves
+        # form ok but no critique yet → blocked on soundness
+        unmet = gate._check_pre_sprint_gates(_PF_GATE, "feat", tmp)
+        assert any("UNJUDGED" in u for u in unmet), unmet
+        # critic FAILs → still blocked, now on unsound reconciliation
+        _critique(tmp, "feat", "FAIL\nPF-4 [must-fix] 'persona' duplicates 'customer'")
+        unmet = gate._check_pre_sprint_gates(_PF_GATE, "feat", tmp)
+        assert any("did not PASS" in u for u in unmet), unmet
+        # critic PASSes → gate clears
+        _critique(tmp, "feat", "PASS")
+        assert gate._check_pre_sprint_gates(_PF_GATE, "feat", tmp) == []
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_require_critique_dormant_without_charter():
+    """No charter → the whole gate (form AND critique) is dormant, so the
+    existing test corpus that copies this config isn't blocked."""
+    from prusik import gate
+    tmp = _mktmp_project()
+    try:
+        assert gate._check_pre_sprint_gates(_PF_GATE, "feat", tmp) == []
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_form_failure_precedes_critique_check():
+    """A non-resolving reference blocks on FORM first — we don't ask the critic
+    to judge an acknowledgement that doesn't even cite real things."""
+    from prusik import gate
+    tmp = _mktmp_project()
+    try:
+        _charter(tmp)
+        _fit(tmp, "feat", advances="- P9 — phantom pillar")
+        _critique(tmp, "feat", "PASS")  # even a PASS critique can't rescue bad form
+        unmet = gate._check_pre_sprint_gates(_PF_GATE, "feat", tmp)
+        assert any("not a pillar" in u for u in unmet)
+    finally:
+        shutil.rmtree(tmp)
+
+
 def test_bootstrap_drafts_charter_with_existing_features():
     tmp = _mktmp_project()
     try:

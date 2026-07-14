@@ -2542,10 +2542,33 @@ def _check_pre_sprint_gates(config: dict, feature: str, root) -> list[str]:
             # evidence-backed design/<feature>/product-fit.md whose references
             # resolve against the charter + existing features.
             from prusik import product_fit as _pf
+            if _pf.load_charter(root) is None:
+                continue  # dormant — project hasn't declared a product
             ok, errs = _pf.check(feature, root)
             if not ok:
                 for e in errs:
                     unmet.append(f"[{gate_name}] {e}")
+                continue
+            # Form resolves. The SUBSTANCE layer: reference-resolution is a floor,
+            # not a quality signal (an adopter's lesson — a fit.md can cite real
+            # pillar/feature/terms and still be hollow "citation-ceremony"). When
+            # require_critique is on, the product-fit-critic must have judged
+            # soundness PASS before the sprint starts.
+            if gate_spec.get("require_critique", False):
+                crit = root / "reports" / feature / "product-fit-critique.txt"
+                if not crit.exists():
+                    unmet.append(
+                        f"[{gate_name}] product-fit references RESOLVE (form) but "
+                        f"soundness is UNJUDGED — run the product-fit-critic role; "
+                        f"it writes reports/{feature}/product-fit-critique.txt "
+                        f"(PASS/FAIL). A form-pass alone is not a fit signal.")
+                else:
+                    first = (crit.read_text().strip().splitlines() or [""])[0].strip()
+                    if first != "PASS":
+                        unmet.append(
+                            f"[{gate_name}] product-fit-critic did not PASS "
+                            f"(first line: {first!r}) — the reconciliation is "
+                            f"unsound; see reports/{feature}/product-fit-critique.txt")
             continue
 
         artifact_tpl = gate_spec.get("require_artifact")

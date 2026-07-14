@@ -232,10 +232,15 @@ def run(feature: str, root: Path | None = None, json_output: bool = False,
     ok, errors = check(feature, root)
     if json_output:
         print(json.dumps({"feature": feature, "dormant": False, "ok": ok,
-                          "errors": errors}, indent=2))
+                          "layer": "reference-resolution (form)", "errors": errors},
+                         indent=2))
     elif ok:
-        print(f"[prusik-product-fit] ✓ {feature}: acknowledgement resolves "
-              f"against design/product.md.")
+        # Honesty: this checks FORM (references resolve), not SUBSTANCE (does the
+        # feature truly fit). A form-pass is a floor, not a quality signal — the
+        # product-fit-critic judges soundness. Never let this masquerade as "it fits."
+        print(f"[prusik-product-fit] ✓ {feature}: references RESOLVE (form only — "
+              f"cited pillar/feature/terms exist). Soundness (does it truly fit?) "
+              f"is judged by the product-fit-critic, not asserted here.")
     else:
         print(f"[prusik-product-fit] ✗ {feature}: product-fit unresolved:",
               file=sys.stderr)

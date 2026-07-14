@@ -28,7 +28,8 @@ This project has declared a product, so a feature isn't done being briefed until
   - `## Advances` — which real pillar(s) this feature serves.
   - `## Related` — which existing `briefs/*.md` features it reconciles with (extends/depends/overlaps), or `none`.
   - `## Concepts` — domain terms touched, `[canonical]` (already in the glossary) or `[new: <definition>]` (a genuinely new term — never a second name for an existing concept).
-- Run `prusik gate product-fit $ARGUMENTS`. Fix anything that doesn't resolve — a claim that doesn't check out (a pillar/feature/term that doesn't exist) blocks the sprint by design. This is prusik ensuring the brief was built with holistic context at hand, with evidence.
+- Run `prusik gate product-fit $ARGUMENTS`. Fix anything that doesn't resolve — a claim that doesn't check out (a pillar/feature/term that doesn't exist) blocks the sprint by design. This is the FORM floor.
+- Then invoke the **product-fit-critic** role — it judges whether the reconciliation is *sound* (not just that references resolve): a stretch "Advances", a duplicate concept under a new name, a contradicted decision. It writes `reports/$ARGUMENTS/product-fit-critique.txt` (PASS/FAIL). A form-pass alone is NOT a fit signal; the sprint won't start until the critic PASSes. This is where holistic context is actually enforced with substance.
 - If instead you see "gate is DORMANT", the project hasn't declared a product yet. Offer to seed one: `prusik gate product-fit $ARGUMENTS --bootstrap`, then help the user ratify `design/product.md`.
 
 - Once the brief (and product-fit, if applicable) validate, tell them: "Run `/sprint-start $ARGUMENTS` when ready."
