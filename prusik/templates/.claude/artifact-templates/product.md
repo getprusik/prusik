@@ -27,6 +27,11 @@ glossary below, and prusik verifies those references resolve.
 <!-- The canonical domain terms — one definition each. This is what stops the
      "42 definitions of customer": a feature that touches a term either reuses it
      [canonical] or explicitly registers a new one. Add terms as the product
-     grows; keep each one singular and unambiguous. -->
-- <term>: <one-line definition>
+     grows; keep each one singular and unambiguous.
+
+     Declare near-synonyms with `(aka: …)` — the omission linter then flags any
+     brief that writes the alias instead of the canonical term. This is the
+     highest-leverage drift catch: it stops "client"/"persona" creeping in when
+     the product says "customer". -->
+- <term>: <one-line definition> (aka: <alias>, <alias>)
 - <term>: <one-line definition>

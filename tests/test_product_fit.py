@@ -136,6 +136,40 @@ def test_untagged_concept_blocks():
         shutil.rmtree(tmp)
 
 
+def test_glossary_omission_linter_flags_alias_in_brief():
+    """The sin of OMISSION: a brief that writes a declared near-synonym instead
+    of the canonical term is flagged — this is what actually stops definition
+    drift, beyond requiring [canonical] tags."""
+    tmp = _mktmp_project()
+    try:
+        _charter(tmp, glossary="- customer: a party that receives an invoice "
+                               "(aka: client, persona)\n- workspace: a tenant boundary")
+        _fit(tmp, "feat")  # fit artifact itself is clean
+        _brief(tmp, "feat")
+        # brief uses the canonical term → no lint hit
+        (tmp / "briefs" / "feat.md").write_text("## Goal\nLet a customer pay faster.\n")
+        assert pf.check("feat", root=tmp)[0], "canonical vocabulary must pass"
+        # brief uses an alias → blocked, naming the canonical term
+        (tmp / "briefs" / "feat.md").write_text("## Goal\nLet a client pay faster.\n")
+        ok, errs = pf.check("feat", root=tmp)
+        assert not ok and any("client" in e and "customer" in e for e in errs), errs
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_glossary_linter_dormant_without_aliases():
+    """No aliases declared → the linter is a no-op (opt-in, operator-owned)."""
+    tmp = _mktmp_project()
+    try:
+        _charter(tmp)  # no (aka: …) in the default glossary
+        _fit(tmp, "feat")
+        _brief(tmp, "feat")
+        (tmp / "briefs" / "feat.md").write_text("## Goal\nMention client and persona freely.\n")
+        assert pf.check("feat", root=tmp)[0], "no aliases → nothing to lint"
+    finally:
+        shutil.rmtree(tmp)
+
+
 def _critique(tmp, feature, verdict="PASS"):
     d = tmp / "reports" / feature
     d.mkdir(parents=True, exist_ok=True)

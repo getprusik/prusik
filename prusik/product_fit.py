@@ -73,16 +73,33 @@ def _parse_pillars(text: str) -> list[dict]:
     return pillars
 
 
-def _parse_glossary(text: str) -> dict[str, str]:
-    """Each bullet `term: definition` → {term_lower: definition}."""
+def _parse_glossary(text: str) -> tuple[dict[str, str], dict[str, str]]:
+    """Parse the glossary. Each bullet is `term: definition`, and the definition
+    may declare near-synonyms with `(aka: a, b, c)` — the alias words that should
+    be written as the canonical term instead.
+
+    Returns (glossary, aliases):
+      glossary = {term_lower: definition}
+      aliases  = {alias_lower: canonical_term_lower}   — for the omission linter
+    """
     glossary: dict[str, str] = {}
+    aliases: dict[str, str] = {}
     for b in _bullets(text):
-        if ":" in b:
-            term, defn = b.split(":", 1)
-            glossary[term.strip().lower()] = defn.strip()
-        else:
+        if ":" not in b:
             glossary[b.strip().lower()] = ""
-    return glossary
+            continue
+        term, defn = b.split(":", 1)
+        term_l = term.strip().lower()
+        defn = defn.strip()
+        m = re.search(r"\(aka:\s*(.*?)\)", defn, re.IGNORECASE)
+        if m:
+            for a in m.group(1).split(","):
+                a = a.strip().lower()
+                if a:
+                    aliases[a] = term_l
+            defn = (defn[:m.start()] + defn[m.end():]).strip()
+        glossary[term_l] = defn
+    return glossary, aliases
 
 
 def load_charter(root: Path | None = None) -> dict | None:
@@ -93,11 +110,34 @@ def load_charter(root: Path | None = None) -> dict | None:
     if not p.exists():
         return None
     sections = schema.parse_sections(p.read_text())
+    glossary, aliases = _parse_glossary(sections.get("## Glossary", ""))
     return {
         "north_star": sections.get("## North-star", "").strip(),
         "pillars": _parse_pillars(sections.get("## Pillars", "")),
-        "glossary": _parse_glossary(sections.get("## Glossary", "")),
+        "glossary": glossary,
+        "aliases": aliases,
     }
+
+
+def lint_glossary(feature: str, root: Path, charter: dict) -> list[tuple[str, str]]:
+    """The omission linter — the sin `[canonical]` tags can't catch. Scans the
+    brief TEXT for whole-word occurrences of any charter alias (a near-synonym the
+    operator declared with `(aka: …)`) that should have been the canonical term.
+    Returns [(alias, canonical), …]. Deterministic and operator-owned: only the
+    aliases the operator chose to enforce are flagged, so false positives stay low.
+    """
+    aliases = charter.get("aliases") or {}
+    if not aliases:
+        return []
+    brief = root / "briefs" / f"{feature}.md"
+    if not brief.exists():
+        return []
+    text = brief.read_text()
+    found: list[tuple[str, str]] = []
+    for alias, canonical in sorted(aliases.items()):
+        if re.search(rf"\b{re.escape(alias)}\b", text, re.IGNORECASE):
+            found.append((alias, canonical))
+    return found
 
 
 def _parse_concept(entry: str) -> tuple[str, str, str]:
@@ -184,6 +224,13 @@ def check(feature: str, root: Path | None = None) -> tuple[bool, list[str]]:
         else:
             errors.append(f"## Concepts entry {c!r} must tag each term "
                           f"[canonical] or [new: <definition>]")
+
+    # Omission linter — the brief must speak the canonical vocabulary, not a
+    # declared near-synonym (the definition-drift that's invisible until costly).
+    for alias, canonical in lint_glossary(feature, root, charter):
+        errors.append(f"brief uses {alias!r} but the charter canonicalizes it as "
+                      f"{canonical!r} — use the canonical term, or add {alias!r} to "
+                      f"the glossary as its own term if it is genuinely distinct")
 
     return (not errors), errors
 
