@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import shutil
 
+import os
+from datetime import datetime, timezone
+
 from prusik import product_fit as pf
-from tests._common import _mktmp_project
+from tests._common import _mktmp_project, _write_ledger
 
 
 def _charter(tmp, pillars="- P1 zero-fabrication trust\n- P2 minutes-not-hours",
@@ -166,6 +169,50 @@ def test_glossary_linter_dormant_without_aliases():
         _brief(tmp, "feat")
         (tmp / "briefs" / "feat.md").write_text("## Goal\nMention client and persona freely.\n")
         assert pf.check("feat", root=tmp)[0], "no aliases → nothing to lint"
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_charter_staleness_counts_completed_sprints_since_edit():
+    tmp = _mktmp_project()
+    try:
+        assert pf.charter_staleness(tmp) is None, "no charter → None"
+        _charter(tmp)
+        assert pf.charter_staleness(tmp) == 0, "no ledger → 0"
+        # backdate the charter; record 3 completions + noise after it
+        past = datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp()
+        os.utime(pf.charter_path(tmp), (past, past))
+        _write_ledger(tmp, [
+            {"event": "sprint_complete",
+             "ts": datetime(2026, 2, d, tzinfo=timezone.utc).isoformat()}
+            for d in (1, 2, 3)
+        ] + [{"event": "phase_advance",
+              "ts": datetime(2026, 2, 4, tzinfo=timezone.utc).isoformat()}])
+        assert pf.charter_staleness(tmp) == 3, "3 completions after the charter edit"
+        # touch the charter → fresh again
+        now = datetime(2026, 3, 1, tzinfo=timezone.utc).timestamp()
+        os.utime(pf.charter_path(tmp), (now, now))
+        assert pf.charter_staleness(tmp) == 0
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_freshness_warning_is_advisory_and_threshold_gated():
+    tmp = _mktmp_project()
+    try:
+        _charter(tmp)
+        past = datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp()
+        os.utime(pf.charter_path(tmp), (past, past))
+        _write_ledger(tmp, [
+            {"event": "sprint_complete",
+             "ts": datetime(2026, 2, d, tzinfo=timezone.utc).isoformat()}
+            for d in range(1, 6)  # 5 completions
+        ])
+        assert pf.freshness_warning(tmp, max_sprints_stale=8) is None, "5 < 8 → quiet"
+        w = pf.freshness_warning(tmp, max_sprints_stale=5)
+        assert w and "5 completed sprint" in w, w
+        # no charter → never warns
+        assert pf.freshness_warning(_mktmp_project()) is None
     finally:
         shutil.rmtree(tmp)
 

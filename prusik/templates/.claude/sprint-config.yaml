@@ -222,6 +222,8 @@ pre_sprint_gates:
   product_fit:
     enabled: true
     check: product_fit
+    # charter_freshness (top-level block below) warns — never blocks — when the
+    # charter has gone untouched for many completed sprints.
     # require_critique: reference-resolution (form) is only a FLOOR — a fit.md can
     # cite a real pillar/feature/term and still be hollow "citation-ceremony". When
     # true (default once a charter exists), the product-fit-critic must judge the
@@ -240,6 +242,14 @@ pre_sprint_gates:
   #   test_dir: "tests/behavior"
   #   pattern: "test_*.py"
   #   hint: "add at least one test under tests/behavior/ or disable behavior_regression"
+
+# Charter freshness (advisory). Warns at sprint-start — NEVER blocks — when the
+# product charter (design/product.md) has gone untouched for >= max_sprints_stale
+# completed sprints, so a living WHAT-layer doesn't ossify into a fiction while
+# features ship. Dormant when there's no charter.
+charter_freshness:
+  enabled: true
+  max_sprints_stale: 8
 
 # Behavior-regression suite (opt-in).
 # When enabled, regression-sentinel runs `command` from project root during

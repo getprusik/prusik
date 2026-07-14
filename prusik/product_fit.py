@@ -140,6 +140,56 @@ def lint_glossary(feature: str, root: Path, charter: dict) -> list[tuple[str, st
     return found
 
 
+def charter_staleness(root: Path | None = None) -> int | None:
+    """How many sprints have COMPLETED since the charter was last edited — a
+    freshness smell (a WHAT-layer authored once ossifies; its pillars drift from
+    what's actually shipping). None if there's no charter. Compares the charter
+    file's mtime against sprint_complete ledger timestamps: needs no new state and
+    errs toward 'fresh' (a checkout that resets mtimes won't nag spuriously)."""
+    root = root or ledger.project_root()
+    p = charter_path(root)
+    if not p.exists():
+        return None
+    try:
+        mtime = p.stat().st_mtime
+    except OSError:
+        return None
+    lf = root / ".sprint" / "ledger.jsonl"
+    if not lf.exists():
+        return 0
+    from datetime import datetime
+    n = 0
+    for line in lf.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if e.get("event") != "sprint_complete":
+            continue
+        ts = e.get("ts")
+        try:
+            if ts and datetime.fromisoformat(ts).timestamp() > mtime:
+                n += 1
+        except (ValueError, TypeError):
+            continue
+    return n
+
+
+def freshness_warning(root: Path | None = None,
+                      max_sprints_stale: int = 8) -> str | None:
+    """The advisory message when the charter has ossified, else None. Advisory by
+    design — a stale vision is a smell, not a defect, so this never blocks."""
+    stale = charter_staleness(root)
+    if stale is None or stale < max_sprints_stale:
+        return None
+    return (f"charter freshness: design/product.md has not changed in {stale} "
+            f"completed sprint(s) (≥ {max_sprints_stale}). Revisit the "
+            f"north-star / pillars / glossary so product-fit checks a living "
+            f"vision, not a fiction.")
+
+
 def _parse_concept(entry: str) -> tuple[str, str, str]:
     """`customer [canonical]` → (customer, canonical, "");
     `workspace [new: a tenant boundary]` → (workspace, new, "a tenant boundary").
