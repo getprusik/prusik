@@ -911,6 +911,14 @@ def sprint_start(args) -> int:
     return 0
 
 
+def product_fit(args) -> int:
+    """`prusik gate product-fit <feature>` — check (or --bootstrap) the holistic
+    product-fit acknowledgement. Same evidence check the pre-sprint gate runs."""
+    from prusik import product_fit as _pf
+    return _pf.run(args.feature, json_output=getattr(args, "json", False),
+                   do_bootstrap=getattr(args, "bootstrap", False))
+
+
 def _clean_worktrees(root) -> list[str]:
     """Wipe every subdirectory of worktrees/ and return their names.
 
@@ -2524,6 +2532,20 @@ def _check_pre_sprint_gates(config: dict, feature: str, root) -> list[str]:
                     f"contains no '{pattern}' files — add at least one or "
                     f"set behavior_regression.enabled: false")
                 unmet.append(f"[{gate_name}] {hint}")
+            continue
+
+        if check_type == "product_fit":
+            # Holistic product-coherence. DORMANT until design/product.md (the
+            # product charter) exists — so un-adopted projects aren't blocked and
+            # the existing test corpus (no charter in fixtures) still passes. Once
+            # a charter exists it is IMPERATIVE: the feature's brief must ship an
+            # evidence-backed design/<feature>/product-fit.md whose references
+            # resolve against the charter + existing features.
+            from prusik import product_fit as _pf
+            ok, errs = _pf.check(feature, root)
+            if not ok:
+                for e in errs:
+                    unmet.append(f"[{gate_name}] {e}")
             continue
 
         artifact_tpl = gate_spec.get("require_artifact")

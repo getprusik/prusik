@@ -1557,7 +1557,10 @@ def test_v0197_sprint_start_protects_paused_sprints_worktrees():
     destroy a DIFFERENT, PAUSED sprint's live worktrees. The adversarial
     assertion is on the target that must be PRESERVED — the paused sprint's
     uncommitted builder output — and on its phase state; only an explicit
-    --force-clean may discard them."""
+    --force-clean may discard them.
+
+    moat-finding: fb-6d21d48c94f9
+    """
     tmp = _mktmp_project()
     try:
         _copy_sprint_config(tmp)

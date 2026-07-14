@@ -209,6 +209,20 @@ pre_sprint_gates:
     hint: "run `prusik discovery all`, re-invoke cartographer, then `prusik discovery fingerprint-map`"
     scoped_hint: "the feature's own subsystem changed since the map — re-run cartographer, then `prusik discovery fingerprint-map`"
 
+  # Holistic product-fit — the WHAT-layer that keeps a stream of feature builds
+  # cohering into a world-class PRODUCT, not just well-built features. DORMANT
+  # until design/product.md (the product charter: north-star + pillars + canonical
+  # glossary) exists — so projects that haven't declared a product aren't blocked.
+  # Once the charter exists it is IMPERATIVE: each feature's brief must ship
+  # design/<feature>/product-fit.md acknowledging how it fits the whole (## Advances
+  # a real pillar, ## Related existing features, ## Concepts reconciled with the
+  # glossary), and the gate verifies those references RESOLVE — a claim that
+  # doesn't resolve fails sprint-start. Seed a charter (and arm the gate) with
+  # `prusik gate product-fit <feature> --bootstrap`.
+  product_fit:
+    enabled: true
+    check: product_fit
+
   # Opt-in: pair with a top-level `behavior_regression` block (see below).
   # Fails sprint-start if behavior_regression.enabled is true but the
   # declared test directory is empty — prevents the carve-out from rotting

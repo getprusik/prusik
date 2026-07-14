@@ -1,0 +1,244 @@
+"""Holistic product-fit gate — the WHAT-layer that keeps a stream of feature
+builds cohering into a world-class PRODUCT, not just well-built features.
+
+Prusik enforces feature-level rigor everywhere; this closes the gap above it.
+A brief is a live-cc + operator collaboration; when one is authored, prusik
+CALLS FOR an evidence-backed acknowledgement that the feature fits the whole
+product — and accepts it only when its references RESOLVE against real repo
+state. A bare "yes, we considered the product" cannot pass: there is nothing
+gameable to write. That is what makes the gate *truly* enable rather than
+rubber-stamp.
+
+Layered anchor (all three, progressive — not either/or):
+  1. Derived floor  — prior briefs + map + decisions (always available; used
+     inside the checks below).
+  2. Product charter (design/product.md) — human-owned north-star + pillars +
+     canonical glossary. The vision layer: the only thing encoding what the
+     product SHOULD be. OPTIONAL — if absent the gate is DORMANT so un-adopted
+     projects aren't blocked; once present it is IMPERATIVE (every feature must
+     acknowledge fit or sprint-start fails closed).
+  3. Bootstrap (`--bootstrap`) — drafts a charter scaffold seeded with the
+     existing feature list so the operator never faces a blank page; they
+     ratify it (human-owned truth, not agent drift).
+
+The acknowledgement design/<feature>/product-fit.md has three evidence-backed
+sections, each verified to resolve:
+  ## Advances — pillar(s) served; each must name a real charter pillar.
+  ## Related  — prior features reconciled with; each cited brief must exist.
+  ## Concepts — domain terms touched; [canonical] must be in the glossary,
+                [new: <definition>] registers a genuinely-new term (blocks
+                silent concept duplication — the "42 definitions of customer").
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+from prusik import ledger, schema
+
+
+def charter_path(root: Path) -> Path:
+    return root / "design" / "product.md"
+
+
+def fit_path(root: Path, feature: str) -> Path:
+    return root / "design" / feature / "product-fit.md"
+
+
+def _bullets(text: str) -> list[str]:
+    out = []
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith(("-", "*")):
+            body = s[1:].strip()
+            if body:
+                out.append(body)
+    return out
+
+
+def _parse_pillars(text: str) -> list[dict]:
+    """Each bullet → {"id": <e.g. P1 or "">, "name": <rest>}. Both an id token
+    (P1/G2/…) and a free-text name are accepted; either can be cited in
+    ## Advances."""
+    pillars = []
+    for b in _bullets(text):
+        m = re.match(r"([A-Za-z]{1,4}\d+)[:.)]?\s+(.*)", b)
+        if m:
+            pillars.append({"id": m.group(1), "name": m.group(2).strip()})
+        else:
+            pillars.append({"id": "", "name": b})
+    return pillars
+
+
+def _parse_glossary(text: str) -> dict[str, str]:
+    """Each bullet `term: definition` → {term_lower: definition}."""
+    glossary: dict[str, str] = {}
+    for b in _bullets(text):
+        if ":" in b:
+            term, defn = b.split(":", 1)
+            glossary[term.strip().lower()] = defn.strip()
+        else:
+            glossary[b.strip().lower()] = ""
+    return glossary
+
+
+def load_charter(root: Path | None = None) -> dict | None:
+    """Parse design/product.md → {north_star, pillars, glossary}, or None if the
+    project has not declared a product (gate stays dormant)."""
+    root = root or ledger.project_root()
+    p = charter_path(root)
+    if not p.exists():
+        return None
+    sections = schema.parse_sections(p.read_text())
+    return {
+        "north_star": sections.get("## North-star", "").strip(),
+        "pillars": _parse_pillars(sections.get("## Pillars", "")),
+        "glossary": _parse_glossary(sections.get("## Glossary", "")),
+    }
+
+
+def _parse_concept(entry: str) -> tuple[str, str, str]:
+    """`customer [canonical]` → (customer, canonical, "");
+    `workspace [new: a tenant boundary]` → (workspace, new, "a tenant boundary").
+    Untagged → (entry, "", "")."""
+    m = re.search(r"\[(canonical|new)(?::\s*(.*?))?\]\s*$", entry, re.IGNORECASE)
+    if not m:
+        return entry.strip(), "", ""
+    term = entry[: m.start()].strip()
+    return term, m.group(1).lower(), (m.group(2) or "").strip()
+
+
+def check(feature: str, root: Path | None = None) -> tuple[bool, list[str]]:
+    """Evidence-resolution gate. (True, []) when the acknowledgement's references
+    all resolve — OR when the gate is dormant (no charter). (False, errors)
+    when a charter exists but the acknowledgement is missing or a reference
+    fails to resolve."""
+    root = root or ledger.project_root()
+    charter = load_charter(root)
+    if charter is None:
+        return True, []  # dormant: project hasn't declared a product
+
+    fit = fit_path(root, feature)
+    if not fit.exists():
+        return False, [
+            f"missing product-fit acknowledgement {fit.relative_to(root)} — the "
+            f"brief must reconcile against design/product.md before the sprint "
+            f"can start (sections: ## Advances / ## Related / ## Concepts)"
+        ]
+
+    sections = schema.parse_sections(fit.read_text())
+    errors: list[str] = []
+
+    # ## Advances — every cited pillar must exist in the charter.
+    advances = _bullets(sections.get("## Advances", ""))
+    if not advances:
+        errors.append("## Advances is empty — name at least one product pillar "
+                      "this feature advances")
+    else:
+        ids = {p["id"].lower() for p in charter["pillars"] if p["id"]}
+        names = [p["name"].lower() for p in charter["pillars"] if p["name"]]
+        for a in advances:
+            al = a.lower()
+            hit = any(re.search(rf"\b{re.escape(i)}\b", al) for i in ids) or \
+                any(n and n in al for n in names)
+            if not hit:
+                pill = [p["id"] or p["name"] for p in charter["pillars"]]
+                errors.append(f"## Advances cites {a!r}, not a pillar in "
+                              f"design/product.md (pillars: {pill})")
+
+    # ## Related — every cited prior feature must exist as a brief.
+    related = _bullets(sections.get("## Related", ""))
+    if not related:
+        errors.append("## Related is empty — cite the prior features this "
+                      "reconciles with, or state 'none'")
+    else:
+        for r in related:
+            feat = r.split(":", 1)[0].strip()
+            if feat.lower() == "none" or feat == feature:
+                continue
+            if not (root / "briefs" / f"{feat}.md").exists():
+                errors.append(f"## Related cites feature {feat!r} but "
+                              f"briefs/{feat}.md does not exist")
+
+    # ## Concepts — reconcile domain terms with the canonical glossary.
+    glossary = set(charter["glossary"])
+    for c in _bullets(sections.get("## Concepts", "")):
+        term, tag, defn = _parse_concept(c)
+        tl = term.lower()
+        if tag == "canonical":
+            if tl not in glossary:
+                errors.append(f"## Concepts marks {term!r} [canonical] but it is "
+                              f"not in the charter glossary — add it to "
+                              f"design/product.md ## Glossary, or tag [new: …]")
+        elif tag == "new":
+            if not defn:
+                errors.append(f"## Concepts registers new term {term!r} without a "
+                              f"definition — use [new: <definition>]")
+            elif tl in glossary:
+                errors.append(f"## Concepts registers {term!r} as [new] but it is "
+                              f"already canonical — reuse it as [canonical], don't "
+                              f"redefine (concept duplication)")
+        else:
+            errors.append(f"## Concepts entry {c!r} must tag each term "
+                          f"[canonical] or [new: <definition>]")
+
+    return (not errors), errors
+
+
+def bootstrap(root: Path | None = None) -> int:
+    """Draft design/product.md from the charter template, seeded with the
+    existing feature list so the operator ratifies rather than starts blank."""
+    root = root or ledger.project_root()
+    p = charter_path(root)
+    if p.exists():
+        print(f"[prusik-product-fit] {p.relative_to(root)} already exists — "
+              f"edit it directly (bootstrap won't overwrite).", file=sys.stderr)
+        return 0
+    tpl = (Path(__file__).parent / "templates" / ".claude"
+           / "artifact-templates" / "product.md")
+    body = tpl.read_text() if tpl.exists() else "# Product charter\n"
+    briefs = sorted(b.stem for b in (root / "briefs").glob("*.md")) \
+        if (root / "briefs").exists() else []
+    seed = ("\n<!-- bootstrap: existing features to draw pillars/glossary from:\n"
+            + "\n".join(f"  - {b}" for b in briefs) + "\n-->\n") if briefs else ""
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body + seed)
+    print(f"[prusik-product-fit] drafted {p.relative_to(root)} "
+          f"({len(briefs)} existing feature(s) listed). Ratify it — fill the "
+          f"north-star, pillars, and glossary — then the product-fit gate is live.")
+    return 0
+
+
+def run(feature: str, root: Path | None = None, json_output: bool = False,
+        do_bootstrap: bool = False) -> int:
+    root = root or ledger.project_root()
+    if do_bootstrap:
+        return bootstrap(root)
+
+    if load_charter(root) is None:
+        msg = ("no design/product.md yet — the product-fit gate is DORMANT. "
+               "Seed a charter with `prusik gate product-fit "
+               f"{feature} --bootstrap` to make feature→product fit imperative.")
+        if json_output:
+            print(json.dumps({"feature": feature, "dormant": True, "ok": True,
+                              "message": msg}))
+        else:
+            print(f"[prusik-product-fit] {msg}")
+        return 0
+
+    ok, errors = check(feature, root)
+    if json_output:
+        print(json.dumps({"feature": feature, "dormant": False, "ok": ok,
+                          "errors": errors}, indent=2))
+    elif ok:
+        print(f"[prusik-product-fit] ✓ {feature}: acknowledgement resolves "
+              f"against design/product.md.")
+    else:
+        print(f"[prusik-product-fit] ✗ {feature}: product-fit unresolved:",
+              file=sys.stderr)
+        for e in errors:
+            print(f"  - {e}", file=sys.stderr)
+    return 0 if ok else 2

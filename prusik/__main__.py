@@ -241,6 +241,18 @@ def main():
                                "worktrees) that would otherwise block this start. "
                                "Explicit opt-in to data loss; without it sprint-start "
                                "refuses rather than destroy another sprint's work.")
+    p_pfit = gsub.add_parser("product-fit",
+                             help="Check (or --bootstrap) the holistic product-fit "
+                                  "acknowledgement: does this feature's brief resolve "
+                                  "against design/product.md (pillars + glossary) + the "
+                                  "existing feature set? Dormant until a charter exists.")
+    p_pfit.add_argument("feature", type=_slug)
+    p_pfit.add_argument("--bootstrap", action="store_true",
+                         help="Draft design/product.md (the product charter) from the "
+                              "template, seeded with the existing feature list, then "
+                              "ratify it — this arms the imperative fit gate.")
+    p_pfit.add_argument("--json", action="store_true",
+                         help="Emit machine-readable JSON instead of text")
     p_sprintinit = gsub.add_parser("sprint-init",
                                     help="Orchestrator: run discovery + fingerprint + "
                                          "sprint-start, guide agent steps")

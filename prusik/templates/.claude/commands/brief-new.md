@@ -20,7 +20,18 @@ You're going to help the user author `briefs/$ARGUMENTS.md`. The brief has five 
 **Then:**
 - Write `briefs/$ARGUMENTS.md` using the artifact template at `.claude/artifact-templates/brief.md` (copy that structure; don't invent).
 - Run `prusik gate brief briefs/$ARGUMENTS.md` via Bash. If validation fails, show the errors and ask the user to fix.
-- Once valid, tell them: "Run `/sprint-start $ARGUMENTS` when ready."
+
+**Product-fit (holistic context) — if `design/product.md` exists:**
+This project has declared a product, so a feature isn't done being briefed until it's reconciled with the *whole* product. Together with the user:
+- Read `design/product.md` (north-star, pillars, canonical glossary).
+- Co-author `design/$ARGUMENTS/product-fit.md` from `.claude/artifact-templates/product-fit.md`:
+  - `## Advances` — which real pillar(s) this feature serves.
+  - `## Related` — which existing `briefs/*.md` features it reconciles with (extends/depends/overlaps), or `none`.
+  - `## Concepts` — domain terms touched, `[canonical]` (already in the glossary) or `[new: <definition>]` (a genuinely new term — never a second name for an existing concept).
+- Run `prusik gate product-fit $ARGUMENTS`. Fix anything that doesn't resolve — a claim that doesn't check out (a pillar/feature/term that doesn't exist) blocks the sprint by design. This is prusik ensuring the brief was built with holistic context at hand, with evidence.
+- If instead you see "gate is DORMANT", the project hasn't declared a product yet. Offer to seed one: `prusik gate product-fit $ARGUMENTS --bootstrap`, then help the user ratify `design/product.md`.
+
+- Once the brief (and product-fit, if applicable) validate, tell them: "Run `/sprint-start $ARGUMENTS` when ready."
 
 **Do not:**
 - Ask them to list modules, domains, size, or links. The scoping role will derive those. If they volunteer such info, store it in Notes.
