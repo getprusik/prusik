@@ -231,6 +231,77 @@ def _untangle_dragged_comment(parent_map: Any, key: Any) -> None:
         _fix_slot(val.ca.items.get(list(val.keys())[-1]))
 
 
+def _iter_comment_tokens(ca):
+    """Yield every ruamel CommentToken reachable from a comment-attribute."""
+    if ca is None:
+        return
+
+    def expand(x):
+        if x is None:
+            return
+        if isinstance(x, list):
+            for i in x:
+                yield from expand(i)
+        elif hasattr(x, "value"):
+            yield x
+
+    for x in (ca.comment or []):
+        yield from expand(x)
+    for v in (getattr(ca, "items", None) or {}).values():
+        yield from expand(v)
+
+
+def _sanitize_empty_comments(node, _seen=None) -> None:
+    """ruamel's emitter.write_comment does `value[-1]` with no length guard, so a
+    CommentToken whose value is the empty string crashes serialize with IndexError
+    (fb-80eb508aa7fd: the additive merge's node-copy of a top-level key left an
+    empty post-comment, and `prusik refresh/update` then died with MERGE FAILED on
+    a config that is VALID YAML — silently blocking the adopter from every future
+    enforcement delta). Normalize any empty comment value to a benign newline across
+    the whole merged tree before dump."""
+    if _seen is None:
+        _seen = set()
+    if id(node) in _seen:
+        return
+    _seen.add(id(node))
+    for ct in _iter_comment_tokens(getattr(node, "ca", None)):
+        if ct.value == "":
+            ct.value = "\n"
+    if isinstance(node, dict):
+        for v in node.values():
+            _sanitize_empty_comments(v, _seen)
+    elif isinstance(node, list):
+        for v in node:
+            _sanitize_empty_comments(v, _seen)
+
+
+def _strip_all_comments(node, _seen=None) -> None:
+    """Last-resort: drop all comment attributes so serialize can't touch a comment
+    token at all. Used only if the sanitized round-trip still fails — a
+    comment-stripped merge with CORRECT data beats a crash that blocks updates."""
+    if _seen is None:
+        _seen = set()
+    if id(node) in _seen:
+        return
+    _seen.add(id(node))
+    ca = getattr(node, "ca", None)
+    if ca is not None:
+        try:
+            ca.comment = None
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            (getattr(ca, "items", None) or {}).clear()
+        except Exception:  # noqa: BLE001
+            pass
+    if isinstance(node, dict):
+        for v in node.values():
+            _strip_all_comments(v, _seen)
+    elif isinstance(node, list):
+        for v in node:
+            _strip_all_comments(v, _seen)
+
+
 def merge_sprint_config_yaml(template_text: str, project_text: str
                              ) -> tuple[str, dict]:
     """Surgical additive merge of `.claude/sprint-config.yaml`.
@@ -312,5 +383,15 @@ def merge_sprint_config_yaml(template_text: str, project_text: str
         return project_text, summary            # byte-identical no-op
 
     buf = _io.StringIO()
-    y.dump(proj, buf)
+    try:
+        _sanitize_empty_comments(proj)
+        y.dump(proj, buf)
+    except Exception as e:  # noqa: BLE001 — a serializer edge case must NEVER block
+        import sys as _sys
+        print(f"[prusik-refresh] warning: comment-preserving merge hit a "
+              f"serializer edge case ({type(e).__name__}); falling back to a "
+              f"comment-stripped merge so the update still lands.", file=_sys.stderr)
+        _strip_all_comments(proj)
+        buf = _io.StringIO()
+        y.dump(proj, buf)
     return buf.getvalue(), summary
