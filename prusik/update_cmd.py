@@ -71,8 +71,7 @@ def _install_kind() -> tuple[str, str]:
         repo = str(Path(prusik.__file__).resolve().parent.parent)
         return "editable", f"git -C {repo} pull"
     return ("installed",
-            "pipx upgrade prusik   "
-            "# or: pip install -U git+https://github.com/getprusik/prusik.git")
+            "pipx upgrade prusik   # or: pip install -U prusik")
 
 
 def run(timeout: float = 3.0) -> int:
