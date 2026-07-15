@@ -2383,6 +2383,23 @@ def _evidence_unsatisfied(rel_path: str, feature: str | None,
                         f"the FULL suite, which prusik enforces separately.")
             cov = _baseline_covers_failure(e, root)
             if cov is None:
+                # fb-48e9135bf2bc: a --baseline-* declaration on a LINT/TYPES capture
+                # is silently ineffective (baselines bound a git-stash-proven TEST
+                # failed-count; lint/types evidence records files-checked, not a
+                # violation count). It was rejected with the generic "false-clean"
+                # message, which sent the reviewer chasing a persistence bug that
+                # isn't there. Give the accurate reason instead.
+                _bl = e.get("baseline")
+                _k = (e.get("nonempty_primitive") or {}).get("kind")
+                if isinstance(_bl, dict) and _bl.get("domain") and _k in ("lint", "types"):
+                    return (f"phase {e.get('phase')!r}: a --baseline-* declaration was "
+                            f"made for a {_k} capture, but baselines are only supported "
+                            f"for kind=tests (the proven-failure store bounds a TEST "
+                            f"failed-count; a {_k} capture records files-checked, not a "
+                            f"violation count). A pre-existing {_k} failure can't be "
+                            f"baselined — fix it, or exclude it from this scoped check "
+                            f"(e.g. a per-file ignore), then re-capture clean. "
+                            f"(lint/type baseline support is tracked separately.)")
                 return (f"phase {e.get('phase')!r} claims PASS but its captured "
                         f"exit_code={e.get('exit_code')} (false-clean: errored "
                         f"phase scored clean). If these are PRE-EXISTING failures, "
