@@ -16,6 +16,18 @@ kit_version: "0.1.0"
 # whole suite; a partial-mirror model may prefer the reviewing sentinel as the
 # authoritative full-suite gate.
 # require_full_suite_at_build: true
+#
+# v0.197.23 (fb-87c46ae9348a): regardless of the flag above, the full-suite gate is
+# ALWAYS mandatory when the sprint diff touches SHARED TEST-INFRA — a tier-spanning
+# conftest.py, an autouse/session/package/module-scoped fixture, or any module below.
+# Such a change has blast radius = every tier but an empty production reverse-dep set,
+# so a touched-set green hides cross-tier breakage (a session autouse fixture edit that
+# broke 5 behavior tests the builder never ran). List extra all-tier modules that a
+# static scan can't prove (e.g. a base test-case class) so a change to one also forces
+# a full-tier run:
+# shared_test_infra:
+#   - tests/support/base_case.py
+#   - tests/factories.py
 
 # v0.96.0 (field finding #1) — blast-radius prediction becomes a reviewing GATE, not
 # ignored prose. At plan time prusik computes which tests outside the plan's

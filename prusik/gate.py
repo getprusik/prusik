@@ -1362,6 +1362,17 @@ def _full_suite_gate(current: str, target_phase: str, feature: str) -> int | Non
         root = ledger.project_root()
         config = _phases.load_sprint_config() or {}
         require_full = bool(config.get("require_full_suite_at_build"))
+        # fb-87c46ae9348a: a change to SHARED TEST-INFRA (a tier-spanning conftest,
+        # an autouse/session-scoped fixture, or a declared all-tier module) has
+        # blast radius = every tier, yet its production reverse-dep set is empty so
+        # it reads as low-blast. When the sprint touched such a surface, a touched-
+        # set green is exactly the false confidence that hides cross-tier breakage —
+        # so the full-suite requirement is MANDATORY here regardless of the advisory
+        # config flag. This shifts fb-90cfcfa8b918 left to the authoring phase.
+        from prusik import shared_infra
+        shared = shared_infra.touched_shared_test_infra(root, config)
+        if shared:
+            require_full = True
         records = ledger.read_all()
         entered = max((r.get("ts", "") for r in records
                        if r.get("event") == "phase_advance"
@@ -1383,13 +1394,27 @@ def _full_suite_gate(current: str, target_phase: str, feature: str) -> int | Non
         print(f"[prusik-gate] (full-suite check skipped: {e})", file=sys.stderr)
         return None
     if require_full:
+        if shared:
+            trigger = (" — this sprint changed SHARED TEST-INFRA whose blast radius is "
+                       "every tier: " + "; ".join(f"{s['file']} ({s['reason']})"
+                                                   for s in shared[:3])
+                       + ". A touched-set/subset green cannot see cross-tier breakage "
+                       "from a shared-infra change (fb-87c46ae9348a) — run all tiers "
+                       "(unit+integration+behavior+smoke) green before advancing.")
+            ledger.append("shared_test_infra_gate", from_phase=current,
+                          to_phase=target_phase, feature=feature,
+                          files=[s["file"] for s in shared])
+        else:
+            trigger = " (require_full_suite_at_build is on.)"
         print(f"[prusik-gate] BLOCKED leaving '{current}': {problem}. Advancing must "
               f"run on FULL-suite evidence, not a subset — a touched-set green is "
               f"false confidence (fb-90cfcfa8b918). Run the FULL suite green "
-              f"(`prusik prove --kind tests -- <full test command>`) before advancing. "
-              f"(require_full_suite_at_build is on.)", file=sys.stderr)
+              f"(`prusik prove --kind tests -- <full test command>`) before advancing."
+              f"{trigger}", file=sys.stderr)
         ledger.append("advance_blocked", from_phase=current, to_phase=target_phase,
-                      feature=feature, reason=f"full-suite not proven: {problem}")
+                      feature=feature,
+                      reason=f"full-suite not proven: {problem}"
+                             + (" [shared-test-infra]" if shared else ""))
         return 2
     print(f"[prusik-gate] full-suite ADVISORY — {problem}. A structural change can "
           f"break existing tests outside the touched set; a touched-set green hides "
