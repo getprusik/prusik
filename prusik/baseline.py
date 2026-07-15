@@ -121,23 +121,87 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, check=False)
 
 
-def prove(root: Path, test: str, command: str, *, days: int = DEFAULT_DAYS,
-          today: date | None = None) -> tuple[bool, str]:
+def _toplevel(path: Path) -> str | None:
+    """The git working-tree root containing `path`, or None if not a work tree."""
+    r = _git(path, "rev-parse", "--show-toplevel")
+    top = r.stdout.strip()
+    return top if r.returncode == 0 and top else None
+
+
+# A leading `cd <path>` in the proof command — the crack behind fb-f02412bdfd4d.
+# A command like `cd worktrees/solo && pytest` runs the suite in a LINKED git
+# worktree, but `prove` used to stash `root` (the process-cwd's tree). Stashing
+# `root` does NOT touch a separate worktree's dirty files, so the "baseline" run
+# still carried ALL the sprint's changes → real regressions were falsely PROVEN
+# pre-existing. We detect the cd target and stash THAT tree instead.
+_CD_RE = re.compile(r"""(?:^|&&|;|\|\|)\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s&;|]+))""")
+
+
+def _resolve_target_tree(root: Path, command: str,
+                         worktree: Path | None) -> tuple[Path, str | None]:
+    """The git working tree `command` actually runs against — which may be a
+    LINKED worktree the command `cd`s into, NOT `root`. Returns (tree, note).
+
+    Precedence: an explicit `worktree` wins; else a leading `cd <path>` that
+    lands in a DIFFERENT git worktree than `root` is honored (fb-f02412bdfd4d);
+    else `root` (the common single-tree case, unchanged)."""
+    if worktree is not None:
+        tree = worktree if worktree.is_absolute() else (root / worktree)
+        return tree.resolve(), f"explicit worktree {tree}"
+    root_top = _toplevel(root)
+    for m in _CD_RE.finditer(command):
+        raw = m.group(1) or m.group(2) or m.group(3)
+        cand = Path(raw) if Path(raw).is_absolute() else (root / raw)
+        if not cand.exists():
+            continue
+        cand_top = _toplevel(cand.resolve())
+        if cand_top and cand_top != root_top:
+            return Path(cand_top), f"`cd {raw}` → linked worktree {cand_top}"
+    return root, None
+
+
+_LEADING_CD_RE = re.compile(
+    r"""\s*cd\s+(?:"[^"]+"|'[^']+'|[^\s&;|]+)\s*(?:&&|;)\s*""")
+
+
+def _strip_leading_cd(command: str) -> str:
+    """Drop a leading `cd <path> &&` (or `;`) so the remainder runs where it's
+    invoked — used to re-run the same check at the canonical root when the command
+    originally cd'd into a worktree (the environment-gap A/B)."""
+    m = _LEADING_CD_RE.match(command)
+    return command[m.end():] if m else command
+
+
+def prove(root: Path, test: str, command: str, *, worktree: Path | None = None,
+          days: int = DEFAULT_DAYS, today: date | None = None) -> tuple[bool, str]:
     """Stash the sprint's changes, run `command` on HEAD, and baseline `test`
     ONLY if it fails there (proven pre-existing). The integrity core — a failure
-    that passes on HEAD is the sprint's and is refused."""
+    that passes on HEAD is the sprint's and is refused.
+
+    Worktree-aware (fb-f02412bdfd4d): the A/B stash+run happens in the git tree
+    the command ACTUALLY runs against — a linked `worktrees/<role>` the command
+    `cd`s into, or an explicit `worktree` — not blindly on `root`. Stashing the
+    wrong tree is a no-op for the code under test and silently PROVES real
+    regressions pre-existing, so when the target tree can't be reconciled we run
+    against it correctly rather than the process-cwd's tree."""
     today = today or date.today()
-    if _git(root, "rev-parse", "--is-inside-work-tree").returncode != 0:
-        return False, "not inside a git work tree — cannot prove pre-existence"
-    head = _git(root, "rev-parse", "HEAD").stdout.strip()
-    if not _git(root, "status", "--porcelain").stdout.strip():
-        return False, ("working tree is clean — HEAD and current are identical, "
+    target, tnote = _resolve_target_tree(root, command, worktree)
+    where = f" (in {tnote})" if tnote else ""
+    if _git(target, "rev-parse", "--is-inside-work-tree").returncode != 0:
+        return False, f"not inside a git work tree{where} — cannot prove pre-existence"
+    head = _git(target, "rev-parse", "HEAD").stdout.strip()
+    if not _git(target, "status", "--porcelain").stdout.strip():
+        return False, (f"working tree is clean{where} — HEAD and current are identical, "
                        "so a failure here is not the sprint's to baseline anyway.")
-    stash = _git(root, "stash", "push", "-u", "-m", "prusik-baseline-proof")
+    stash = _git(target, "stash", "push", "-u", "-m", "prusik-baseline-proof")
     if stash.returncode != 0 or "No local changes" in stash.stdout:
-        return False, f"git stash failed: {(stash.stdout + stash.stderr).strip()}"
+        return False, f"git stash failed{where}: {(stash.stdout + stash.stderr).strip()}"
+    # When we detected the tree from the command's own `cd`, keep cwd=root so that
+    # `cd` navigates as written; an explicit worktree means the command is cd-free,
+    # so run it directly in the target tree.
+    run_cwd = target if worktree is not None else root
     try:
-        proc = subprocess.run(["/bin/bash", "-c", command], cwd=str(root),
+        proc = subprocess.run(["/bin/bash", "-c", command], cwd=str(run_cwd),
                               capture_output=True, text=True,
                               timeout=_PROVE_TIMEOUT_SEC, check=False)
         failed_on_head = proc.returncode != 0
@@ -145,17 +209,59 @@ def prove(root: Path, test: str, command: str, *, days: int = DEFAULT_DAYS,
         failed_on_head = None  # type: ignore[assignment]
         err = str(e)
     finally:
-        pop = _git(root, "stash", "pop")
+        # The command may have written to tracked files or dropped untracked
+        # byproducts (.pyc, coverage, output files) that collide with `stash pop`
+        # and STRAND the sprint's changes in the stash (a false failure that eats
+        # your work). The sprint's work is safely stashed, so first reset the
+        # command's throwaway effects to a pristine HEAD — then pop always applies
+        # cleanly. reset --hard discards only the command's tracked writes (yours
+        # are in the stash); clean -fd drops only untracked byproducts (stash -u
+        # already moved your untracked files out).
+        _git(target, "reset", "--hard", "HEAD")
+        _git(target, "clean", "-fd")
+        pop = _git(target, "stash", "pop")
     if pop.returncode != 0:
-        return False, (f"CRITICAL: `git stash pop` failed — your changes are in "
+        return False, (f"CRITICAL: `git stash pop` failed{where} — your changes are in "
                        f"the stash, restore manually: {pop.stderr.strip()}")
     if failed_on_head is None:
-        return False, f"could not run the proof command on HEAD: {err}"
+        return False, f"could not run the proof command on HEAD{where}: {err}"
     if not failed_on_head:
-        return False, ("test PASSED on HEAD (without your changes) — this failure "
+        return False, (f"test PASSED on HEAD (without your changes){where} — this failure "
                        "is the SPRINT's, not pre-existing. NOT baselined. Fix it.")
+    # ENVIRONMENT-GAP discriminator (fb-80d0a26be528). The failure reproduces on the
+    # target tree's base → a candidate pre-existing. But when we prove in a worktree
+    # distinct from the canonical root, a failure that PASSES at the root — where
+    # gitignored fixtures/assets live on disk — is an ENVIRONMENT gap (e.g. a fixture
+    # absent from the worktree checkout), NOT the code's pre-existing debt. Such a
+    # failure fails on the worktree's base at EVERY commit (the fixture is never
+    # committed), so a worktree-only A/B would mislabel it "pre-existing" and tolerate
+    # it for `days`, masking the real fix (make the environment match). Machine-verified,
+    # not a prose claim: we RUN the same check at the canonical root and see it pass.
+    if target.resolve() != root.resolve():
+        root_cmd = command if worktree is not None else _strip_leading_cd(command)
+        try:
+            rp = subprocess.run(["/bin/bash", "-c", root_cmd], cwd=str(root),
+                                 capture_output=True, text=True,
+                                 timeout=_PROVE_TIMEOUT_SEC, check=False)
+            passes_at_root = rp.returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
+            passes_at_root = False   # can't verify → treat as pre-existing, not env-gap
+        if passes_at_root:
+            root_head = _git(root, "rev-parse", "HEAD").stdout.strip()
+            cause = (f"passes at project root ({root_head[:12]}) but fails in the worktree "
+                     f"— an environment/fixture gap (e.g. a gitignored fixture or asset "
+                     f"absent from the worktree checkout), NOT the sprint's code")
+            add_entry(root, test, proven_sha=head[:12], days=days, today=today,
+                      kind="env-gap", note=f"env-gap: {cause}")
+            return True, (f"ENVIRONMENT-GAP — {cause}. Tagged (expires in {days}d) so an "
+                          f"environment issue doesn't block the sprint, but the real fix is "
+                          f"to make the environment match: provide the missing fixture/asset "
+                          f"in the worktree (or stop gitignoring it), then re-run — do NOT "
+                          f"ship it as a tolerated pre-existing failure.")
     clock = _reads_wall_clock(test, root)
     note = f"stash-proven pre-existing on {head[:12]}"
+    if tnote:
+        note += f" · {tnote}"
     if clock:
         note += " · CLOCK-DEPENDENT (possible time-of-day flake)"
     add_entry(root, test, proven_sha=head[:12], days=days, today=today, note=note)
@@ -223,7 +329,8 @@ def prove_flaky(root: Path, test: str, command: str, *,
 
 def run(action: str, *, feature: str | None = None, test: str | None = None,
         command: str | None = None, days: int = DEFAULT_DAYS,
-        runs: int = _DEFAULT_FLAKY_RUNS, root: Path | None = None) -> int:
+        runs: int = _DEFAULT_FLAKY_RUNS, worktree: Path | None = None,
+        root: Path | None = None) -> int:
     from prusik import ledger
     root = root or ledger.project_root()
     today = date.today()
@@ -256,10 +363,18 @@ def run(action: str, *, feature: str | None = None, test: str | None = None,
         if not test or not command:
             print("[baseline] prove needs --test <id> and --command \"<cmd>\".")
             return 2
-        ok, msg = prove(root, test, command, days=days, today=today)
+        ok, msg = prove(root, test, command, worktree=worktree, days=days, today=today)
         print(f"[baseline] {'PROVEN' if ok else 'REFUSED'}: {msg}")
+        # Machine-determined category for HQ telemetry: the entry prove just wrote
+        # carries the verdict — proven-pre-existing / env-gap (fb-80d0a26be528) /
+        # clock-flake — so the ledger records WHY a red was tolerated, not just that
+        # it was. new-regression → refused (no entry), recorded as proven=False.
+        category = "new-regression"
+        if ok:
+            ent = next((x for x in reversed(load(root)) if x.get("test") == test), None)
+            category = (ent or {}).get("kind", "pre-existing")
         ledger.append("known_failure_baseline", feature=feature or "", test=test,
-                      proven=ok, action="prove")
+                      proven=ok, action="prove", category=category)
         return 0 if ok else 2
 
     if action == "prove-flaky":

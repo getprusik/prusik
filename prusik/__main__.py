@@ -194,6 +194,13 @@ def main():
     p_bl.add_argument("--command",
                       help="prove: the command that runs ONLY that test. prove-flaky: "
                            "the command that EXHIBITS the flake (e.g. the full suite).")
+    p_bl.add_argument("--worktree",
+                      help="prove: the git worktree the --command runs against "
+                           "(e.g. worktrees/solo). Its dirty changes are the ones "
+                           "stashed for the A/B; give this when the failing tests live "
+                           "in a linked worktree, so the proof isn't run against the "
+                           "wrong tree (fb-f02412bdfd4d). Auto-detected from a leading "
+                           "`cd <path>` in --command when omitted.")
     p_bl.add_argument("--days", type=int, default=30,
                       help="Days until the baseline ages out (default 30)")
     p_bl.add_argument("--runs", type=int, default=5,

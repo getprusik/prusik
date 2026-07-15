@@ -2037,6 +2037,12 @@ def capture(args) -> int:
     if kind == "tests":
         from prusik import evidence as _evidence
         entry["observed_failures"] = _evidence.failed_count(combined)
+        # fb-80d0a26be528: record the NAMED failing tests so the advance gate can
+        # require each residual red to carry its OWN machine-verified category
+        # (proven-pre-existing / env-gap), not ride a bare count. Best-effort — a
+        # terse run yields no names and the gate falls back to the count bound.
+        if (fail_names := _evidence.failed_tests(combined)):
+            entry["failing_tests"] = fail_names
         # field finding #4: record the worktree's named skipped tests so `prusik delta-check`
         # can later surface EXACTLY which tests stopped running on the integrated tree
         # (provenance, not a bare count). Only when present, to keep evidence lean.
@@ -2326,6 +2332,48 @@ def _baseline_covers_failure(e: dict, root: Path) -> dict | None:
             "domain": bl.get("domain"), "source": bl.get("source")}
 
 
+def _test_id_matches(baseline_test: str, failing: str) -> bool:
+    """Does an active baseline entry cover a specific failing test id? Exact match,
+    or one id is a suffix of the other AT A PATH/NODE BOUNDARY — so a `path::node`
+    proof id matches the same id carried by a `FAILED tests/…/path::node` line
+    regardless of a leading-directory difference. Boundary-anchored on purpose: a
+    proof for `x.py::test_a` must NEVER silently cover a NEW `x.py::test_ab` (bare
+    substring/prefix matching would launder exactly the regression this gate exists
+    to catch)."""
+    b, f = baseline_test.strip(), failing.strip()
+    if not b or not f:
+        return False
+    if b == f:
+        return True
+
+    def _suffix_at_boundary(long: str, short: str) -> bool:
+        if not long.endswith(short) or len(long) <= len(short):
+            return False
+        return long[len(long) - len(short) - 1] in ("/", ":")
+
+    return _suffix_at_boundary(f, b) or _suffix_at_boundary(b, f)
+
+
+def _reds_all_categorized(e: dict, root: Path) -> tuple[bool, list[str]]:
+    """Per-failure classification (fb-80d0a26be528). When the capture recorded the
+    NAMED failing tests, every one must be covered by an ACTIVE baseline entry — a
+    machine-verified category (git-stash-proven pre-existing, or env-gap). Returns
+    (all_covered, uncovered_names). (False, names) when names exist but some carry no
+    category (untagged / new-regression). (True, []) only when every red is tagged.
+    Signals 'no names recorded' via a sentinel so the caller falls back to the count
+    bound: returns (True, []) ONLY if names present and all covered."""
+    from datetime import date
+    from prusik import baseline as _baseline
+    failing = e.get("failing_tests")
+    if not (isinstance(failing, list) and failing):
+        return False, []                      # no names → caller uses the count path
+    active_ids = [x.get("test", "")
+                  for x in _baseline.active(_baseline.load(root), date.today())]
+    uncovered = [f for f in failing
+                 if not any(_test_id_matches(b, f) for b in active_ids)]
+    return (not uncovered), uncovered
+
+
 def _evidence_unsatisfied(rel_path: str, feature: str | None,
                           root: Path) -> str | None:
     """Return None if the execution-evidence for this artifact satisfies the
@@ -2381,6 +2429,28 @@ def _evidence_unsatisfied(rel_path: str, feature: str | None,
                         f"`--no-cov` / `-p no:cov` / `--cov-fail-under=0`) — the behavior "
                         f"capture proves the tests PASS; the coverage %% gate belongs on "
                         f"the FULL suite, which prusik enforces separately.")
+            # fb-80d0a26be528 — per-failure classification. When the capture named
+            # its failing tests, adjudicate EACH one: every residual red must carry a
+            # machine-verified category (an active git-stash-proven or env-gap baseline
+            # entry). This is authoritative over the count bound — 3 proofs can't
+            # tolerate 3 NEW failures in different tests. A prose "N pre-existing" claim
+            # never reaches here; only recorded proofs do.
+            failing = e.get("failing_tests")
+            if isinstance(failing, list) and failing:
+                all_tagged, uncovered = _reds_all_categorized(e, root)
+                if all_tagged:
+                    ledger.append("residual_reds_all_categorized", feature=feature,
+                                   phase=e.get("phase"), count=len(failing))
+                    continue   # every red carries a machine-verified category
+                return (f"phase {e.get('phase')!r}: {len(uncovered)} residual failing "
+                        f"test(s) carry NO machine-verified category — a new-regression or "
+                        f"an untagged red: {', '.join(uncovered[:5])}"
+                        f"{'…' if len(uncovered) > 5 else ''}. Each residual red must be "
+                        f"adjudicated in-phase, mechanically: git-stash-prove a pre-existing "
+                        f"failure with `prusik gate baseline prove --test <id> --command "
+                        f"\"<cmd>\"` (proven green-on-base), which also classifies an "
+                        f"environment-gap when it passes at the project root. A prose "
+                        f"'pre-existing' claim does not advance the phase.")
             cov = _baseline_covers_failure(e, root)
             if cov is None:
                 # fb-48e9135bf2bc: a --baseline-* declaration on a LINT/TYPES capture
@@ -2478,7 +2548,9 @@ def baseline(args) -> int:
                          test=getattr(args, "test", None),
                          command=getattr(args, "command", None),
                          days=getattr(args, "days", _baseline.DEFAULT_DAYS),
-                         runs=getattr(args, "runs", _baseline._DEFAULT_FLAKY_RUNS))
+                         runs=getattr(args, "runs", _baseline._DEFAULT_FLAKY_RUNS),
+                         worktree=(Path(wt) if (wt := getattr(args, "worktree", None))
+                                   else None))
 
 
 def scope(args) -> int:

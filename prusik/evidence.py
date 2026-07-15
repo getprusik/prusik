@@ -149,6 +149,34 @@ def _clean_lint_over_real_scope(command: str, text: str) -> bool:
     return False
 
 
+# Named FAILED tests (not just a count) so the per-failure classification gate can
+# require EACH residual red to carry a machine-verified category, rather than bounding
+# a bare count (3 proofs for A,B,C must not tolerate 3 NEW failures in D,E,F).
+# fb-80d0a26be528. Best-effort across pytest layouts; a terse run may report only a
+# count, so callers must tolerate an empty list even when failed_count > 0.
+_FAIL_PYTEST = (
+    re.compile(r"^FAILED\s+(\S+::\S+|\S+\.py(?::\d+)?)", re.M),   # summary: FAILED x.py::t
+    re.compile(r"^ERROR\s+(\S+::\S+|\S+\.py(?::\d+)?)", re.M),    # summary: ERROR x.py::t
+    re.compile(r"(\S+\.py::\S+)\s+FAILED\b"),                      # verbose: x.py::t FAILED
+)
+
+
+def failed_tests(text: str) -> list[str]:
+    """Named FAILED/ERROR tests from pytest output (summary `FAILED x.py::t` or
+    verbose `x.py::t FAILED`), de-duped in first-seen order. Best-effort: a terse
+    run reports only a count (see failed_count), so an empty list here does NOT mean
+    zero failures — the caller falls back to the count bound in that case."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for pat in _FAIL_PYTEST:
+        for m in pat.finditer(text):
+            t = m.group(1).strip()
+            if t and t not in seen:
+                seen.add(t)
+                out.append(t)
+    return out
+
+
 def failed_count(text: str) -> int:
     """Observed FAILED tests from the tool's own summary ("N failed") — the analog
     of executed_count for the failure side, used to bound a declared known-failure
