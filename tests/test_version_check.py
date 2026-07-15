@@ -9,6 +9,38 @@ from contextlib import redirect_stdout
 from prusik import version_check, update_cmd
 
 
+def test_via_pypi_reads_info_version():
+    import json as _json
+    from unittest import mock
+
+    payload = _json.dumps({"info": {"version": "0.197.18"}}).encode()
+
+    class _R:
+        def read(self):
+            return payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    with mock.patch.object(version_check.urllib.request, "urlopen", return_value=_R()):
+        assert version_check._via_pypi(1.0) == "0.197.18"
+
+
+def test_latest_release_prefers_pypi_over_stale_git_tags():
+    """Regression: an editable install checked the private repo's git tags and saw
+    a STALE 'latest' (release tags live on the public repo + PyPI, not the private
+    canonical). PyPI is the authoritative source and must win."""
+    from unittest import mock
+
+    with mock.patch.object(version_check, "_via_pypi", return_value="0.197.18"), \
+            mock.patch.object(version_check, "_via_gh", return_value="v0.196.1"), \
+            mock.patch.object(version_check, "_via_http", return_value="v0.196.1"):
+        assert version_check.latest_release() == "0.197.18"
+
+
 def test_parse_and_is_newer():
     assert version_check._parse("v0.83.0") == (0, 83, 0)
     assert version_check._parse("0.83.0") == (0, 83, 0)

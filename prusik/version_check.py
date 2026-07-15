@@ -22,6 +22,12 @@ from prusik import __version__
 
 _REPO = "getprusik/prusik"
 _TAGS_URL = f"https://api.github.com/repos/{_REPO}/tags"
+# PyPI is the authoritative "latest release": it's where `pip install prusik` gets
+# the package, so it's correct for EVERY install mode — including an editable
+# install from a repo whose git tags may lag the actual releases (an internal
+# adopter saw "latest 0.196.1" because release tags live on the public repo + PyPI,
+# not the private canonical). Public + auth-free, so it's the primary source.
+_PYPI_URL = "https://pypi.org/pypi/prusik/json"
 _VER_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
 
@@ -115,11 +121,26 @@ def changelog_text(timeout: float = 3.0) -> str | None:
     return _changelog_via_gh(timeout) or _changelog_via_http(timeout)
 
 
+def _via_pypi(timeout: float) -> str | None:
+    """The authoritative latest release — PyPI's current version. Auth-free, and
+    correct regardless of which git repo carries the release tags."""
+    try:
+        req = urllib.request.Request(
+            _PYPI_URL, headers={"User-Agent": "prusik-version-check"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        return None
+    v = (data.get("info") or {}).get("version") if isinstance(data, dict) else None
+    return v if isinstance(v, str) and _parse(v) else None
+
+
 def latest_release(timeout: float = 3.0) -> str | None:
-    """The newest `vX.Y.Z` release tag, or None on any failure. Tries the adopter's
-    authenticated `gh` first (works for the private repo), then a direct API call
-    (public repos, or with a token). PULL only — prusik never reports out."""
-    return _via_gh(timeout) or _via_http(timeout)
+    """The newest released version, or None on any failure. PyPI first (the true
+    install source — accurate for public wheels AND editable installs whose git
+    tags may lag), then the adopter's authenticated `gh` (private repo), then a
+    direct API call. PULL only — prusik never reports out."""
+    return _via_pypi(timeout) or _via_gh(timeout) or _via_http(timeout)
 
 
 def check(timeout: float = 3.0) -> tuple[str, str | None, bool]:
