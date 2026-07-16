@@ -22,6 +22,20 @@ def _mk(tmp_path, fid, **kw):
                      content_hash=fid.replace("fb-", ""), **kw)
 
 
+def test_filing_a_finding_drops_the_store_readme(tmp_path):
+    # systemic steer: an agent inspecting findings/ (deciding commit-vs-gitignore)
+    # must find guidance right there — the recurring wrong inference is to gitignore
+    # this git-tracked store, which loses closure history.
+    fs.create(tmp_path, fb_id="fb-aaaaaaaaaaaa", kind="bug", title="t",
+              content_hash="a")
+    readme = tmp_path / "findings" / "README.md"
+    assert readme.exists()
+    body = readme.read_text()
+    assert "GIT-TRACKED" in body
+    assert "gitignore" in body                    # tells you NOT to
+    assert "verify_history" in body               # names why it's load-bearing
+
+
 def test_close_shipped_verifies_green_surfaces_the_rest(tmp_path):
     """The update→verify closer: a shipped finding with a GREEN verify closes; a RED
     verify stays open (proof-gated — a release note doesn't close a ticket); a shipped

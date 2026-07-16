@@ -641,7 +641,38 @@ def _print_text_report(root: Path, scores: dict, drift: dict,
     else:
         print("[prusik-doctor] No drift detected since install.")
 
+    _print_untracked_findings(root)
     _print_version_staleness()
+
+
+def _print_untracked_findings(root: Path) -> None:
+    """Warn when finding tickets are UNTRACKED in git. findings/ is the git-tracked
+    feedback store (resolution + verify_history); left untracked it loses closure
+    history on a fresh clone and defeats `prusik update`'s auto-close — the exact drift
+    that leads an agent to wrongly gitignore it. Best-effort: silent outside a git repo."""
+    store = root / "findings"
+    if not store.is_dir():
+        return
+    try:
+        import subprocess
+        # -uall so a fully-untracked findings/ lists each file (default collapses it
+        # to one "?? findings/" line, which we'd miss).
+        r = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "-uall",
+             "--", "findings"],
+            capture_output=True, text=True, timeout=5, check=False)
+        if r.returncode != 0:
+            return
+        untracked = [ln[3:] for ln in r.stdout.splitlines()
+                     if ln.startswith("??") and ln.rstrip().endswith(".json")]
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return
+    if untracked:
+        print(f"[prusik-doctor] ⚠ {len(untracked)} finding ticket(s) in findings/ are "
+              f"UNTRACKED — commit them. findings/ is the git-tracked feedback store "
+              f"(resolution + verify_history); leaving it untracked loses closure history "
+              f"on a fresh clone and defeats `prusik update`'s auto-close. Do NOT gitignore "
+              f"it — the HQ export is the outbox, this store is the truth.")
 
 
 def _print_version_staleness() -> None:

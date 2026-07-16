@@ -417,3 +417,20 @@ def test_v0160_doctor_subcommands_are_read_only():
         os.chdir("/"); shutil.rmtree(tmp)
 
 
+
+
+def test_doctor_warns_on_untracked_finding_tickets(tmp_path):
+    """findings/ is the git-tracked feedback store; doctor flags untracked tickets so
+    the drift that leads an agent to wrongly gitignore it is caught + steered."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"])
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "t"])
+    from prusik import feedback_store as fs
+    fs.create(tmp_path, fb_id="fb-aaaaaaaaaaaa", kind="bug", title="t", content_hash="a")
+    out = _capture_stdout(lambda: kit_doctor._print_untracked_findings(tmp_path))
+    assert "UNTRACKED" in out and "gitignore" in out
+    # once committed, silent
+    subprocess.run(["git", "-C", str(tmp_path), "add", "findings"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "f"], check=True)
+    out2 = _capture_stdout(lambda: kit_doctor._print_untracked_findings(tmp_path))
+    assert out2.strip() == ""

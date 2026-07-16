@@ -42,6 +42,39 @@ def _store_dir(root: Path) -> Path:
     return root / "findings"
 
 
+# Dropped into findings/ the first time a ticket is written, so an agent inspecting
+# the directory (e.g. deciding whether to commit or gitignore it) is steered right AT
+# the point of decision. The recurring wrong inference: "findings/*.json are machine-
+# written and perpetually untracked → gitignore them" — which loses closure history
+# and defeats `prusik update`'s auto-close (findings/ is the git-tracked SOURCE OF
+# TRUTH, not the HQ outbox).
+_STORE_README = """# findings/ — prusik feedback ticket store (GIT-TRACKED — commit it)
+
+Each `fb-<id>.json` is a durable ticket: the finding plus its thread, `resolution`,
+and an append-only `verify_history`. **Commit these files** — do NOT gitignore them.
+
+Why they must be tracked:
+- Closure is DERIVED from `verify_history` (a finding is closed only by a captured
+  green verify run). Gitignoring `findings/` loses that history on a fresh clone, so
+  closed findings silently reappear as open.
+- `prusik update` auto-closes findings whose fix shipped by writing `verify_history`
+  here; untracked, those closures never persist or share.
+
+This directory is the SOURCE OF TRUTH. The HQ export (`prusik report --export`) is the
+outbox — a derived snapshot; it reads FROM here. Machine-written new tickets showing in
+`git status` is signal (a finding was filed), not noise — commit them with the sprint.
+"""
+
+
+def _ensure_store_readme(store_dir: Path) -> None:
+    readme = store_dir / "README.md"
+    if not readme.exists():
+        try:
+            readme.write_text(_STORE_README)
+        except OSError:
+            pass
+
+
 def path(root: Path, fb_id: str) -> Path:
     return _store_dir(root) / f"{fb_id}.json"
 
@@ -63,6 +96,7 @@ def load(root: Path, fb_id: str) -> dict | None:
 def save(root: Path, rec: dict) -> None:
     p = path(root, rec["id"])
     p.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_store_readme(p.parent)
     # `status` is DERIVED; mirror it into the file for human/dashboard readers, but
     # derive_state(rec) is always authoritative on read.
     rec["status"] = derive_state(rec)
