@@ -56,7 +56,10 @@ def _whats_new(changelog: str, installed: str, latest: str | None,
         hl = _HEADLINE.search(body)
         headline = (hl.group(1) if hl else body.strip().split("\n", 1)[0])
         new.append((ver, " ".join(headline.split())[:96]))
-        for fid in _FB_ID.findall(body):
+        # genuine CLOSURES only (not a bare mention) — a release can discuss an open
+        # finding without closing it, and a comma-list closes every id it names.
+        from prusik.changelog import closed_ids_in
+        for fid in closed_ids_in(body):
             if fid in mine:
                 resolved.append((mine[fid], ver))
     return new, resolved
@@ -118,6 +121,47 @@ def run(timeout: float = 3.0) -> int:
     print("  syncing project templates…")
     from prusik import refresh
     rc = refresh.run()
+    # Close the loop: now that the fixed engine is installed, verify + close this
+    # project's findings whose fix has shipped — so a shipped fix stops rotting as
+    # a stale-open ticket (proof-gated: only a GREEN verify closes it).
+    _close_shipped_findings(timeout)
     print("  → restart your Claude Code session to pick up agent/command changes "
           "(`/agents` only reloads the interactive picker, not Agent-tool dispatch).")
     return rc if isinstance(rc, int) else 0
+
+
+def _close_shipped_findings(timeout: float) -> None:
+    """After a current-package sync, run the verify loop over findings the CHANGELOG
+    has genuinely CLOSED: auto-close the ones that verify green, and surface the ones
+    that shipped but carry no verify command (so they can be resolved). Best-effort —
+    a nicety, never breaks update; a red verify leaves the finding open (honest)."""
+    try:
+        from prusik import changelog, feedback_store, ledger, version_check
+        root = ledger.project_root()
+        local = {f["id"] for f in feedback_store.load_all(root)}
+        if not local:
+            return
+        cl = version_check.changelog_text(timeout)
+        if not cl:
+            return
+        shipped = changelog.closed_ids_in(cl) & local
+        if not shipped:
+            return
+        print(f"  closing the loop on {len(shipped)} finding(s) the CHANGELOG has "
+              f"fixed (verifying in this repo)…")
+        res = feedback_store.close_shipped(root, shipped)
+        if res["closed"]:
+            print(f"    ✓ verified + closed {len(res['closed'])}: "
+                  f"{', '.join(res['closed'][:6])}"
+                  f"{'…' if len(res['closed']) > 6 else ''}")
+        if res["still_red"]:
+            print(f"    ⚠ {len(res['still_red'])} shipped but verify is RED here — "
+                  f"still open (fix not effective in this repo): "
+                  f"{', '.join(res['still_red'][:6])}")
+        if res["needs_verify"]:
+            print(f"    · {len(res['needs_verify'])} shipped fix(es) need a verify "
+                  f"command to auto-close — `prusik feedback resolve <id> --verify "
+                  f"\"<cmd>\"`: {', '.join(res['needs_verify'][:6])}"
+                  f"{'…' if len(res['needs_verify']) > 6 else ''}")
+    except Exception:  # noqa: BLE001 — closing the loop must never break `update`
+        pass

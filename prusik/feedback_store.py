@@ -210,6 +210,32 @@ def is_closed(rec: dict) -> bool:
     return derive_state(rec) in ("verified-closed", "wontfix")
 
 
+def close_shipped(root: Path, shipped_ids: set[str]) -> dict:
+    """Close-the-loop after an upgrade: for each LOCAL finding whose fix genuinely
+    SHIPPED (id ∈ `shipped_ids`, from the CHANGELOG's closure markers) and isn't
+    already closed, RUN its verify command and let a green run close it — proof, not
+    the release note's word (a shipped fix can still be red in THIS repo). A finding
+    that carries no verify command can't be auto-closed; it's surfaced so the
+    operator attaches one. Returns buckets of finding ids by outcome."""
+    out: dict[str, list[str]] = {
+        "closed": [], "still_red": [], "needs_verify": [], "already_closed": []}
+    for rec in load_all(root):
+        fid = rec.get("id")
+        if not fid or fid not in shipped_ids:
+            continue
+        if is_closed(rec):
+            out["already_closed"].append(fid)
+            continue
+        res = rec.get("resolution") or {}
+        if res.get("type") == "fix" and res.get("verify"):
+            result = verify(root, fid)
+            verdict = bool(result and result[1].get("verdict"))
+            out["closed" if verdict else "still_red"].append(fid)
+        else:
+            out["needs_verify"].append(fid)
+    return out
+
+
 import re as _re
 
 _TEST_FILE_RE = _re.compile(r"\b((?:[\w./]*/)?test_[\w]+\.py)\b")

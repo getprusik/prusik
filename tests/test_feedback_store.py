@@ -17,6 +17,43 @@ def _open(tmp_path, **kw):
                      content_hash="h", **kw)
 
 
+def _mk(tmp_path, fid, **kw):
+    return fs.create(tmp_path, fb_id=fid, kind="bug", title=fid,
+                     content_hash=fid.replace("fb-", ""), **kw)
+
+
+def test_close_shipped_verifies_green_surfaces_the_rest(tmp_path):
+    """The update→verify closer: a shipped finding with a GREEN verify closes; a RED
+    verify stays open (proof-gated — a release note doesn't close a ticket); a shipped
+    finding with no verify is surfaced; a not-shipped finding is untouched."""
+    _mk(tmp_path, "fb-aaaaaaaaaaaa")   # green verify → closes
+    _mk(tmp_path, "fb-bbbbbbbbbbbb")   # red verify → stays open
+    _mk(tmp_path, "fb-cccccccccccc")   # shipped, no verify → surfaced
+    _mk(tmp_path, "fb-dddddddddddd")   # not in shipped set → untouched
+    fs.resolve(tmp_path, "fb-aaaaaaaaaaaa", rtype="fix",
+               verify="echo '1 passed'", fixed_in="0.9.0")
+    fs.resolve(tmp_path, "fb-bbbbbbbbbbbb", rtype="fix",
+               verify="exit 1", fixed_in="0.9.0")
+    out = fs.close_shipped(
+        tmp_path, {"fb-aaaaaaaaaaaa", "fb-bbbbbbbbbbbb", "fb-cccccccccccc"})
+    assert out["closed"] == ["fb-aaaaaaaaaaaa"]
+    assert out["still_red"] == ["fb-bbbbbbbbbbbb"]
+    assert out["needs_verify"] == ["fb-cccccccccccc"]
+    assert fs.is_closed(fs.load(tmp_path, "fb-aaaaaaaaaaaa"))
+    assert not fs.is_closed(fs.load(tmp_path, "fb-bbbbbbbbbbbb"))
+    # fb-dddddddddddd was never touched
+    assert "fb-dddddddddddd" not in sum(out.values(), [])
+
+
+def test_close_shipped_skips_already_closed(tmp_path):
+    _mk(tmp_path, "fb-eeeeeeeeeeee")
+    fs.resolve(tmp_path, "fb-eeeeeeeeeeee", rtype="fix", verify="echo '1 passed'")
+    fs.verify(tmp_path, "fb-eeeeeeeeeeee")               # already green-closed
+    out = fs.close_shipped(tmp_path, {"fb-eeeeeeeeeeee"})
+    assert out["already_closed"] == ["fb-eeeeeeeeeeee"]
+    assert out["closed"] == []                            # not re-verified
+
+
 def test_lattice_open_then_acknowledged(tmp_path):
     _open(tmp_path)
     assert fs.derive_state(fs.load(tmp_path, "fb-x")) == "open"
