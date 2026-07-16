@@ -2467,6 +2467,10 @@ def _evidence_unsatisfied(rel_path: str, feature: str | None,
                     ledger.append("residual_reds_all_categorized", feature=feature,
                                    phase=e.get("phase"), count=len(failing))
                     continue   # every red carries a machine-verified category
+                # per-layer catch telemetry: an untagged red (new-regression) was
+                # stopped from advancing on a prose claim (fb-80d0a26be528).
+                ledger.append("residual_red_uncategorized", feature=feature,
+                               phase=e.get("phase"), uncovered=uncovered[:10])
                 return (f"phase {e.get('phase')!r}: {len(uncovered)} residual failing "
                         f"test(s) carry NO machine-verified category — a new-regression or "
                         f"an untagged red: {', '.join(uncovered[:5])}"

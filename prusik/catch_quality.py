@@ -69,6 +69,13 @@ _GATE_OF = {
     "criterion_evidence_fired":    ("criterion_evidence", "high"),
     "criterion_prove_red_fired":   ("criterion_prove_red", "high"),
     "charter_freshness_fired":     ("charter_freshness", "low"),
+    # residual-red adjudication layers (v0.197.22–.23) — per-layer telemetry for the
+    # two new build/review-exit gates so HQ sees whether they CATCH or are ceremony.
+    # A per-failure block = an untagged red (new-regression) stopped from advancing on
+    # a prose 'pre-existing' claim; a shared-infra block = a tier-spanning change (a
+    # session/autouse conftest fixture) stopped from riding a touched-set green.
+    "residual_red_uncategorized":  ("residual_classification", "high"),
+    "shared_test_infra_gate":      ("shared_test_infra", "high"),
 }
 
 # The product-fit family names, in brief→build order — so HQ can list EVERY layer

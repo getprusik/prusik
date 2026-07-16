@@ -39,6 +39,20 @@ def test_extract_only_qualifying_fires():
     assert gates == ["critic", "evidence_gate", "writable_gate"]
 
 
+def test_residual_red_adjudication_gates_are_catch_layers():
+    # the two build/review-exit gates (v0.197.22-.24) must surface as their OWN
+    # catch layers in HQ telemetry, not be lost / lumped into the generic phase gate.
+    events = [
+        {"ts": "2026-07-16T00:00:01+00:00", "event": "shared_test_infra_gate",
+         "feature": "f", "files": ["tests/conftest.py"]},
+        {"ts": "2026-07-16T00:00:02+00:00", "event": "residual_red_uncategorized",
+         "feature": "f", "uncovered": ["x.py::test_a"]},
+        {"ts": "2026-07-16T00:00:03+00:00", "event": "residual_reds_all_categorized"},  # hygiene, not a catch
+    ]
+    gates = sorted(c["gate"] for c in cq.extract_catches(events))
+    assert gates == ["residual_classification", "shared_test_infra"]
+
+
 def test_catch_id_is_stable_and_unique_per_fire():
     r1 = {"ts": "2026-06-01T00:00:01+00:00", "event": "gate_blocked"}
     r2 = {"ts": "2026-06-01T00:00:02+00:00", "event": "gate_blocked"}

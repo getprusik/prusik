@@ -8,7 +8,7 @@ name = "prusik"
 # so the packaged version can never drift from the code again (was static 0.193.0
 # while the code was 0.196.0 — fixed for PyPI publish hygiene).
 dynamic = ["version"]
-description = "Iron-clad autonomous harness for Claude Code agent teams — phase gates, scoping, triage, evidence, binding-mismatch detection, and closed-loop verification."
+description = "Deterministic, evidence-based build harness for autonomous coding agents — phase gates that demand captured proof (test/lint/type evidence), not an agent's claim."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -34,8 +34,10 @@ dependencies = [
 ]
 
 [project.urls]
+Homepage = "https://github.com/getprusik/prusik"
 Repository = "https://github.com/getprusik/prusik"
 Changelog = "https://github.com/getprusik/prusik/blob/main/CHANGELOG.md"
+Issues = "https://github.com/getprusik/prusik/issues"
 
 [project.scripts]
 prusik = "prusik.__main__:main"
