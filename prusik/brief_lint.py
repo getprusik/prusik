@@ -301,6 +301,61 @@ def _near_misses(candidates: set[str], known: set[str],
     return results
 
 
+# UI-brief browser-smoke shift-left (fb-ec9bdfc54ad3). A brief whose body describes a
+# UI surface but whose success criteria have no browser-driven verify command gets
+# FAILED by the LLM brief-critic — a full round-trip for a mechanically-detectable
+# condition. brief-lint catches it deterministically, instantly, before the critic.
+_UI_SURFACE_RE = re.compile(
+    r"\btemplate\b|\brender(?:s|ed|ing)?\b|base\.html\b|\.html\b|\bDOM\b|"
+    r"\bAlpine(?:\.js)?\b|\bHTMX\b|\bjinja2?\b|\.(?:jsx|tsx|vue)\b|\bcomponent\b",
+    re.I)
+# A verify command that actually drives a browser — a known e2e/browser tool or the
+# prusik UI check. The project's browser MARKER (browser_smoke) is handled separately
+# via the `-m` inclusion loop so a `-m 'not browser_smoke'` SKIP is not mistaken for a
+# browser run; it must not appear here or the exclusion would false-match.
+_BROWSER_TOOL_RE = re.compile(
+    r"\b(?:playwright|selenium|cypress|puppeteer|chromedriver|webdriver|"
+    r"ui[-_]e2e[-_]check)\b", re.I)
+
+
+def _mentions_ui_surface(text: str) -> bool:
+    return bool(_UI_SURFACE_RE.search(text))
+
+
+def _is_browser_smoke_command(vc: str, markers: tuple[str, ...]) -> bool:
+    """True when `vc` genuinely exercises a browser — a browser/e2e tool, or a pytest
+    `-m <marker>` that INCLUDES a project browser marker (not a `not <marker>` skip)."""
+    if not vc:
+        return False
+    if _BROWSER_TOOL_RE.search(vc):
+        return True
+    for m in re.finditer(r"-m\s+(?:(['\"])(.+?)\1|(\S+))", vc):
+        expr = m.group(2) or m.group(3) or ""
+        if "not" in expr:
+            continue
+        if any(mk in expr for mk in markers):
+            return True
+    return False
+
+
+def _ui_smoke_warning(brief_text: str, criteria_path: Path,
+                      root: Path) -> str | None:
+    """A UI brief must carry at least one browser-driven verify command; else warn.
+    None when the brief isn't UI-facing or a browser-smoke criterion is present."""
+    if not _mentions_ui_surface(brief_text):
+        return None
+    criteria = schema.load_criteria(criteria_path) if criteria_path.exists() else []
+    markers = _defer_markers(root)
+    if any(_is_browser_smoke_command(c.get("verify_command", ""), markers)
+           for c in criteria):
+        return None
+    return (f"brief describes a UI surface but no success criterion has a "
+            f"browser-driven verify_command ({', '.join(markers)}). Add a "
+            f"browser-smoke criterion so the render is actually exercised — this is "
+            f"the deterministic check the LLM brief-critic would otherwise FAIL on, "
+            f"a round-trip you can skip by fixing it now.")
+
+
 def lint(brief_path: str | Path | None = None,
          root: Path | None = None,
          cutoff: float = 0.80) -> int:
@@ -356,6 +411,13 @@ def lint(brief_path: str | Path | None = None,
 
         # Near-miss
         brief_text = brief.read_text()
+
+        # UI-brief browser-smoke shift-left (fb-ec9bdfc54ad3) — advisory, non-blocking:
+        # instant deterministic feedback so a UI brief lacking a browser verify isn't
+        # discovered only by a full LLM brief-critic round.
+        if (ui_warn := _ui_smoke_warning(brief_text, criteria_path, root)):
+            print(f"  [ui-smoke-warn] {ui_warn}")
+
         candidates = _extract_candidates(brief_text)
         # v0.4.4: per-brief allow-list for proposed-new-IDs. Tokens declared
         # in an optional `## Proposed new IDs` (or similar) section are
