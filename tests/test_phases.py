@@ -2543,7 +2543,7 @@ def test_b27_kit_internal_paths_when_config_has_no_always_writable():
 
 # ---------- v0.8.7 — fix-round status command + cache-allow role spec ----------
 #
-# Driven by real ledger data from c2c_invoicing project showing 2-hour
+# Driven by real ledger data from an adopter project showing 2-hour
 # reviewing phases. Root cause: `mypy --no-incremental --cache-dir=/dev/null`
 # re-checks 96k LOC from scratch every dispatch. Original v0.6.0 flag was
 # belt-and-suspenders against B7 (worktree cache leak), now redundant
@@ -2601,7 +2601,7 @@ def test_v087_role_spec_no_longer_mandates_no_cacheprovider():
     # Must call out incremental mypy specifically as the win
     assert "incrementally" in text, \
         "role spec must mention mypy incremental mode as the speedup"
-    # Must reference c2c_invoicing observation OR a specific large-codebase
+    # Must reference the adopter observation OR a specific large-codebase
     # number to anchor WHY this matters
     assert "96k-LOC" in text or "multiple minutes" in text or "5-10×" in text, \
         "role spec must cite the empirical evidence motivating the change"
