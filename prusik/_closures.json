@@ -1,0 +1,230 @@
+{
+  "fb-085135ece453": {
+    "moat": true,
+    "version": "0.136.0"
+  },
+  "fb-086ca221468d": {
+    "moat": true,
+    "version": "0.152.0"
+  },
+  "fb-1a95785eddf3": {
+    "moat": false,
+    "version": "0.120.0"
+  },
+  "fb-1af757d91f29": {
+    "moat": false,
+    "version": "0.92.0"
+  },
+  "fb-1e1badf0b6ef": {
+    "moat": true,
+    "version": "0.137.0"
+  },
+  "fb-20998b52493a": {
+    "moat": false,
+    "version": "0.188.0"
+  },
+  "fb-255e234815a6": {
+    "moat": false,
+    "version": "0.188.0"
+  },
+  "fb-2f8a1dc9c02d": {
+    "moat": false,
+    "version": "0.93.0"
+  },
+  "fb-32b3a89cc1d5": {
+    "moat": true,
+    "version": "0.133.0"
+  },
+  "fb-32dba3592dd4": {
+    "moat": true,
+    "version": "0.101.0"
+  },
+  "fb-427808ba40dd": {
+    "moat": true,
+    "version": "0.142.0"
+  },
+  "fb-4363fa8b2cf9": {
+    "moat": false,
+    "version": "0.154.0"
+  },
+  "fb-48e9135bf2bc": {
+    "moat": true,
+    "version": "0.197.18"
+  },
+  "fb-53f161606abc": {
+    "moat": true,
+    "version": "0.158.0"
+  },
+  "fb-5bb5171810ee": {
+    "moat": true,
+    "version": "0.155.0"
+  },
+  "fb-6a4075fb15fe": {
+    "moat": false,
+    "version": "0.187.0"
+  },
+  "fb-6a573cfe59fb": {
+    "moat": true,
+    "version": "0.151.0"
+  },
+  "fb-6d21d48c94f9": {
+    "moat": true,
+    "version": "0.197.7"
+  },
+  "fb-72ad02292a10": {
+    "moat": true,
+    "version": "0.184.0"
+  },
+  "fb-75fd9cfa7ead": {
+    "moat": false,
+    "version": "0.187.0"
+  },
+  "fb-76ff51b273de": {
+    "moat": true,
+    "version": "0.157.0"
+  },
+  "fb-7a24578db48e": {
+    "moat": false,
+    "version": "0.120.0"
+  },
+  "fb-7ab319116f42": {
+    "moat": true,
+    "version": "0.147.0"
+  },
+  "fb-80d0a26be528": {
+    "moat": true,
+    "version": "0.197.22"
+  },
+  "fb-80eb508aa7fd": {
+    "moat": true,
+    "version": "0.197.14"
+  },
+  "fb-876ad6010f72": {
+    "moat": true,
+    "version": "0.135.0"
+  },
+  "fb-87c46ae9348a": {
+    "moat": true,
+    "version": "0.197.23"
+  },
+  "fb-90cfcfa8b918": {
+    "moat": true,
+    "version": "0.143.0"
+  },
+  "fb-91c75e51c214": {
+    "moat": true,
+    "version": "0.125.0"
+  },
+  "fb-92e248d6a208": {
+    "moat": true,
+    "version": "0.159.0"
+  },
+  "fb-983dac02ac8d": {
+    "moat": true,
+    "version": "0.148.0"
+  },
+  "fb-99ca849e2189": {
+    "moat": true,
+    "version": "0.197.21"
+  },
+  "fb-9a095c7674f2": {
+    "moat": false,
+    "version": "0.185.0"
+  },
+  "fb-9d0bc5d0d58e": {
+    "moat": false,
+    "version": "0.145.0"
+  },
+  "fb-9f107742fe4d": {
+    "moat": true,
+    "version": "0.127.0"
+  },
+  "fb-a1753e4a729d": {
+    "moat": true,
+    "version": "0.171.0"
+  },
+  "fb-acdc57e48ea9": {
+    "moat": true,
+    "version": "0.153.0"
+  },
+  "fb-b351e5ef9de6": {
+    "moat": true,
+    "version": "0.160.0"
+  },
+  "fb-b4eb142e5740": {
+    "moat": true,
+    "version": "0.126.0"
+  },
+  "fb-b587d8d9b71c": {
+    "moat": false,
+    "version": "0.185.0"
+  },
+  "fb-ba9d617d55cb": {
+    "moat": true,
+    "version": "0.150.0"
+  },
+  "fb-bc87bb8520dc": {
+    "moat": true,
+    "version": "0.128.0"
+  },
+  "fb-bfc8ffdf0fd9": {
+    "moat": true,
+    "version": "0.134.0"
+  },
+  "fb-c72887f762a4": {
+    "moat": false,
+    "version": "0.91.0"
+  },
+  "fb-c80cb5c55771": {
+    "moat": true,
+    "version": "0.149.0"
+  },
+  "fb-c8175a7678be": {
+    "moat": false,
+    "version": "0.187.0"
+  },
+  "fb-c871c831bf3b": {
+    "moat": false,
+    "version": "0.144.0"
+  },
+  "fb-c91c2be85603": {
+    "moat": false,
+    "version": "0.138.0"
+  },
+  "fb-ca6d8b7dfa41": {
+    "moat": false,
+    "version": "0.146.0"
+  },
+  "fb-cc918dfe40b8": {
+    "moat": true,
+    "version": "0.183.0"
+  },
+  "fb-d4c9453120cd": {
+    "moat": true,
+    "version": "0.186.0"
+  },
+  "fb-db1f1affde71": {
+    "moat": false,
+    "version": "0.90.0"
+  },
+  "fb-db53b5d5d380": {
+    "moat": true,
+    "version": "0.132.0"
+  },
+  "fb-dde6878ad04b": {
+    "moat": false,
+    "version": "0.190.0"
+  },
+  "fb-ec9bdfc54ad3": {
+    "moat": true,
+    "version": "0.197.26"
+  },
+  "fb-ef04f48ed22b": {
+    "moat": false,
+    "version": "0.94.0"
+  },
+  "fb-f02412bdfd4d": {
+    "moat": true,
+    "version": "0.197.21"
+  }
+}

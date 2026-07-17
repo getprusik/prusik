@@ -136,21 +136,21 @@ def _close_shipped_findings(timeout: float) -> None:
     that shipped but carry no verify command (so they can be resolved). Best-effort —
     a nicety, never breaks update; a red verify leaves the finding open (honest)."""
     try:
-        from prusik import changelog, feedback_store, ledger, version_check
+        from prusik import changelog, feedback_store, ledger
         root = ledger.project_root()
         local = {f["id"] for f in feedback_store.load_all(root)}
         if not local:
             return
-        cl = version_check.changelog_text(timeout)
-        if not cl:
-            return
-        shipped = changelog.closed_ids_in(cl) & local
+        # Use the SHIPPED closure map (`_closures.json`), not a fetched CHANGELOG: the
+        # public CHANGELOG is stubbed by the sync, and the shipped map is version-bound
+        # to this wheel (you can only close/transfer what YOUR engine actually shipped).
+        shipped = changelog.installed_closed_ids() & local
         if not shipped:
             return
         # Engine findings backed by a moat test (captured green in prusik CI) close by
         # proof-transfer, gated on this engine carrying the fix; own-code findings still
         # need a local verify. moat_versions maps id → the release that shipped the test.
-        moat_versions = {fid: v for fid, v in changelog.moat_closures(cl).items()
+        moat_versions = {fid: v for fid, v in changelog.installed_moat_closures().items()
                          if fid in local}
         print(f"  closing the loop on {len(shipped)} finding(s) the CHANGELOG has "
               f"fixed (verifying in this repo)…")

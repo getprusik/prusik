@@ -58,6 +58,7 @@ prusik = [
     "templates/.claude/*",
     "templates/**/.*",
     "templates/.*",
+    "_closures.json",   # shipped closure map (id→version+moat) for the update closer
 ]
 
 [dependency-groups]

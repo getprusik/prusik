@@ -11,7 +11,9 @@ NOT a closure: a release can discuss an open finding without closing it.
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 
 # `Closes` (or Fixes/Resolves/Closed) immediately followed by one or more fb-ids,
 # comma/and-separated. The id must follow the verb directly — "Closes the analysis
@@ -58,3 +60,46 @@ def moat_closures(text: str) -> dict[str, str]:
             if fid not in out or _vkey(ver) < _vkey(out[fid]):
                 out[fid] = ver
     return out
+
+
+def build_closures(text: str) -> dict[str, dict]:
+    """The full closure map from a CHANGELOG: `{id: {version, moat}}` — version = the
+    earliest release that closes it (moat version when moat-backed), moat = whether a
+    captured regression test backs it (a transferable proof). Built from the PRIVATE
+    full CHANGELOG at release time and SHIPPED as `_closures.json`, so an adopter's
+    closer has the closure/proof data without the (stubbed) public CHANGELOG or a
+    network call — and version-bound to their wheel by construction."""
+    moats = moat_closures(text)
+    closes: dict[str, str] = {}
+    secs = list(_SECTION.finditer(text))
+    for i, m in enumerate(secs):
+        ver = m.group(1)
+        body = text[m.end():(secs[i + 1].start() if i + 1 < len(secs) else len(text))]
+        for fid in closed_ids_in(body):
+            if fid not in closes or _vkey(ver) < _vkey(closes[fid]):
+                closes[fid] = ver
+    return {fid: {"version": moats.get(fid, cver), "moat": fid in moats}
+            for fid, cver in closes.items()}
+
+
+_CLOSURES_PATH = Path(__file__).resolve().parent / "_closures.json"
+
+
+def installed_closures() -> dict[str, dict]:
+    """The closure map SHIPPED with this engine (`_closures.json`). This is the
+    authoritative source for the adopter-side closer — version-bound to the wheel,
+    no network, no dependence on the public CHANGELOG (which the sync stubs). {} if
+    absent (an older engine that predates the shipped map)."""
+    try:
+        return json.loads(_CLOSURES_PATH.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def installed_closed_ids() -> set[str]:
+    return set(installed_closures())
+
+
+def installed_moat_closures() -> dict[str, str]:
+    return {fid: e["version"] for fid, e in installed_closures().items()
+            if e.get("moat")}
