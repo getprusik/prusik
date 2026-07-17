@@ -34,66 +34,51 @@ def closed_ids_in(text: str) -> set[str]:
     return ids
 
 
-_SECTION = re.compile(r"^##\s+\[(\d+\.\d+\.\d+)\]", re.M)
-
-
-def _vkey(v: str) -> tuple:
-    try:
-        return tuple(int(x) for x in v.split("."))
-    except ValueError:
-        return (0, 0, 0)
-
-
-def moat_closures(text: str) -> dict[str, str]:
-    """{finding_id: earliest_fix_version} for findings closed with a `moat-finding: fb-X`
-    marker — i.e. backed by a CAPTURED regression test (the transferable proof). The
-    version is the release that shipped that test. Only moat-marked closures qualify: a
-    bare `Closes fb-X` without a moat test isn't a transferable proof, so it's excluded.
-    Enables proof-transfer closure of engine findings (the fix is proven green in prusik's
-    own CI; an adopter on >= that version inherits the proof)."""
-    out: dict[str, str] = {}
-    secs = list(_SECTION.finditer(text))
-    for i, m in enumerate(secs):
-        ver = m.group(1)
-        body = text[m.end():(secs[i + 1].start() if i + 1 < len(secs) else len(text))]
-        for fid in _MOAT_MARK.findall(body):
-            if fid not in out or _vkey(ver) < _vkey(out[fid]):
-                out[fid] = ver
-    return out
-
-
-def build_closures(text: str) -> dict[str, dict]:
-    """The full closure map from a CHANGELOG: `{id: {version, moat}}` — version = the
-    earliest release that closes it (moat version when moat-backed), moat = whether a
-    captured regression test backs it (a transferable proof). Built from the PRIVATE
-    full CHANGELOG at release time and SHIPPED as `_closures.json`, so an adopter's
-    closer has the closure/proof data without the (stubbed) public CHANGELOG or a
-    network call — and version-bound to their wheel by construction."""
-    moats = moat_closures(text)
-    closes: dict[str, str] = {}
-    secs = list(_SECTION.finditer(text))
-    for i, m in enumerate(secs):
-        ver = m.group(1)
-        body = text[m.end():(secs[i + 1].start() if i + 1 < len(secs) else len(text))]
-        for fid in closed_ids_in(body):
-            if fid not in closes or _vkey(ver) < _vkey(closes[fid]):
-                closes[fid] = ver
-    return {fid: {"version": moats.get(fid, cver), "moat": fid in moats}
-            for fid, cver in closes.items()}
+def scan_test_moat_markers(root: Path) -> frozenset[str]:
+    """Every `fb-…` id carried by a `moat-finding:` marker in a test/benchmark file
+    under `root` — the PUBLIC ground truth of regression coverage (the same markers the
+    moat metric credits), and the sole source of the closure manifest's membership.
+    Test files must use this marker ONLY for the finding they guard, never as literal
+    parser test-data (build such inputs at runtime), or they pollute this scan."""
+    pat = re.compile(r"moat-finding:\s*(fb-[0-9a-f]{12})")
+    found: set[str] = set()
+    for sub in ("tests", "benchmarks/cases"):
+        base = root / sub
+        if not base.is_dir():
+            continue
+        for f in base.rglob("*"):
+            if f.is_file() and f.suffix in (".py", ".md", ".txt"):
+                found.update(pat.findall(f.read_text(encoding="utf-8", errors="ignore")))
+    return frozenset(found)
 
 
 _CLOSURES_PATH = Path(__file__).resolve().parent / "_closures.json"
 
 
-def installed_closures() -> dict[str, dict]:
-    """The closure map SHIPPED with this engine (`_closures.json`). This is the
-    authoritative source for the adopter-side closer — version-bound to the wheel,
-    no network, no dependence on the public CHANGELOG (which the sync stubs). {} if
-    absent (an older engine that predates the shipped map)."""
+def reconcile_closures(existing: dict[str, str], test_moat_ids: frozenset[str],
+                       version: str) -> dict[str, str]:
+    """The moat-only closure manifest, maintained from GROUND TRUTH — no CHANGELOG:
+    it is EXACTLY the findings carrying a `moat-finding:` test marker (a captured
+    regression test = a transferable proof). A newly-marked finding stamps `version`
+    (the release the test lands in = when the fix ships); a known one keeps its
+    recorded version. This is the whole maintenance step: `_closures.json =
+    reconcile_closures(load, scan_test_moat_markers(root), __version__)` at release.
+    Sound by construction — one public source for membership (test markers), one
+    stamped fact for version, nothing derived from a file that goes private."""
+    return {fid: existing.get(fid, version) for fid in sorted(test_moat_ids)}
+
+
+def installed_closures() -> dict[str, str]:
+    """The moat-only closure manifest SHIPPED with this engine (`_closures.json`):
+    `{fb-id: version}` for every finding with a captured regression test (a
+    transferable proof) and the release that shipped its fix. Authoritative for the
+    adopter-side closer — version-bound to the wheel, no network, no CHANGELOG. {} if
+    absent (an engine predating the shipped map)."""
     try:
-        return json.loads(_CLOSURES_PATH.read_text())
+        data = json.loads(_CLOSURES_PATH.read_text())
     except (OSError, ValueError):
         return {}
+    return {k: v for k, v in data.items() if isinstance(v, str)}
 
 
 def installed_closed_ids() -> set[str]:
@@ -101,5 +86,5 @@ def installed_closed_ids() -> set[str]:
 
 
 def installed_moat_closures() -> dict[str, str]:
-    return {fid: e["version"] for fid, e in installed_closures().items()
-            if e.get("moat")}
+    # every entry in the manifest is moat-backed (that is its definition).
+    return dict(installed_closures())

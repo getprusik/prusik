@@ -1,10 +1,15 @@
-"""The shipped closure map (`prusik/_closures.json`) must stay in lockstep with the
-CHANGELOG — it's what an adopter's `prusik update` closer reads (the public CHANGELOG
-is stubbed by the sync, so the map ships in the wheel instead). If it drifts, shipped
-fixes stop draining in the field silently. This is the drift guard: regenerate with
-`python -c "import json,pathlib; from prusik import changelog as c;
-pathlib.Path('prusik/_closures.json').write_text(json.dumps(
-c.build_closures(pathlib.Path('CHANGELOG.md').read_text()),indent=2,sort_keys=True)+chr(10))"`.
+"""The shipped closure manifest (`prusik/_closures.json`) — the source of truth for
+what an adopter's `prusik update` can proof-transfer close.
+
+Sound by construction:
+- it is MOAT-ONLY: `{fb-id: version}` for every finding with a captured regression
+  test (a transferable proof) and the release that shipped the fix;
+- its MEMBERSHIP is the PUBLIC `moat-finding:` test markers (the ground truth of
+  regression coverage) — so this guard holds in the public repo too, with NO
+  dependence on the (private) CHANGELOG;
+- VERSION is stamped once at release and preserved thereafter.
+
+Regenerate at release: `_closures.json = reconcile_closures(load, scan_test_moat_markers(root), __version__)`.
 """
 
 from __future__ import annotations
@@ -12,34 +17,42 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from prusik import changelog
 
-
-def test_shipped_closure_map_matches_changelog():
-    expected = changelog.build_closures(Path("CHANGELOG.md").read_text())
-    shipped = json.loads(Path("prusik/_closures.json").read_text())
-    # In the public projection the CHANGELOG is a stub (the sync replaces it), so the
-    # shipped map legitimately carries ids the local CHANGELOG doesn't — the map is
-    # authoritative there. Only enforce the drift guard where the CHANGELOG is
-    # canonical (contains every shipped id); a MISSING regen in the canonical repo
-    # still fails (shipped ⊆ expected, so no skip).
-    if set(shipped) - set(expected):
-        pytest.skip("CHANGELOG is a projection/stub — shipped map is authoritative here")
-    assert shipped == expected, (
-        "prusik/_closures.json is stale vs CHANGELOG.md — regenerate it (see this "
-        "test's docstring) so the update closer sees the latest closures.")
+_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_shipped_map_is_readable_and_non_empty():
-    # the closer relies on the packaged reader; it must return real data.
-    assert changelog.installed_closed_ids()                     # non-empty
-    assert changelog.installed_moat_closures()                  # some moat-backed
-    # every moat closure is also a closed id
-    assert set(changelog.installed_moat_closures()) <= changelog.installed_closed_ids()
+def test_manifest_is_exactly_the_moat_tested_findings():
+    # the one invariant: the manifest == the findings that carry a regression-test
+    # marker. Derived from PUBLIC test markers, so it can't drift silently and needs
+    # no private CHANGELOG. (This is what caught 14 under-counted findings.)
+    manifest = set(json.loads((_ROOT / "prusik" / "_closures.json").read_text()))
+    markers = set(changelog.scan_test_moat_markers(_ROOT))
+    missing = sorted(markers - manifest)   # tested but unrecorded → can't proof-transfer
+    stale = sorted(manifest - markers)     # recorded but its test vanished
+    assert not missing, (
+        f"regression-tested findings absent from _closures.json: {missing} — "
+        f"regenerate: reconcile_closures(load, scan_test_moat_markers(root), __version__)")
+    assert not stale, f"_closures.json carries findings with no test marker: {stale}"
 
 
-def test_known_moat_finding_is_in_the_shipped_map():
-    # a finding closed this session with a moat test must be transfer-eligible.
+def test_every_entry_has_a_version_string():
+    for fid, ver in changelog.installed_closures().items():
+        assert isinstance(ver, str) and ver, f"{fid} has no version"
+
+
+def test_reconcile_stamps_new_and_preserves_known_and_drops_removed():
+    existing = {"fb-aaaaaaaaaaaa": "0.100.0"}
+    out = changelog.reconcile_closures(
+        existing, frozenset({"fb-aaaaaaaaaaaa", "fb-bbbbbbbbbbbb"}), "0.200.0")
+    assert out == {"fb-aaaaaaaaaaaa": "0.100.0",   # known version preserved
+                   "fb-bbbbbbbbbbbb": "0.200.0"}    # new marker stamped this release
+    # membership follows the markers: a removed marker drops from the manifest
+    assert changelog.reconcile_closures(
+        out, frozenset({"fb-aaaaaaaaaaaa"}), "0.200.0") == {"fb-aaaaaaaaaaaa": "0.100.0"}
+
+
+def test_known_moat_finding_is_transfer_eligible():
+    # a finding closed this session with a moat test must be in the manifest.
     assert "fb-f02412bdfd4d" in changelog.installed_moat_closures()
+    assert changelog.installed_closed_ids() == set(changelog.installed_moat_closures())
