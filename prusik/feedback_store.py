@@ -253,17 +253,20 @@ def _engine_version_tuple() -> tuple:
 
 
 def _version_floor_verify(fb_id: str, version: str) -> str:
-    """A runnable check that the installed engine carries the moat-proven fix — i.e.
-    `prusik.__version__ >= <fix version>`. Stored as the finding's verify command so
-    closure is a REAL local green (self-gating on currency) and a downgrade re-runs
-    RED → reopens. The proof chain: prusik's moat test is green in CI (source), and
-    this confirms that version is present here."""
-    tup = ", ".join(version.split("."))
+    """A runnable, PORTABLE check that the installed engine carries the moat-proven
+    fix — the `prusik` CLI reports a version >= the fix version. Uses the CLI (on PATH,
+    the actual install) + `sort -V`, NOT `python3 -c "import prusik"` — a bare `python3`
+    often isn't the interpreter that has prusik, which would fail the verify spuriously.
+    Stored as the finding's verify command so closure is a REAL local green (self-gating
+    on currency) and a downgrade re-runs RED → reopens. The proof chain: prusik's moat
+    test is green in CI (source), and this confirms that version is present here."""
     return (
-        "python3 -c 'import prusik, sys; "
-        'v = tuple(int(x) for x in prusik.__version__.split(".")); '
-        f"sys.exit(0 if v >= ({tup}) else 1)' "
-        f'&& echo "1 passed: engine carries moat-proven fix {fb_id} (prusik >= {version})"'
+        "CUR=$(prusik --version 2>/dev/null | grep -oE "
+        "'[0-9]+[.][0-9]+[.][0-9]+' | head -1); "
+        '[ -n "$CUR" ] && '
+        f"[ \"$(printf '%s\\n%s\\n' '{version}' \"$CUR\" | sort -V | head -1)\" "
+        f"= '{version}' ] "
+        f'&& echo "1 passed: engine carries moat-proven fix {fb_id} (prusik $CUR >= {version})"'
     )
 
 
