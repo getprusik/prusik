@@ -59,6 +59,41 @@ def test_close_shipped_verifies_green_surfaces_the_rest(tmp_path):
     assert "fb-dddddddddddd" not in sum(out.values(), [])
 
 
+def test_proof_transfer_closes_moat_backed_engine_finding(tmp_path):
+    # an engine finding backed by a moat test (green in prusik CI) closes by transfer
+    # when THIS engine carries the fix (version floor) — a real local green, not an
+    # assertion. Adversarial: a moat version ABOVE the current engine must NOT close
+    # (the fix isn't present), and a shipped finding with NO moat marker must NOT
+    # transfer (no captured proof to inherit) — it needs an adopter-side verify.
+    import prusik
+    _mk(tmp_path, "fb-aaaaaaaaaaaa")   # moat-proven, fix version <= engine → transfers
+    _mk(tmp_path, "fb-bbbbbbbbbbbb")   # moat version far above engine → not present
+    _mk(tmp_path, "fb-cccccccccccc")   # shipped but no moat marker → needs verify
+    shipped = {"fb-aaaaaaaaaaaa", "fb-bbbbbbbbbbbb", "fb-cccccccccccc"}
+    low = ".".join(str(x) for x in
+                   tuple(int(x) for x in prusik.__version__.split("."))[:2]) + ".0"
+    out = fs.close_shipped(tmp_path, shipped,
+                           {"fb-aaaaaaaaaaaa": low, "fb-bbbbbbbbbbbb": "999.0.0"})
+    assert out["transferred"] == ["fb-aaaaaaaaaaaa"]
+    assert fs.is_closed(fs.load(tmp_path, "fb-aaaaaaaaaaaa"))
+    assert not fs.is_closed(fs.load(tmp_path, "fb-bbbbbbbbbbbb"))   # fix not present
+    assert "fb-cccccccccccc" in out["needs_verify"]                 # no moat → no transfer
+    assert "fb-bbbbbbbbbbbb" in out["needs_verify"]
+
+
+def test_proof_transfer_verify_is_a_real_rerunnable_check(tmp_path):
+    # the transfer isn't a fake close: it stores a runnable version-floor verify, so a
+    # later re-verify re-checks currency (a downgrade below the fix reopens it).
+    import prusik
+    _mk(tmp_path, "fb-aaaaaaaaaaaa")
+    low = ".".join(str(x) for x in
+                   tuple(int(x) for x in prusik.__version__.split("."))[:2]) + ".0"
+    fs.close_shipped(tmp_path, {"fb-aaaaaaaaaaaa"}, {"fb-aaaaaaaaaaaa": low})
+    rec = fs.load(tmp_path, "fb-aaaaaaaaaaaa")
+    assert "prusik" in rec["resolution"]["verify"]        # a real check, not a marker
+    assert fs.verify(tmp_path, "fb-aaaaaaaaaaaa")[1]["verdict"] is True   # re-runs green
+
+
 def test_close_shipped_skips_already_closed(tmp_path):
     _mk(tmp_path, "fb-eeeeeeeeeeee")
     fs.resolve(tmp_path, "fb-eeeeeeeeeeee", rtype="fix", verify="echo '1 passed'")

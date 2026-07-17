@@ -22,3 +22,20 @@ def test_closed_ids_covers_every_closure_convention():
 
 def test_bare_mention_is_not_a_closure():
     assert changelog.closed_ids_in("saw (fb-abcabcabcabc) discussed, still open") == set()
+
+
+def test_moat_closures_maps_id_to_earliest_version():
+    # only moat-MARKED closures are transferable proofs; a bare Closes (no moat test)
+    # is excluded, and the earliest release that carries the moat marker wins.
+    text = (
+        "## [0.171.0] — 2026-06-09\nfix. moat-finding: fb-a1753e4a729d.\n\n"
+        "## [0.170.0] — 2026-06-08\nCloses fb-deadbeefdead (no moat test here).\n")
+    m = changelog.moat_closures(text)
+    assert m == {"fb-a1753e4a729d": "0.171.0"}          # moat only; not the bare Closes
+
+
+def test_moat_closures_earliest_version_wins():
+    text = (
+        "## [0.180.0] — 2026-06-20\nmoat-finding: fb-a1753e4a729d.\n\n"
+        "## [0.171.0] — 2026-06-09\nmoat-finding: fb-a1753e4a729d.\n")
+    assert changelog.moat_closures(text)["fb-a1753e4a729d"] == "0.171.0"

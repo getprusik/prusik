@@ -147,13 +147,23 @@ def _close_shipped_findings(timeout: float) -> None:
         shipped = changelog.closed_ids_in(cl) & local
         if not shipped:
             return
+        # Engine findings backed by a moat test (captured green in prusik CI) close by
+        # proof-transfer, gated on this engine carrying the fix; own-code findings still
+        # need a local verify. moat_versions maps id → the release that shipped the test.
+        moat_versions = {fid: v for fid, v in changelog.moat_closures(cl).items()
+                         if fid in local}
         print(f"  closing the loop on {len(shipped)} finding(s) the CHANGELOG has "
               f"fixed (verifying in this repo)…")
-        res = feedback_store.close_shipped(root, shipped)
+        res = feedback_store.close_shipped(root, shipped, moat_versions)
         if res["closed"]:
             print(f"    ✓ verified + closed {len(res['closed'])}: "
                   f"{', '.join(res['closed'][:6])}"
                   f"{'…' if len(res['closed']) > 6 else ''}")
+        if res["transferred"]:
+            print(f"    ✓ closed {len(res['transferred'])} engine finding(s) by "
+                  f"proof-transfer (moat test green in CI + present in this engine): "
+                  f"{', '.join(res['transferred'][:6])}"
+                  f"{'…' if len(res['transferred']) > 6 else ''}")
         if res["still_red"]:
             print(f"    ⚠ {len(res['still_red'])} shipped but verify is RED here — "
                   f"still open (fix not effective in this repo): "

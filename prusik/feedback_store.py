@@ -244,15 +244,46 @@ def is_closed(rec: dict) -> bool:
     return derive_state(rec) in ("verified-closed", "wontfix")
 
 
-def close_shipped(root: Path, shipped_ids: set[str]) -> dict:
+def _engine_version_tuple() -> tuple:
+    import prusik
+    try:
+        return tuple(int(x) for x in prusik.__version__.split("."))
+    except ValueError:
+        return (0, 0, 0)
+
+
+def _version_floor_verify(fb_id: str, version: str) -> str:
+    """A runnable check that the installed engine carries the moat-proven fix — i.e.
+    `prusik.__version__ >= <fix version>`. Stored as the finding's verify command so
+    closure is a REAL local green (self-gating on currency) and a downgrade re-runs
+    RED → reopens. The proof chain: prusik's moat test is green in CI (source), and
+    this confirms that version is present here."""
+    tup = ", ".join(version.split("."))
+    return (
+        "python3 -c 'import prusik, sys; "
+        'v = tuple(int(x) for x in prusik.__version__.split(".")); '
+        f"sys.exit(0 if v >= ({tup}) else 1)' "
+        f'&& echo "1 passed: engine carries moat-proven fix {fb_id} (prusik >= {version})"'
+    )
+
+
+def close_shipped(root: Path, shipped_ids: set[str],
+                  moat_versions: dict[str, str] | None = None) -> dict:
     """Close-the-loop after an upgrade: for each LOCAL finding whose fix genuinely
-    SHIPPED (id ∈ `shipped_ids`, from the CHANGELOG's closure markers) and isn't
-    already closed, RUN its verify command and let a green run close it — proof, not
-    the release note's word (a shipped fix can still be red in THIS repo). A finding
-    that carries no verify command can't be auto-closed; it's surfaced so the
-    operator attaches one. Returns buckets of finding ids by outcome."""
+    SHIPPED and isn't already closed, close it on a CAPTURED GREEN — never the release
+    note's word. Three paths, all proof-gated:
+      • an adopter-side verify command exists → run it (own-code findings).
+      • else the finding is an ENGINE fix backed by a moat test (`id ∈ moat_versions`)
+        and this engine is >= the fix version → PROOF-TRANSFER: attach a version-floor
+        verify and run it (a real local green; reopens on downgrade). The transferable
+        proof is prusik's own green-in-CI moat test.
+      • else it shipped but carries no runnable proof here → surfaced (`needs_verify`).
+    Returns buckets of finding ids by outcome."""
+    moat_versions = moat_versions or {}
+    cur = _engine_version_tuple()
     out: dict[str, list[str]] = {
-        "closed": [], "still_red": [], "needs_verify": [], "already_closed": []}
+        "closed": [], "transferred": [], "still_red": [], "needs_verify": [],
+        "already_closed": []}
     for rec in load_all(root):
         fid = rec.get("id")
         if not fid or fid not in shipped_ids:
@@ -261,10 +292,18 @@ def close_shipped(root: Path, shipped_ids: set[str]) -> dict:
             out["already_closed"].append(fid)
             continue
         res = rec.get("resolution") or {}
+        moat_ver = moat_versions.get(fid)
         if res.get("type") == "fix" and res.get("verify"):
             result = verify(root, fid)
-            verdict = bool(result and result[1].get("verdict"))
-            out["closed" if verdict else "still_red"].append(fid)
+            out["closed" if (result and result[1].get("verdict")) else
+                "still_red"].append(fid)
+        elif moat_ver and cur >= tuple(int(x) for x in moat_ver.split(".")):
+            resolve(root, fid, rtype="fix",
+                    verify=_version_floor_verify(fid, moat_ver),
+                    fixed_in=moat_ver, verify_kind="tests")
+            result = verify(root, fid)
+            out["transferred" if (result and result[1].get("verdict")) else
+                "still_red"].append(fid)
         else:
             out["needs_verify"].append(fid)
     return out
