@@ -185,8 +185,10 @@ def file_feedback(root: Path, kind: str, title: str, *, detail: str = "",
             canonical_root(root), fb_id=rec["id"], kind=kind, title=title,
             content_hash=rec["content_hash"], detail=detail, severity=severity,
             feature=state.get("feature"), repro=repro)
-    except Exception:  # noqa: BLE001 — ticket is best-effort, never breaks filing
-        pass
+    except Exception as e:  # noqa: BLE001 — never BREAKS filing, but must not HIDE a lost ticket
+        print(f"[prusik] warning: finding {rec['id']} was filed but its durable ticket "
+              f"could not be written ({e!r}) — it may not track or auto-close on update. "
+              f"Check findings/ and re-file if it is missing.", file=sys.stderr)
     _push_to_sink(root, rec)
     return rec
 

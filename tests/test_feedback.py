@@ -62,3 +62,22 @@ def test_load_empty_and_append_never_raises():
         assert feedback.append(tmp, rec) is True
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_ticket_write_failure_is_surfaced_not_swallowed(monkeypatch, capsys):
+    """Filing must survive a broken ticket write (never break a sprint), but must NOT
+    hide it — a silently-lost findings/ ticket means the finding can't track or
+    auto-close. The failure is surfaced to stderr, filing still returns the record."""
+    tmp = _mktmp_project()
+    try:
+        from prusik import feedback_store
+        def boom(*a, **k):
+            raise RuntimeError("disk full")
+        monkeypatch.setattr(feedback_store, "create", boom)
+        rec = feedback.file_feedback(tmp, "bug", "a finding whose ticket fails to write")
+        assert rec and rec.get("id"), "filing must still return the record"
+        err = capsys.readouterr().err
+        assert "disk full" in err and rec["id"] in err, \
+            "a lost durable ticket must be surfaced, not silently swallowed"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

@@ -50,6 +50,7 @@ Honest scope:
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timezone
 from typing import Any
 
@@ -315,7 +316,10 @@ def collect(since: str | None = None,
                 try:
                     results = registry[name].detect(ScanContext(
                         root=root, files=files, config=cfg))
-                except Exception:  # a detector must not break findings
+                except Exception as e:  # a detector must not break findings — but say so
+                    print(f"[prusik] warning: detector {name!r} failed and was skipped "
+                          f"({e!r}) — its findings are absent from this report.",
+                          file=sys.stderr)
                     continue
                 for f in results:
                     findings.append(_detector_finding_to_contract(f, now_ts))

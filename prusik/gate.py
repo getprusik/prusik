@@ -2975,7 +2975,10 @@ def _check_local_detectors(root: Path, touched_files: list, feature: str) -> Non
         from prusik.scan import _detector_config
         cfg = _detector_config(root)
         registry = _detreg.load(root, cfg)
-    except Exception:
+    except Exception as e:
+        print(f"[prusik] warning: project-local detectors could not load ({e!r}) — "
+              f"custom detectors will not surface in metrics/findings this run.",
+              file=sys.stderr)
         return
     extras = {n: m for n, m in registry.items()
               if n not in ("binding", "test-reach")}
