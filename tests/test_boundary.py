@@ -58,8 +58,9 @@ def test_adopter_token_glued_into_snake_case_identifier_is_caught(tmp_path):
     be caught by the real `scan()`. The old `\\b(token)\\b` matcher missed every one of
     these — `_` is a word char so `\\b` never fires at a `_`/token seam, and a letter
     suffix defeats the trailing `\\b` — which is exactly how adopter names leaked into
-    public test identifiers (`_SAAVI_SHAPE`, `_c2c_like_project`, `saavis_…`) and passed
-    the gate. Exercises the actual scanner, not a re-built pattern."""
+    public test identifiers (an all-caps `_<NAME>_SHAPE` constant, a `_<name>_like`
+    helper, a `<name>s_…` test name) and passed the gate. Exercises the actual scanner,
+    not a re-built pattern."""
     import importlib.util
     spec = importlib.util.spec_from_file_location("boundary_check", _SCRIPT)
     bc = importlib.util.module_from_spec(spec)
