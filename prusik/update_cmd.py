@@ -83,6 +83,13 @@ def run(timeout: float = 3.0) -> int:
     kind, upgrade = _install_kind()
     print(f"[prusik update] installed {installed} ({kind} install)")
 
+    # Close the loop FIRST, independent of whether a newer release exists: a finding
+    # whose fix is ALREADY in THIS engine can drain now. Gating the drain on "is this
+    # the latest release?" (the old early-return below) deferred already-shipped fixes
+    # to a second `update` run adopters rarely make — so shipped fixes rotted as
+    # stale-open even after they ran update. Proof-gated: only a GREEN verify closes.
+    _close_shipped_findings(timeout)
+
     if newer:
         print(f"  ↑ a newer release is available: {latest}")
         # B4 — what's new between installed and latest, from the repo CHANGELOG;
@@ -106,7 +113,8 @@ def run(timeout: float = 3.0) -> int:
         except Exception:  # noqa: BLE001 — never let the nicety break update
             pass
         print(f"  1. upgrade the package:  {upgrade}")
-        print("  2. then re-run `prusik update` to sync this project's templates.")
+        print("  2. then re-run `prusik update` to sync templates + drain any fixes "
+              "the upgrade adds.")
         print("  3. then restart your Claude Code session.")
         return 0
 
@@ -121,10 +129,6 @@ def run(timeout: float = 3.0) -> int:
     print("  syncing project templates…")
     from prusik import refresh
     rc = refresh.run()
-    # Close the loop: now that the fixed engine is installed, verify + close this
-    # project's findings whose fix has shipped — so a shipped fix stops rotting as
-    # a stale-open ticket (proof-gated: only a GREEN verify closes it).
-    _close_shipped_findings(timeout)
     print("  → restart your Claude Code session to pick up agent/command changes "
           "(`/agents` only reloads the interactive picker, not Agent-tool dispatch).")
     return rc if isinstance(rc, int) else 0
@@ -173,5 +177,6 @@ def _close_shipped_findings(timeout: float) -> None:
                   f"command to auto-close — `prusik feedback resolve <id> --verify "
                   f"\"<cmd>\"`: {', '.join(res['needs_verify'][:6])}"
                   f"{'…' if len(res['needs_verify']) > 6 else ''}")
-    except Exception:  # noqa: BLE001 — closing the loop must never break `update`
-        pass
+    except Exception as e:  # noqa: BLE001 — must never BREAK update; must not HIDE failure
+        print(f"  (couldn't close the loop this run: {e!r} — findings unaffected; "
+              f"re-run `prusik update` later)")
