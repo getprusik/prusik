@@ -104,7 +104,7 @@ def test_confirmed_miss_lowers_recall_and_buckets_by_class():
     assert s["is_upper_bound"] is False     # no pending candidates → exact
 
 
-def test_taxonomy_covers_saavis_four_classes_and_flags_structural():
+def test_taxonomy_covers_the_four_escape_classes_and_flags_structural():
     keys = set(cr.ESCAPE_CLASSES)
     assert keys == {"absence", "cross_integration", "narrative_claim",
                     "unexamined_delta"}

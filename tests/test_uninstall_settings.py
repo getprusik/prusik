@@ -14,7 +14,7 @@ from tests._common import _mktmp_project  # noqa: F401,E402
 from prusik import init as kit_init
 from prusik import uninstall as kit_uninstall
 
-_SAAVI_SHAPE = (
+_REAL_SETTINGS_SHAPE = (
     '{\n  "hooks": {"PreToolUse": [{"matcher": "*", "hooks": ['
     '{"type": "command", "command": "echo hi"}]}]},\n'
     '  "permissions": {"allow": ["Read"]}\n}\n'
@@ -56,14 +56,14 @@ def _manifest(d) -> dict:
 # ---------- the headline: pre-existing settings.json is reverted ----------
 
 def test_preexisting_settings_restored_byte_identical():
-    d = _repo(_SAAVI_SHAPE)
+    d = _repo(_REAL_SETTINGS_SHAPE)
     assert _in(d, lambda: kit_init.run()) == 0
     # init merged → settings.json changed, and the manifest recorded the restore
-    assert (d / ".claude" / "settings.json").read_text() != _SAAVI_SHAPE
+    assert (d / ".claude" / "settings.json").read_text() != _REAL_SETTINGS_SHAPE
     assert "settings_restore" in _manifest(d)
     assert _in(d, lambda: kit_uninstall.run()) == 0
     # uninstall reverted it to the exact original
-    assert (d / ".claude" / "settings.json").read_text() == _SAAVI_SHAPE
+    assert (d / ".claude" / "settings.json").read_text() == _REAL_SETTINGS_SHAPE
     # and the tree is clean (only the committed README + original settings)
     out = subprocess.run(["git", "-C", str(d), "status", "--porcelain"],
                          capture_output=True, text=True).stdout
@@ -73,7 +73,7 @@ def test_preexisting_settings_restored_byte_identical():
 # ---------- drift safety: a hand-edit since merge is NOT clobbered ----------
 
 def test_hand_edited_settings_not_clobbered():
-    d = _repo(_SAAVI_SHAPE)
+    d = _repo(_REAL_SETTINGS_SHAPE)
     _in(d, lambda: kit_init.run())
     # operator edits settings.json AFTER prusik merged
     sp = d / ".claude" / "settings.json"
@@ -86,12 +86,12 @@ def test_hand_edited_settings_not_clobbered():
 
 
 def test_force_reverts_even_after_hand_edit():
-    d = _repo(_SAAVI_SHAPE)
+    d = _repo(_REAL_SETTINGS_SHAPE)
     _in(d, lambda: kit_init.run())
     sp = d / ".claude" / "settings.json"
     sp.write_text(sp.read_text().replace('"echo hi"', '"echo EDITED"'))
     _in(d, lambda: kit_uninstall.run(force=True))
-    assert sp.read_text() == _SAAVI_SHAPE
+    assert sp.read_text() == _REAL_SETTINGS_SHAPE
 
 
 # ---------- fresh repo: still clean, no settings_restore ----------

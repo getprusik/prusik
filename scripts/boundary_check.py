@@ -24,7 +24,7 @@ PROVENANCE CONVENTION (how to cite a finding in public code)
     Cite the finding by its content-addressed id — `fb-<hash>` — never by
     adopter name. The id reveals nothing; the id->adopter crosswalk stays in the
     private finding record. Keep the lesson, drop the name:
-        BAD :  # false confidence (saavi fb-90cfcfa8b918)
+        BAD :  # false confidence (acme fb-90cfcfa8b918)
         GOOD:  # false confidence (fb-90cfcfa8b918)
 
 This is a maintainer/pre-commit tool and is intentionally NOT part of the
@@ -50,6 +50,7 @@ DEFAULT_REGISTRY = REPO_ROOT / "hq" / "products.local.json"
 PUBLIC_SURFACE = (
     "prusik",           # the engine package (ships in the wheel)
     "tests",            # ship in the public repo (not the wheel, but public)
+    "scripts",          # public maintainer tooling (regen_closures, this gate itself)
     "benchmarks",       # eval corpus the public test suite reads from
     "examples",
     "README.md",
@@ -135,7 +136,7 @@ def iter_public_files(root: Path) -> list[Path]:
 
 def _flex(token: str) -> str:
     """Regex body matching `token`'s parts with an OPTIONAL separator, so a compound
-    registry label (`c2c-invoicing`) is caught glued (`c2cinvoicing`), underscored,
+    registry label (`acme-corp`) is caught glued (`acmecorp`), underscored,
     or spaced — the identity-leak hole a plain `\\btoken\\b` leaves open."""
     parts = re.split(r"[-_ ]+", token)
     return r"[-_ ]?".join(re.escape(p) for p in parts if p)
@@ -145,15 +146,19 @@ def scan(root: Path, denylist: list[str]) -> list[dict]:
     """Return one violation record per matching line."""
     if not denylist:
         return []
-    # Word boundary (\b), case-insensitive. Each token matches its parts with an
-    # OPTIONAL separator, so a compound registry label (`c2c-invoicing`) is caught in
-    # any written form — hyphen, underscore, space, OR GLUED (`c2cinvoicing`). The
-    # glued form is a real hole this closes: `\bc2c-invoicing\b` and `\bc2c\b` both
-    # MISS `c2cinvoicing` (the label lost its hyphen, and `c2c` has no trailing
-    # boundary before `invoicing`). Longer tokens are matched first so a compound
-    # label reports as itself rather than its `c2c` fragment.
+    # Boundary that treats `_` as a SEPARATOR (unlike `\b`, for which `_` is a word
+    # char) and allows a trailing alpha suffix — so an adopter token glued into a
+    # snake_case or camelCase identifier is caught: `_acme_`, `acme_like`, `acmeShape`,
+    # `acmes` (plural). The old `\b(token)\b` MISSED every one of these — `\b` does not
+    # fire at a `_`/token seam, and a letter suffix defeats the trailing `\b` — which is
+    # exactly how adopter names leaked into public test identifiers (an all-caps
+    # `_<NAME>_SHAPE` constant, a `_<name>_like_project` helper) and went undetected.
+    # Each token still matches its parts with an OPTIONAL separator so a compound label
+    # (`acme-corp`) is caught glued (`acmecorp`) too. Longer tokens first, so a compound
+    # label reports as itself.
     ordered = sorted(denylist, key=len, reverse=True)
-    pats = [re.compile(r"\b(" + "|".join(_flex(t) for t in ordered) + r")\b",
+    body = "|".join(_flex(t) for t in ordered)
+    pats = [re.compile(r"(?<![A-Za-z0-9])(" + body + r")[A-Za-z]*(?![A-Za-z0-9])",
                        re.IGNORECASE)]
     # Also flag the AUTHOR's local identity leaking into the public surface — the
     # machine username, which rides in absolute home paths (`/Users/<user>/…`)

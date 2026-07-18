@@ -44,7 +44,7 @@ def test_plan_modules_empty_when_no_plan():
 
 # ---------- the adopter scenario: a touched route, a test OUTSIDE the set ----------
 
-def _c2c_like_project():
+def _touched_route_with_external_test():
     """A FastAPI route module the plan touches, plus a test that lives OUTSIDE
     the plan's module set but asserts on that route's path — exactly the shape
     that broke team-invites/clients-list a fix-round late."""
@@ -66,7 +66,7 @@ def _c2c_like_project():
 
 
 def test_plan_reach_flags_out_of_set_test_referencing_touched_route():
-    tmp = _c2c_like_project()
+    tmp = _touched_route_with_external_test()
     try:
         _write_plan(tmp, "team-invites", "- `api/team.py` — add authz guard\n")
         result = blast_plan.plan_test_reach("team-invites", tmp)
@@ -78,7 +78,7 @@ def test_plan_reach_flags_out_of_set_test_referencing_touched_route():
 
 
 def test_advisory_string_lists_at_risk_tests():
-    tmp = _c2c_like_project()
+    tmp = _touched_route_with_external_test()
     try:
         _write_plan(tmp, "team-invites", "- `api/team.py` — add authz guard\n")
         adv = blast_plan.advisory("team-invites", tmp)
@@ -253,7 +253,7 @@ def test_new_methods_and_owner_hints():
 # ---------- CLI + ledger ----------
 
 def test_run_emits_ledger_event_and_text():
-    tmp = _c2c_like_project()
+    tmp = _touched_route_with_external_test()
     try:
         _write_plan(tmp, "team-invites", "- `api/team.py` — add authz guard\n")
         import os

@@ -50,3 +50,29 @@ def test_glued_and_alt_separator_adopter_forms_are_caught():
     assert pat.search(frag + " " + tail)      # spaced
     assert pat.search("a " + frag + " ref")   # bare fragment still matches
     assert not pat.search("fb-" + frag + "def123456")   # hex fragment ≠ leak
+
+
+def test_adopter_token_glued_into_snake_case_identifier_is_caught(tmp_path):
+    """Regression: an adopter token embedded in a snake_case / camelCase / plural
+    identifier (`_<NAME>_SHAPE`, `_<name>_like_project`, `<name>s`, `<name>Shape`) MUST
+    be caught by the real `scan()`. The old `\\b(token)\\b` matcher missed every one of
+    these — `_` is a word char so `\\b` never fires at a `_`/token seam, and a letter
+    suffix defeats the trailing `\\b` — which is exactly how adopter names leaked into
+    public test identifiers (`_SAAVI_SHAPE`, `_c2c_like_project`, `saavis_…`) and passed
+    the gate. Exercises the actual scanner, not a re-built pattern."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("boundary_check", _SCRIPT)
+    bc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bc)
+    token = "ac" + "me"                        # runtime-built; no literal token in source
+    (tmp_path / "prusik").mkdir()
+    (tmp_path / "prusik" / "x.py").write_text(
+        f"_{token.upper()}_SHAPE = 1\n"        # snake_case, all-caps
+        f"def _{token}_like_project(): pass\n"  # snake_case
+        f"xs = '{token}s'; y = '{token}Shape'\n"  # plural (letter suffix) + camelCase
+        f"h = 'ab{token}def0123'\n")           # alnum-run coincidence — NOT a leak
+    snippets = " | ".join(h["snippet"] for h in bc.scan(tmp_path, [token]))
+    assert f"_{token.upper()}_SHAPE" in snippets
+    assert f"_{token}_like_project" in snippets
+    assert f"{token}s" in snippets and f"{token}Shape" in snippets
+    assert f"ab{token}def" not in snippets     # embedded in an alnum run → not flagged

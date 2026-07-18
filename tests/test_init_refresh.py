@@ -275,7 +275,7 @@ def test_refresh_emits_restart_hint_when_agents_change():
         shutil.rmtree(tmp)
 
 
-def test_user_content_loss_flags_c2c_force_damage():
+def test_user_content_loss_flags_force_refresh_damage():
     """The backstop must catch the exact silent regressions an adopter hit under
     `refresh --force`: a dropped permissions.allow entry, a lost hook event, an
     enabled gate flipped off, and a populated additive list emptied."""
