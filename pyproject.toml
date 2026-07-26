@@ -68,6 +68,8 @@ dev = [
     "mypy>=1.19",
     "types-PyYAML>=6.0",
     "pytest-cov>=5.0",
+    # tests/conftest.py env-integrity gate parses pyproject on py3.10 (no tomllib)
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 # Test collection. prusik's own suite lives in tests/. benchmarks/ and
