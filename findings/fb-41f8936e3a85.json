@@ -1,0 +1,31 @@
+{
+  "id": "fb-41f8936e3a85",
+  "created_at": "2026-07-27T08:05:37.406766+00:00",
+  "kind": "bug",
+  "severity": "high",
+  "title": "init-scaffolded gate hooks exit 127 on venv-only installs \u2014 no warning at init or doctor",
+  "detail": "Adopter walkthrough 2026-07-27: pip install prusik into a venv, prusik init scaffolds .claude/settings.json hooks calling bare 'prusik'. Claude Code resolves hooks against the launching shell PATH, not the init-time PATH \u2014 venv not activated => every hook exits 127. Neither init nor doctor surfaces this; the harness reads as wired but errors on every tool call.",
+  "feature": null,
+  "content_hash": "41f8936e3a85",
+  "repro": "python3 -m venv v && ./v/bin/pip install prusik && cd repo && ../v/bin/prusik init && env PATH=/usr/bin:/bin sh -c 'prusik gate pre-tool'  # 127",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": {
+    "type": "fix",
+    "verify": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 -m pytest tests/test_fb_hook_path_warning.py -q",
+    "fixed_in": "0.197.34",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-07-27T08:15:59.961955+00:00",
+      "exit": 0,
+      "executed_count": 5,
+      "verdict": true,
+      "why": "5 test(s) executed, exit 0",
+      "worktree_hash": "d21bdc4-dirty"
+    }
+  ],
+  "status": "verified-closed"
+}

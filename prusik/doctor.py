@@ -433,6 +433,15 @@ def _score_session_lifecycle(root: Path, claude_dir: Path) -> tuple[int, list[st
             "had a hooks block, re-run `prusik init --merge-hooks` to wire prusik's "
             "gates alongside it.")
 
+    # fb-41f8936e3a85: wired hooks are only as good as `prusik` resolving on
+    # the PATH of the shell that launches Claude Code — a venv-only install
+    # makes every hook exit 127 while the harness reads as fully wired.
+    if gate_hooks_wired:
+        from prusik import preflight
+        path_warn = preflight.hook_resolution_warning()
+        if path_warn:
+            evidence.append(path_warn)
+
     ledger_path = root / ".sprint" / "ledger.jsonl"
     has_phase_events = False
     if ledger_path.exists():

@@ -1,0 +1,31 @@
+{
+  "id": "fb-2d9bd441e70a",
+  "created_at": "2026-07-27T08:05:37.499698+00:00",
+  "kind": "bug",
+  "severity": "med",
+  "title": "test-command detection misses the plain tests/-dir pytest shape",
+  "detail": "Adopter walkthrough 2026-07-27: repo with tests/test_app.py + pytest installed but no pytest mention in pyproject/pytest.ini/Makefile => 'Test command: none detected', Verification 0/5, no test command in manifest. The most minimal common Python repo shape gets no verification backbone. Also: stack detection needs a manifest file \u2014 a repo with only root *.py files reports 'none detected (greenfield repo?)'.",
+  "feature": null,
+  "content_hash": "2d9bd441e70a",
+  "repro": "mkdir -p t/tests && printf 'def test_x():\\n    assert 1\\n' > t/tests/test_x.py && cd t && git init -q && git add -A && git commit -qm x && prusik init | grep 'Test command'",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": {
+    "type": "fix",
+    "verify": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 -m pytest tests/test_fb_plain_pytest_detection.py -q",
+    "fixed_in": "0.197.34",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-07-27T08:16:15.513382+00:00",
+      "exit": 0,
+      "executed_count": 6,
+      "verdict": true,
+      "why": "6 test(s) executed, exit 0",
+      "worktree_hash": "d21bdc4-dirty"
+    }
+  ],
+  "status": "verified-closed"
+}

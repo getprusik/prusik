@@ -13,8 +13,12 @@ Pure-ish: shells out to `git status --porcelain` once; no mutation.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+_UNSET = object()
 
 
 def git_status(target: Path) -> str:
@@ -59,6 +63,42 @@ def init_guard(target: Path, allow_dirty: bool) -> tuple[bool, str]:
         return True, ("[prusik-init] NOTE: --allow-dirty set — proceeding over a "
                       "dirty tree; clean-uninstall verification is on you.")
     return True, ""  # clean
+
+
+def hook_resolution_warning(which=_UNSET, prefix: str | None = None,
+                            base_prefix: str | None = None) -> str:
+    """fb-41f8936e3a85: the scaffolded hooks invoke bare `prusik`, resolved
+    against the PATH of whatever shell launches Claude Code — NOT the PATH of
+    the init run. A venv-only install whose venv isn't on that PATH makes
+    EVERY hook exit 127 (command not found), so the harness reads as wired but
+    errors on every tool call. Checked at init AND doctor so the drift is
+    surfaced at install time and stays surfaced if the environment changes.
+
+    Returns '' when `prusik` resolves globally, an informational note when it
+    resolves only inside the active virtualenv, and a loud warning when it
+    does not resolve at all. Params are injectable for tests; defaults read
+    the live process."""
+    if which is _UNSET:
+        which = shutil.which("prusik")
+    prefix = prefix or sys.prefix
+    base_prefix = base_prefix or sys.base_prefix
+    if which is None:
+        return ("⚠ `prusik` does not resolve on PATH — the gate hooks in "
+                ".claude/settings.json will exit 127 (command not found) in a "
+                "Claude Code session. Install a PATH-global binary "
+                "(`pipx install prusik` or `uv tool install prusik`), or "
+                "always launch claude from the environment that has prusik.")
+    if prefix != base_prefix:                      # running inside a venv
+        try:
+            inside = Path(which).resolve().is_relative_to(Path(prefix).resolve())
+        except OSError:
+            inside = False
+        if inside:
+            return ("· prusik resolves inside this virtualenv only — the gate "
+                    "hooks work when Claude Code is launched from the "
+                    "activated venv. For a machine-global install: "
+                    "`pipx install prusik` or `uv tool install prusik`.")
+    return ""
 
 
 def branch_recommendation(target: Path) -> str:

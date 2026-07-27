@@ -117,7 +117,11 @@ def worktree_setup_commands(root: Path) -> list[str]:
 # ---------- Tech stacks ----------
 
 _STACK_MARKERS = (
-    ("python", ("pyproject.toml", "requirements.txt", "setup.py", "setup.cfg")),
+    # fb-2d9bd441e70a: "*.py" (root-level only, non-recursive by design — a
+    # scripts/ dir inside a go repo must not flip the stack) so a
+    # manifest-less Python repo isn't misread as greenfield.
+    ("python", ("pyproject.toml", "requirements.txt", "setup.py", "setup.cfg",
+                "*.py")),
     ("typescript", ("tsconfig.json",)),
     ("javascript", ("package.json",)),
     ("rust", ("Cargo.toml",)),
@@ -207,6 +211,16 @@ def _detect_general_test_command(root: Path) -> str | None:
         return "cargo test"
     if (root / "go.mod").exists():
         return "go test ./..."
+    # fb-2d9bd441e70a: the plain-pytest shape — a tests/ (or test/) tree of
+    # test_*.py / *_test.py with no runner named in any config. The most
+    # common minimal Python repo; without this fallback it gets no
+    # verification backbone at all. Checked LAST so an explicit config
+    # (pyproject/pytest.ini/package.json/Makefile/Cargo/go.mod) always wins.
+    for d in ("tests", "test"):
+        tdir = root / d
+        if tdir.is_dir() and (any(tdir.rglob("test_*.py"))
+                              or any(tdir.rglob("*_test.py"))):
+            return "pytest"
     return None
 
 

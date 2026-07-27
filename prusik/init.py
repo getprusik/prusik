@@ -268,6 +268,14 @@ def run(conventions: str | None = None, force: bool = False,
         print("      alongside your existing hooks (non-destructive, and uninstall")
         print("      reverts them cleanly). Verify with `prusik doctor`.")
 
+    # fb-41f8936e3a85: the hooks just wired call bare `prusik` — surface at
+    # install time when that won't resolve in a Claude Code session (venv-only
+    # install), instead of letting every hook die 127 with no explanation.
+    path_warn = preflight.hook_resolution_warning()
+    if path_warn:
+        print()
+        print(f"  {path_warn}", file=sys.stderr if path_warn.startswith("⚠") else sys.stdout)
+
     rec = preflight.branch_recommendation(target)
     if rec:
         print()
