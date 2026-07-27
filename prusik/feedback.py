@@ -266,10 +266,19 @@ def run(args) -> int:
         if not recs:
             print("[prusik-feedback] no findings filed yet.")
             return 0
+        # fb-56ee9ebcf4e6: state comes from the TICKET lattice (derive_state) —
+        # the legacy jsonl `status` field is a second source of truth that goes
+        # stale the moment the loop closes a finding, so `--list` showed 'open'
+        # on verified-closed tickets. Legacy status only for pre-ticket records.
+        from prusik import feedback_store as _fs
+        croot = canonical_root(root)
         print(f"[prusik-feedback] {len(recs)} finding(s) (ride the next export to HQ):")
         for r in recs:
             sev = f" [{r['severity']}]" if r.get("severity") else ""
-            print(f"  {r['id']}  {r['kind']:11s}{sev}  {r.get('status', 'open'):7s}  "
+            ticket = _fs.load(croot, r["id"])
+            status = (_fs.derive_state(ticket) if ticket
+                      else r.get("status", "open"))
+            print(f"  {r['id']}  {r['kind']:11s}{sev}  {status:7s}  "
                   f"{r['title']}")
         return 0
     if not getattr(args, "title", None):

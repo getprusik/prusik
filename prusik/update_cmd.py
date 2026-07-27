@@ -156,9 +156,22 @@ def _close_shipped_findings(timeout: float) -> None:
         # need a local verify. moat_versions maps id → the release that shipped the test.
         moat_versions = {fid: v for fid, v in changelog.installed_moat_closures().items()
                          if fid in local}
-        print(f"  closing the loop on {len(shipped)} finding(s) the CHANGELOG has "
+        # fb-ff4271c46232: the header must count what this run will ACT on —
+        # shipped-and-not-yet-closed — not shipped∩local. Announcing "closing
+        # the loop on 19" on every update when all 19 closed long ago reads as
+        # work happening; nothing is. Say plainly when the loop is already closed.
+        actionable = set()
+        for fid in shipped:
+            rec = feedback_store.load(root, fid)
+            if rec is None or not feedback_store.is_closed(rec):
+                actionable.add(fid)
+        if not actionable:
+            print(f"  ✓ loop already closed — all {len(shipped)} shipped fix(es) "
+                  f"verified-closed in this repo.")
+            return
+        print(f"  closing the loop on {len(actionable)} finding(s) the CHANGELOG has "
               f"fixed (verifying in this repo)…")
-        res = feedback_store.close_shipped(root, shipped, moat_versions)
+        res = feedback_store.close_shipped(root, actionable, moat_versions)
         if res["closed"]:
             print(f"    ✓ verified + closed {len(res['closed'])}: "
                   f"{', '.join(res['closed'][:6])}"

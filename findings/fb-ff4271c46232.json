@@ -1,0 +1,31 @@
+{
+  "id": "fb-ff4271c46232",
+  "created_at": "2026-07-27T08:42:56.032919+00:00",
+  "kind": "bug",
+  "severity": "low",
+  "title": "update drain header announces 'closing the loop on N findings' when 0 are actionable",
+  "detail": "saavi walkthrough 2026-07-27: every prusik update prints 'closing the loop on 19 finding(s) ... (verifying in this repo)' although all 19 are already verified-closed \u2014 the header counts shipped\u2229local regardless of state and no bucket line follows. Looks like work happening every run; nothing is. Header should count only actionable (not-yet-closed) findings and say plainly when the loop is already closed.",
+  "feature": null,
+  "content_hash": "ff4271c46232",
+  "repro": "cd adopter-repo && prusik update && prusik update  # header repeats with nothing to do",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": {
+    "type": "fix",
+    "verify": "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 -m pytest tests/test_fb_update_drain_header.py -q",
+    "fixed_in": "0.197.35",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-07-27T08:50:38.889731+00:00",
+      "exit": 0,
+      "executed_count": 2,
+      "verdict": true,
+      "why": "2 test(s) executed, exit 0",
+      "worktree_hash": "20c020f-dirty"
+    }
+  ],
+  "status": "verified-closed"
+}
