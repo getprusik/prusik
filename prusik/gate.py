@@ -39,11 +39,99 @@ def pre_tool(args=None) -> int:
     if not config:
         return 0  # prusik not in this repo; don't interfere
 
+    # fb-0b9d0a6d1ce6: single-writer serialization of the SHARED main tree,
+    # checked BEFORE the no-active-sprint early return — the colliding session
+    # in the field was a sprint-less ad-hoc responder the gate never saw, and
+    # it hard-reset main over another session's 25 unpushed commits. Worktrees
+    # stay concurrent by design; only the shared tree is single-writer.
+    if event.session and _mutates_shared_tree(event):
+        from prusik import main_writer
+        root = ledger.project_root()
+        state0 = phases.current_sprint_state() or {}
+        ok, prior, action = main_writer.check_and_touch(
+            root, event.session,
+            feature=state0.get("feature"), phase=state0.get("phase"))
+        if not ok:
+            ledger.append("gate_blocked", tool=event.tool,
+                          target=(event.file_targets[0] if event.file_targets else None),
+                          command=event.command, phase=state0.get("phase"),
+                          feature=state0.get("feature"),
+                          reason="shared-tree writer lease held by another session",
+                          holder=(prior or {}).get("session"))
+            return adapter.deny(main_writer.deny_message(prior or {}))
+        if action in ("acquired", "stolen_stale"):
+            ledger.append(f"writer_lease_{action}", session=event.session,
+                          prior_holder=(prior or {}).get("session"))
+
     state = phases.current_sprint_state()
     if not state:
         return 0  # no active sprint
 
     return _gate_tool_event(event, config, state["phase"], state.get("feature"), adapter)
+
+
+# fb-0b9d0a6d1ce6 — what counts as "mutating the SHARED tree" (vs a worktree,
+# which stays concurrent): a Write/Edit/notebook target outside worktrees/, a
+# bash redirect landing outside worktrees/, or a mutating git statement not
+# explicitly scoped into a worktree (`git -C worktrees/... <cmd>` / a prior
+# `cd worktrees/...` statement in the same command line).
+_MUTATING_GIT = frozenset((
+    "reset", "rebase", "merge", "commit", "push", "checkout", "switch",
+    "restore", "stash", "clean", "cherry-pick", "revert", "am", "apply",
+    "rm", "mv",
+))
+
+
+def _under_worktrees(target: str) -> bool:
+    p = Path(target)
+    if not p.is_absolute():
+        return str(p).replace("\\", "/").lstrip("./").startswith("worktrees/")
+    try:
+        rel = p.resolve().relative_to(ledger.project_root().resolve())
+    except (ValueError, OSError):
+        return True   # outside this repo → not OUR shared tree; other gates own it
+    return str(rel).startswith("worktrees/")
+
+
+def _shared_tree_git_mutation(executable: str) -> bool:
+    """True if any statement runs a mutating git subcommand against the shared
+    tree. Statement-ordered: a `cd worktrees/...` earlier in the same command
+    scopes the following statements into that worktree."""
+    in_worktree = False
+    for stmt in re.split(r"(?:;|&&|\|\||\||\n)", executable):
+        toks = stmt.split()
+        if not toks:
+            continue
+        if toks[0] == "cd" and len(toks) > 1:
+            in_worktree = _under_worktrees(toks[1])
+            continue
+        if toks[0] != "git":
+            continue
+        # consume global flags; `-C <path>` scopes this statement explicitly
+        i, stmt_worktree = 1, in_worktree
+        while i < len(toks) and toks[i].startswith("-"):
+            if toks[i] == "-C" and i + 1 < len(toks):
+                stmt_worktree = _under_worktrees(toks[i + 1])
+                i += 2
+                continue
+            i += 2 if toks[i] == "-c" and i + 1 < len(toks) else 1
+        if i < len(toks) and toks[i] in _MUTATING_GIT and not stmt_worktree:
+            return True
+    return False
+
+
+def _mutates_shared_tree(event) -> bool:
+    for target in event.file_targets:
+        if not _under_worktrees(target):
+            return True
+    if event.command:
+        executable = _strip_heredocs(event.command)
+        for target in _bash_redirect_targets(executable):
+            if not _under_worktrees(target):
+                return True
+        if _shared_tree_git_mutation(executable):
+            return True
+    return False
 
 
 def _gate_tool_event(event, config: dict, phase: str, feature, adapter) -> int:
@@ -1221,6 +1309,26 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
     return all_passed, results
 
 
+def release_writer(args) -> int:
+    """fb-0b9d0a6d1ce6 — explicit, audited hand-off of the shared-tree
+    single-writer lease. Operator-initiated (never automatic): use it only when
+    the holding session is finished; a live holder's next write re-acquires."""
+    from prusik import main_writer
+    root = ledger.project_root()
+    lease = main_writer.release(root)
+    if lease is None:
+        print("[prusik-gate] no shared-tree writer lease held — nothing to release.")
+        return 0
+    ledger.append("writer_lease_released", reason="manual release-writer",
+                  prior_holder=lease.get("session"))
+    ses = (lease.get("session") or "?")[:12]
+    print(f"[prusik-gate] released the shared-tree writer lease held by "
+          f"session {ses}… (feature {lease.get('feature') or '?'}, "
+          f"phase {lease.get('phase') or '?'}). The next session to write "
+          f"the shared tree acquires it.")
+    return 0
+
+
 def sprint_complete(args) -> int:
     """Close the sprint: record predicted-vs-actual and clear state."""
     feature = args.feature
@@ -1294,6 +1402,11 @@ def sprint_complete(args) -> int:
     from prusik import fix_round as _fr
     if _fr.reap(root, reason=f"sprint-complete: {feature!r}"):
         print(f"[prusik-gate] Reaped open fix-round at sprint-complete of {feature!r}.")
+    # fb-0b9d0a6d1ce6: a completing sprint releases the shared-tree writer
+    # lease — the writer is done; the next session shouldn't wait out the TTL.
+    from prusik import main_writer as _mw
+    if _mw.release(root):
+        ledger.append("writer_lease_released", reason=f"sprint-complete: {feature}")
     print(f"[prusik-gate] Sprint complete: {feature}")
     print(f"  predicted: {predicted}")
     print(f"  actual:    {actual}")

@@ -33,10 +33,14 @@ class ToolEvent:
       - `command`: a shell command, if this is a shell invocation (the gate parses its
         redirect targets + applies deny_commands itself — that parsing is host-neutral).
       - `tool`: the native tool name, carried for ledger/messages only (never branched on
-        by the gate)."""
+        by the gate).
+      - `session`: the host's session identity, when it provides one — the key for
+        cross-session serialization (fb-0b9d0a6d1ce6 single-writer lease). None when
+        a host can't identify sessions; the lease check is then inapplicable."""
     tool: str
     file_targets: tuple[str, ...] = field(default_factory=tuple)
     command: str | None = None
+    session: str | None = None
 
 
 class PlatformAdapter(abc.ABC):
@@ -75,14 +79,17 @@ class ClaudeCodeAdapter(PlatformAdapter):
     def parse_event(self, payload: dict) -> ToolEvent | None:
         tool = payload.get("tool_name", "")
         ti = payload.get("tool_input", {}) or {}
+        session = payload.get("session_id") or None
         if tool in self._WRITE_TOOLS:
             target = (ti.get("file_path") or ti.get("path")
                       or ti.get("notebook_path"))
             return ToolEvent(tool=tool,
-                             file_targets=(target,) if target else ())
+                             file_targets=(target,) if target else (),
+                             session=session)
         if tool == "Bash":
-            return ToolEvent(tool=tool, command=ti.get("command", ""))
-        return ToolEvent(tool=tool)          # a non-write, non-shell tool → nothing to gate
+            return ToolEvent(tool=tool, command=ti.get("command", ""),
+                             session=session)
+        return ToolEvent(tool=tool, session=session)  # non-write, non-shell → nothing to gate
 
     def deny(self, reason: str) -> int:
         print(json.dumps({

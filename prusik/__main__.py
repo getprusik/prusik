@@ -83,6 +83,10 @@ def main():
                        help="Allow advancing to an earlier phase (recorded as phase_rewind)")
     p_brief = gsub.add_parser("brief", help="Validate a brief file")
     p_brief.add_argument("path")
+    gsub.add_parser("release-writer",
+                    help="Release the shared-tree single-writer lease "
+                         "(fb-0b9d0a6d1ce6) — audited hand-off when the "
+                         "holding session is finished")
     p_fallback = gsub.add_parser("mark-fallback",
                                   help="Log that a reviewer-artifact fallback was used "
                                        "(slash-command writes the artifact from agent text)")
