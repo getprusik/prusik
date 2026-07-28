@@ -2,9 +2,20 @@
 
 [![CI](https://github.com/getprusik/prusik/actions/workflows/ci.yml/badge.svg)](https://github.com/getprusik/prusik/actions/workflows/ci.yml) [![PyPI version](https://img.shields.io/pypi/v/prusik)](https://pypi.org/project/prusik/) [![Python versions](https://img.shields.io/pypi/pyversions/prusik)](https://pypi.org/project/prusik/) [![License](https://img.shields.io/pypi/l/prusik)](https://github.com/getprusik/prusik/blob/main/LICENSE)
 
-**Proof, not opinion.** Your agent says "tests pass ✅". Prusik checks how many tests actually **executed** — from the tool's own output, never the agent's word. Start with one zero-ceremony command; scale to a full phase-gated harness for Claude Code agent teams when you're ready.
+**Prusik is an independent verification layer for AI coding agents.** Agents write the code; prusik proves the work — that tests really executed, changes stayed in scope, and every "done" has evidence behind it. It's named after the climbing knot: slides freely while you work, grips instantly under load.
 
-1,300+ tests, including **59 regression tests harvested from real field findings** — every one born from a defect an adopter hit, fixed, and proof-closed.
+AI agents now write code faster than anyone can review it — and they routinely report success that didn't happen: green suites where nothing ran, tests bent to match a bug, changes far outside what you asked for. Reviewing harder doesn't scale, and trusting the agent's own summary is exactly how those failures ship. Prusik sits **outside** the agent and verifies from the tools' own output — **proof, not opinion.**
+
+| Without prusik | With prusik |
+|---|---|
+| "Tests pass ✅" is the agent's claim | Verdict from the runner's own output: N executed, exit 0 — or **NOT PROVEN** |
+| An all-skip suite reads green in CI | Exit 0 with 0 executed **fails**, rc=1 |
+| The agent bends the failing test to fit the bug | Acceptance tests must **fail without the change** ([prove-red](#commands-that-matter-most)) |
+| Two sessions on one checkout silently destroy work | Single-writer lease on the shared tree; worktrees stay parallel |
+| A fix ships, then quietly regresses | Closed findings re-verify — a regression **auto-reopens the ticket** |
+| "Done" = a persuasive summary | "Done" = captured evidence in an append-only ledger you can hand an auditor |
+
+Free, Apache-2.0, **no telemetry, no account, no phone-home** — a verification tool you don't have to trust blindly would be a contradiction. The `prove` / `scan` / `feedback` layer works with **any** agent or CI; the full phase-gated harness targets Claude Code today. Backed by [1,300+ tests](tests/), including [59 regression tests](prusik/_closures.json) harvested from real field findings — every one born from a defect an adopter hit, fixed, and proof-closed ([CI](https://github.com/getprusik/prusik/actions/workflows/ci.yml)).
 
 ## Prove your agent's tests actually ran (30 seconds, zero config)
 
@@ -42,9 +53,12 @@ $ echo $?
 
 The verdict counts tests **executed** (passed + failed), not tests *discovered* — a suite that collects 100 and skips 100 is a false-clean, and tools that only check "tests were found" wave it through. Drop `prove` into CI or a pre-push hook as a one-line anti-fabrication check. That's the whole pitch; everything below is opt-in from here.
 
-## Why this exists
+## Adopt at your own pace — every rung reversible
 
-Coding agents fabricate: they report "tests pass ✅" when nothing ran, bend tests to match buggy code, freelance outside their scope, and — when two sessions share a checkout — destroy each other's work. Prusik converts discipline into **enforcement**: hooks block out-of-phase writes at the moment they're attempted, a single-writer lease serializes the shared tree across concurrent sessions, schemas reject shallow artifacts, evidence gates refuse a green that didn't execute, and an append-only ledger records every decision for audit. Every check grounds in deterministic evidence, not an LLM's opinion of its own work.
+1. **`prusik prove` in CI** — zero footprint, works with any agent or none; your first false-clean pays for the install.
+2. **`prusik scan`** — read-only static detectors over the repo (binding mismatches, unreachable tests); nothing written.
+3. **`prusik init` on a branch** — the full harness, 47 files, every one manifest-tracked; `prusik doctor` scores the setup in 10 seconds.
+4. **`prusik uninstall`** — manifest-exact removal any time; your own edits stay. A trial costs a branch, not a commitment.
 
 ## The loop: findings close on proof — and reopen themselves
 
@@ -85,6 +99,8 @@ At every step prusik enforces, mechanically:
 - **Load-bearing acceptance tests** — `prove_red` criteria must FAIL without the change; a verify that was green all along is vacuous and rejected
 - **Honest residuals** — a leftover red needs a machine-verified category (proven pre-existing via git-stash A/B, or environment-gap), not a prose excuse
 - **Bounded fix-rounds** — review loops cap and escalate to a recorded human decision instead of spinning
+
+**What it costs you, honestly:** ceremony is proportional, not flat. Small changes take the trivial lane (`sprint --lane trivial` — bug fixes, docs, config skip the scoping/planning critics but keep the correctness floor); full ceremony is reserved for features where blast radius lives. Every gate's friction is itself measured — `prusik catches` reports each gate's true-catch vs false-block ratio from your own ledger, so a gate that never earns its keep is visible and yours to disable. And `prusik disable` pauses everything, reversibly, the moment it's in your way.
 
 ## For the team lead — and the auditor
 
