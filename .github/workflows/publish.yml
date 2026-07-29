@@ -92,3 +92,45 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: ${{ steps.idx.outputs.url }}
+
+  # Post-publish verification at the ACTUAL boundary an adopter hits — the index
+  # pip resolves against, not the workflow's own success status. Hand-probing this
+  # after every release produced repeated false reads (curl gets pypi.org's bot
+  # challenge; the JSON API lags the CDN); this job makes the check mechanical:
+  #   1. poll until a FRESH `pip install pkg==X.Y.Z` resolves and imports at X.Y.Z;
+  #   2. assert the served long description IS the repo README (byte-diff after
+  #      strip) — the marketing page can't silently drift from the source of truth.
+  # Release events only (a TestPyPI rehearsal verifies against the wrong index).
+  verify:
+    if: github.event_name == 'release'
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fresh-install the released version from PyPI (poll through CDN lag)
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          python3 -m venv /tmp/verify-venv
+          ok=""
+          for i in $(seq 1 40); do
+            if /tmp/verify-venv/bin/pip install --quiet --no-cache-dir "prusik==${V}" 2>/dev/null; then ok=1; break; fi
+            sleep 30
+          done
+          [ -n "$ok" ] || { echo "PyPI never served prusik==${V} after 20m"; exit 1; }
+          got=$(/tmp/verify-venv/bin/python -c "import prusik; print(prusik.__version__)")
+          [ "$got" = "$V" ] || { echo "installed reports ${got}, expected ${V}"; exit 1; }
+          /tmp/verify-venv/bin/prusik --version
+          echo "fresh install OK: prusik ${V}"
+      - name: Served long description == repo README (no silent drift)
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          python3 - "$V" <<'PY'
+          import json, sys, urllib.request
+          v = sys.argv[1]
+          with urllib.request.urlopen(f"https://pypi.org/pypi/prusik/{v}/json", timeout=30) as r:
+              served = (json.load(r)["info"]["description"] or "").strip()
+          local = open("README.md", encoding="utf-8").read().strip()
+          if served != local:
+              sys.exit(f"served description ({len(served)} ch) != README.md ({len(local)} ch)")
+          print(f"description matches README.md ({len(local)} chars)")
+          PY
