@@ -4,7 +4,7 @@
 
 **Prusik is an independent verification layer for AI coding agents.** Agents write the code; prusik proves the work — that tests really executed, changes stayed in scope, and every "done" has evidence behind it. It's named after the climbing knot: slides freely while you work, grips instantly under load.
 
-AI agents now write code faster than anyone can review it — and they routinely report success that didn't happen: green suites where nothing ran, tests bent to match a bug, changes far outside what you asked for. Reviewing harder doesn't scale, and trusting the agent's own summary is exactly how those failures ship. Prusik sits **outside** the agent and verifies from the tools' own output — **proof, not opinion.**
+AI agents now write code faster than anyone can review it — and they routinely report success that didn't happen: green suites where nothing ran, tests bent to match a bug, changes far outside what you asked for. Reviewing harder doesn't scale, and an agent's report can never be evidence for its own work — which makes an independent verification layer a structural requirement of the agentic SDLC, not an add-on. Prusik is that layer: it sits **outside** the agent and verifies from the tools' own output — **proof, not opinion.**
 
 | Without prusik | With prusik |
 |---|---|
@@ -51,7 +51,21 @@ $ echo $?
 1
 ```
 
-The verdict counts tests **executed** (passed + failed), not tests *discovered* — a suite that collects 100 and skips 100 is a false-clean, and tools that only check "tests were found" wave it through. Drop `prove` into CI or a pre-push hook as a one-line anti-fabrication check. That's the whole pitch; everything below is opt-in from here.
+The verdict counts tests **executed** (passed + failed), not tests *discovered* — a suite that collects 100 and skips 100 is a false-clean, and tools that only check "tests were found" wave it through. Verdicts are **deterministic**: a pure function of the tool's own exit code and output — same output, same verdict, no model in the loop. Drop `prove` into CI or a pre-push hook as a one-line anti-fabrication check. That's the whole pitch; everything below is opt-in from here.
+
+### In CI: one step, as a GitHub Action
+
+The repo doubles as a composite Action — `prove` as a PR gate with no workflow scripting:
+
+```yaml
+- uses: getprusik/prusik@main
+  with:
+    source: prove
+    command: "pytest -q"
+    fail-on-findings: "true"   # NOT PROVEN fails the check
+```
+
+It posts the verdict as a PR comment (editing its own comment on re-runs, not spamming the thread), and can run `scan` / `verify-loop` / `findings` the same way — non-gating decision support by default, a gate when you say so.
 
 ## Adopt at your own pace — every rung reversible
 
@@ -73,7 +87,7 @@ flowchart LR
     F --> B
 ```
 
-File a finding with `prusik feedback`. It becomes a git-tracked ticket whose closure is **derived from its verify history** — a fix counts as done only when a verify command runs green *in your repository*, with real tests executed. Engine fixes backed by a shipped regression test close by proof-transfer on `prusik update` (and go red again on a downgrade). If a closed finding regresses, it reopens itself. Nobody's word is ever the record.
+File a finding with `prusik feedback`. It becomes a git-tracked ticket whose closure is **derived from its verify history** — a fix counts as done only when a verify command runs green *in your repository*, with real tests executed. There is no stored status flag to drift: state is recomputed from the verify history on every read, so a ticket cannot sit closed against a red verify. Engine fixes backed by a shipped regression test close by proof-transfer on `prusik update` (and go red again on a downgrade). If a closed finding regresses, it reopens itself. Nobody's word is ever the record.
 
 Field record to date: **43 findings filed by design-partner products, 43 verified-closed in the field, zero open** — including same-day cycles from field incident to shipped fix to proof-closed ticket.
 
@@ -203,6 +217,7 @@ Prusik operates at one layer: **build-time process discipline and evidence**. ID
 
 - **Claude Code-coupled today.** The hook contract ships one adapter (Claude Code). The gate policy itself is host-neutral behind an adapter seam; a second runtime lands when a real adopter needs it.
 - **Depth is not gateable.** Schemas catch structure; critic roles add judgment in isolated contexts — but shallow thinking still needs a human reading `design/` sometimes.
+- **Runner parsing is Python/JS-deep.** Evidence extraction reads pytest and vitest (tests) and mypy, tsc, ruff, eslint (lint/types) from their own output. Other runners (JUnit/Gradle, `go test`, `cargo test`) are unparseable today — which means **unproven, and unproven blocks**; support lands when an adopter needs it, not speculatively.
 - **Python-AST-privileged discovery.** JS/TS/Go are regex-based (good enough for scoping); Rust/Java/Ruby unsupported until tree-sitter lands (recurrence-gated).
 - **No UI, no production runtime.** CLI + hooks by design; pair with the tools above for dashboards and runtime observability.
 

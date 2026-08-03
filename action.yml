@@ -10,7 +10,7 @@ inputs:
     description: >
       Which prusik check to run: "prove" (anti-fabrication gate — prove the
       `command` actually ran clean), "scan", "verify-loop", "findings", or
-      "file" to format a pre-generated JSON file at `json-path".
+      "file" to format a pre-generated JSON file at `json-path`.
     required: false
     default: "scan"
   command:
