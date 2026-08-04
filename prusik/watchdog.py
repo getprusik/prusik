@@ -93,6 +93,24 @@ def check(root: Path | None = None) -> int:
                                    "feature": feature}, root)
         incidents.append(str(p.relative_to(root)))
 
+    # Phase-entry reality (fb-8637c2416504): every prove_red criterion green
+    # on base at an early phase = the goal may already be achieved outside
+    # this sprint. Deduped: an existing incident for this feature stands
+    # until the operator resolves (removes) it — no hourly re-spam.
+    from prusik import ground_truth
+    gp = ground_truth.base_probe(feature, root, phase)
+    if gp:
+        inc_dir = root / ".sprint" / "incidents"
+        already = any(
+            json.loads(f.read_text()).get("feature") == feature
+            for f in inc_dir.glob("*-criteria_already_met.json")
+        ) if inc_dir.is_dir() else False
+        if not already:
+            p = _write_incident("criteria_already_met",
+                                {**gp, "phase": phase, "feature": feature},
+                                root)
+            incidents.append(str(p.relative_to(root)))
+
     if not incidents:
         print(f"[watchdog] all clear. phase={phase} feature={feature}")
     else:

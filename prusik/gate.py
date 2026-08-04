@@ -939,6 +939,16 @@ def sprint_start(args) -> int:
         ledger.append("sprint_start_blocked", feature=feature, unmet=unmet)
         return 2
 
+    # Phase-entry reality (fb-4c542a24db7c): a brief with a recorded
+    # ground-truth command re-verifies against the live world BEFORE scoping
+    # derives from it; drift blocks until the brief is reconciled and
+    # re-captured. Dormant when no ground_truth block exists.
+    from prusik import ground_truth as _gt
+    if not _gt.sprint_start_check(feature, root):
+        ledger.append("sprint_start_blocked", feature=feature,
+                      unmet=["ground_truth_drift"])
+        return 2
+
     # v0.3.9: wipe stale worktrees before the sprint begins. Worktrees are
     # per-sprint ephemeral scratch space; contamination from a prior sprint
     # leaks into the current sprint's touch-list and confuses reviewers
@@ -1542,6 +1552,23 @@ def _full_suite_gate(current: str, target_phase: str, feature: str) -> int | Non
           f"them. Prove the FULL suite green before advancing. (Set "
           f"require_full_suite_at_build in sprint-config to hard-block.)")
     return None
+
+
+def ground_truth(args) -> int:
+    """`prusik gate ground-truth` — phase-entry reality (fb-4c542a24db7c):
+    --capture records the live output of the criteria file's ground_truth
+    command; bare invocation re-runs it and reports match/drift."""
+    from prusik import ground_truth as gt_mod
+    root = ledger.project_root()
+    path = root / "briefs" / f"{args.feature}.criteria.yaml"
+    if not path.exists():
+        print(f"[prusik-gate] no criteria file at {path}", file=sys.stderr)
+        return 2
+    if args.capture:
+        return gt_mod.capture(path)
+    ok, msg = gt_mod.check(path)
+    print(f"[prusik-gate] {'✓' if ok else '✗'} {msg}")
+    return 0 if ok else 1
 
 
 def advance(args) -> int:

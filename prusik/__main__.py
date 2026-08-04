@@ -273,6 +273,14 @@ def main():
     p_pred.add_argument("--feature", required=True, type=_slug)
     p_pred.add_argument("--id", default=None,
                          help="Capture just this criterion id (default: all prove_red)")
+    p_gt = gsub.add_parser("ground-truth",
+                           help="Phase-entry reality: --capture records the "
+                                "criteria.yaml ground_truth command's live "
+                                "output (sha256 + excerpt); without flags, "
+                                "re-runs it and reports match/drift.")
+    p_gt.add_argument("--feature", required=True, type=_slug)
+    p_gt.add_argument("--capture", action="store_true",
+                      help="Record current reality as the baseline")
     p_sprintinit = gsub.add_parser("sprint-init",
                                     help="Orchestrator: run discovery + fingerprint + "
                                          "sprint-start, guide agent steps")

@@ -10,7 +10,22 @@
   "repro": "Run a normal feature sprint with the harness enabled; compare wall-clock vs the same work harness-off. No prusik surface reports where sprint time went (gate latency vs ceremony vs block-retry loops vs actual work). catches measures gate value; nothing measures gate cost. Known: ~100ms hook hot-path (interpreter startup) x thousands of tool calls/session.",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": "CUR=$(prusik --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1); [ -n \"$CUR\" ] && [ \"$(printf '%s\\n%s\\n' '0.198.0' \"$CUR\" | sort -V | head -1)\" = '0.198.0' ] && echo \"1 passed: engine carries moat-proven fix fb-e7fe8177cc8c (prusik $CUR >= 0.198.0)\"",
+    "fixed_in": "0.198.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-08-04T06:13:25.573585+00:00",
+      "exit": 0,
+      "executed_count": 1,
+      "verdict": true,
+      "why": "1 test(s) executed, exit 0",
+      "worktree_hash": "419c309-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }

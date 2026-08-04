@@ -3,6 +3,21 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.200.0] — phase-entry reality: briefs re-verify the world
+
+Two field failures, one mechanism. A criteria.yaml may record
+`ground_truth: {command, …}` captured from a real run (`prusik gate
+ground-truth --feature F --capture`); sprint-start re-runs it and DRIFT
+BLOCKS with a two-sided human diff, a `ground_truth_drift` ledger event,
+and the exact re-baseline command — scope can no longer derive from a
+brief whose facts the world outgrew. And `prusik watchdog` now probes
+prove_red criteria for early-phase sprints (scoping/triage/planning):
+ALL green on base means the goal may already be achieved outside the
+sprint → one deduped `criteria_already_met` incident (close-or-rescope).
+Both halves dormant unless authored — zero new ceremony otherwise.
+Closes fb-4c542a24db7c, fb-8637c2416504
+(moat-finding:fb-4c542a24db7c, moat-finding:fb-8637c2416504).
+
 ## [0.199.0] — push-or-park: completed work must reach origin, mechanically
 
 New guard closing a field data-loss exposure: a COMPLETED 25-commit sprint
