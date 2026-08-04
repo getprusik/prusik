@@ -457,6 +457,26 @@ def main():
     p_effort.add_argument("--json", action="store_true",
                           help="Emit machine-readable JSON instead of text")
 
+    # overhead — the COST lens (fb-e7fe8177cc8c): what the harness itself
+    # costs, so a slow gate gets named and tuned instead of the whole harness
+    # disabled on feel. Read-only; pairs with `catches` (value side).
+    p_ovh = sub.add_parser("overhead",
+                           help="Where the harness's time went: active/idle "
+                                "per phase, per-gate block→retry cost, "
+                                "--hook-bench for measured hook latency.")
+    p_ovh.add_argument("--json", action="store_true",
+                       help="Emit machine-readable JSON instead of text")
+    p_ovh.add_argument("--hook-bench", action="store_true",
+                       help="Also measure the real PreToolUse hook latency")
+    p_ovh.add_argument("--bench-n", type=int, default=20,
+                       help="Hook-bench invocations (default 20)")
+    p_ovh.add_argument("--ledger", default=None,
+                       help="Analyze a specific ledger file (e.g. a copied "
+                            "field ledger) instead of this repo's")
+    p_ovh.add_argument("--idle-min", type=int, default=30,
+                       help="Silence longer than this (minutes) counts as "
+                            "idle, not phase cost (default 30)")
+
     # v0.48.0 — showcase: the composed trust narrative. Brings the ledger
     # timeline + adversarial verdicts + evidence + catch-quality + effort into
     # one legible per-feature story (intent→…→objective). Trust is christened
@@ -1014,6 +1034,12 @@ def main():
     if args.cmd == "effort":
         from prusik import effort
         return effort.run(json_output=args.json)
+    if args.cmd == "overhead":
+        from prusik import overhead
+        return overhead.run(json_output=args.json,
+                            hook_bench_flag=args.hook_bench,
+                            bench_n=args.bench_n, ledger_path=args.ledger,
+                            idle_min=args.idle_min)
     if args.cmd == "trust-report":
         from prusik import trust_report
         return trust_report.run(json_output=args.json,

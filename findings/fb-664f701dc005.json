@@ -1,0 +1,16 @@
+{
+  "id": "fb-664f701dc005",
+  "created_at": "2026-08-04T01:09:20.532698+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "plan.md template teaches numbered Build order but gate requires '-' bullets \u2014 shipped template fails its own structural gate",
+  "detail": "",
+  "feature": "overhead-accounting",
+  "content_hash": "664f701dc005",
+  "repro": "Copy prusik/templates/artifacts/plan.md Build order shape ('1. <step>'), run 'prusik gate plan' on it: build_order 'needs >=1 bullet items, got 0'. Template and schema disagree.",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

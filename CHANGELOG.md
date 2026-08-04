@@ -3,6 +3,20 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.198.0] — `prusik overhead`: the harness proves its own cost
+
+New read-only command completing the overhead-to-catch ratio (`catches` is
+the value side): active-vs-idle time per phase (silence beyond `--idle-min`
+splits out as idle, never read as harness cost), per-gate block→retry cost
+(capped at the idle threshold so an abandoned block can't read as hours),
+fix-round loop cost, `--json` stable keys, `--ledger PATH` for field-ledger
+backtests (tolerant parse; skipped lines surfaced, never silent), and
+`--hook-bench` measuring the real PreToolUse hook latency. Span math reuses
+`effort.extract_spans` — one source of truth. Nothing-to-measure exits 1:
+an absent ledger is unknown overhead, not zero. Verified against a real
+design-partner ledger (249 sprints). Closes fb-e7fe8177cc8c
+(moat-finding:fb-e7fe8177cc8c).
+
 ## [0.197.38] — docs-only
 
 README positioning pass (reaches the PyPI long description): independent
