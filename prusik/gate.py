@@ -1392,6 +1392,14 @@ def sprint_complete(args) -> int:
         actual["mode"] = "team" if predicted.get("mode") == "solo" else actual["mode"]
         actual["escalated"] = True
 
+    # Push-or-park at the terminal (fb-eef892a3e033): a COMPLETED sprint is
+    # exactly the artifact that must not live on one disk. Same semantics as
+    # the advance check: advisory + event, blocking under require.
+    from prusik import push_guard
+    if not push_guard.gate_check(root, phases.load_sprint_config() or {},
+                                 feature, "sprint-complete"):
+        return 2
+
     ledger.append("sprint_complete", feature=feature,
                   predicted=predicted, actual=actual)
     phases.clear_sprint_state()
@@ -1692,6 +1700,20 @@ def advance(args) -> int:
         stall_rc = _check_convergence_stall(feature, current, target_phase, config)
         if stall_rc is not None:
             return stall_rc
+
+    # Push-or-park (fb-eef892a3e033): entering reviewing/integrating with
+    # sprint work that exists only on this disk is data-loss exposure —
+    # advisory + ledger event by default, blocking with `push_or_park:
+    # {require: true}`. Checked BEFORE the transition so a blocked advance
+    # moves nothing.
+    if not rewinding and target_phase in ("reviewing", "integrating"):
+        from prusik import push_guard
+        if not push_guard.gate_check(ledger.project_root(), config,
+                                     feature, target_phase):
+            ledger.append("advance_blocked", from_phase=current,
+                          to_phase=target_phase, feature=feature,
+                          reason="push_or_park require: unpushed sprint work")
+            return 2
 
     # v0.11.0 #2: preserve the lane across phase transitions (set_sprint_state
     # overwrites the whole dict; the trivial lane must survive every advance).

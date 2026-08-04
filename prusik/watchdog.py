@@ -85,6 +85,14 @@ def check(root: Path | None = None) -> int:
             }, root)
             incidents.append(str(p.relative_to(root)))
 
+    from prusik import push_guard
+    pp = push_guard.watchdog_check(root, phase)
+    if pp:
+        kind, payload = pp
+        p = _write_incident(kind, {**payload, "phase": phase,
+                                   "feature": feature}, root)
+        incidents.append(str(p.relative_to(root)))
+
     if not incidents:
         print(f"[watchdog] all clear. phase={phase} feature={feature}")
     else:

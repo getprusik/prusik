@@ -3,6 +3,21 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.199.0] — push-or-park: completed work must reach origin, mechanically
+
+New guard closing a field data-loss exposure: a COMPLETED 25-commit sprint
+sat local-only for a week after a session collision. Entering reviewing or
+integrating — and sprint-complete — now checks git's own push state
+(upstream tracking + `rev-list --count`): unpushed work surfaces an
+advisory naming the branch, ahead-count, and the exact push command, and
+records an `unpushed_sprint_work` ledger event; `push_or_park: {require:
+true}` in sprint-config blocks instead. `prusik watchdog` files an
+`unpushed_sprint_work` incident when an active sprint at reviewing/
+integrating has unpushed work. A repo with no remote is loudly
+inapplicable — visible, never a silent skip, never a block. Prusik never
+pushes for you; it detects and names the command. Closes fb-eef892a3e033
+(moat-finding:fb-eef892a3e033).
+
 ## [0.198.1] — ordered lists are lists; Marketplace-ready action.yml
 
 `schema.extract_list_items` now recognizes CommonMark ordered-list items
