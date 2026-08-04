@@ -1,9 +1,10 @@
 name: "Prusik PR check + comment"
-description: >
-  Run a prusik check (prove / scan / verify-loop / findings) and post the
-  result as a GitHub PR comment. Decision-support for the reviewer by default —
-  opt in to fail-on-findings to make it a gate. With source=prove it's the
-  anti-fabrication gate: prove the test/lint/type command actually ran clean.
+description: >-
+  Prove your AI agent's test/lint/type runs really executed — anti-fabrication
+  PR gate + comment (prove/scan/findings).
+branding:
+  icon: "check-circle"
+  color: "purple"
 
 inputs:
   source:

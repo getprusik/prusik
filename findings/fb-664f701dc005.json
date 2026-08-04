@@ -10,7 +10,22 @@
   "repro": "Copy prusik/templates/artifacts/plan.md Build order shape ('1. <step>'), run 'prusik gate plan' on it: build_order 'needs >=1 bullet items, got 0'. Template and schema disagree.",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": "CUR=$(prusik --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1); [ -n \"$CUR\" ] && [ \"$(printf '%s\\n%s\\n' '0.198.0' \"$CUR\" | sort -V | head -1)\" = '0.198.0' ] && echo \"1 passed: engine carries moat-proven fix fb-664f701dc005 (prusik $CUR >= 0.198.0)\"",
+    "fixed_in": "0.198.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-08-04T13:33:19.323845+00:00",
+      "exit": 0,
+      "executed_count": 1,
+      "verdict": true,
+      "why": "1 test(s) executed, exit 0",
+      "worktree_hash": "9b7b894-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }

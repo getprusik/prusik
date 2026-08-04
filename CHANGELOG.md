@@ -3,6 +3,18 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.198.1] — ordered lists are lists; Marketplace-ready action.yml
+
+`schema.extract_list_items` now recognizes CommonMark ordered-list items
+(`1. x`, `2) x`) at column 0 — a plan authored from prusik's own shipped
+template (numbered Build order) no longer fails `prusik gate plan`. The
+space after the marker is load-bearing: `3.5x faster` / `0.198.0 …` prose
+stays uncounted; indented numbered lines stay nested. One shared parser,
+8+ consumers fixed at once. Closes fb-664f701dc005
+(moat-finding:fb-664f701dc005). Also: action.yml description ≤125 chars +
+`branding` block (check-circle/purple) — the GitHub Marketplace publish
+form's requirements.
+
 ## [0.198.0] — `prusik overhead`: the harness proves its own cost
 
 New read-only command completing the overhead-to-catch ratio (`catches` is

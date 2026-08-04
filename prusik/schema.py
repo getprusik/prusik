@@ -91,6 +91,11 @@ def _extract_enum_value(body: str) -> str | None:
     return tok.rstrip(",.")
 
 
+# Ordered-list marker: digits + `.` or `)` + at least one space (CommonMark
+# §5.3). The space requirement keeps `3.5x`, `0.198.0 …`, `1.result` prose.
+_ORDERED_ITEM = re.compile(r"\d+[.)]\s+")
+
+
 def extract_list_items(body: str) -> list[str]:
     """Parse markdown TOP-LEVEL bullet items from a section body.
 
@@ -146,6 +151,16 @@ def extract_list_items(body: str) -> list[str]:
             # `* ` is only an alternate CommonMark bullet marker — no new-file
             # meaning — so strip it like `- `.
             items.append(s[2:].strip())
+        else:
+            # CommonMark §5.3 ordered-list items (`1. x` / `12) x`) — the
+            # shipped plan template teaches a numbered Build order, and the
+            # gate must accept valid CommonMark rather than the template
+            # unlearning it (fb-664f701dc005). The space after the marker is
+            # load-bearing: `3.5x faster` / `0.198.0 …` at column 0 are
+            # prose, not items.
+            m = _ORDERED_ITEM.match(s)
+            if m:
+                items.append(s[m.end():].strip())
     return items
 
 
