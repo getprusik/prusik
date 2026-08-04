@@ -16,10 +16,19 @@ root = Path(__file__).resolve().parent.parent
 # so regen MUST run AFTER the release bump — regenerating while __version__ is
 # already tagged/released stamps new findings one release low (a downgrade
 # would then false-verify a fix that isn't present). Fail closed.
+# Releases are cut remotely (`gh release create`), so LOCAL tags lag — the
+# remote is the instrument that tells the truth here. Offline, we can't
+# verify: say so loudly and proceed (regen offline is legitimate; the
+# release flow re-runs it connected).
 import subprocess
-tagged = subprocess.run(["git", "-C", str(root), "tag", "-l", f"v{__version__}"],
-                        capture_output=True, text=True).stdout.strip()
-if tagged:
+r = subprocess.run(["git", "-C", str(root), "ls-remote", "--tags", "origin",
+                    f"v{__version__}"], capture_output=True, text=True,
+                   timeout=30)
+if r.returncode != 0:
+    print(f"[regen] WARNING: cannot reach origin to verify v{__version__} "
+          f"is unreleased — if it IS released, new findings get a stale "
+          f"floor; re-run connected before shipping.", file=sys.stderr)
+elif r.stdout.strip():
     sys.exit(f"regen refused: v{__version__} is already released — bump "
              f"prusik/__init__.py to the NEXT version first, then regen, so "
              f"new findings get the version their fix actually ships in.")
