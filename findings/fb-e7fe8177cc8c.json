@@ -1,0 +1,16 @@
+{
+  "id": "fb-e7fe8177cc8c",
+  "created_at": "2026-08-04T00:30:23.345561+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "Feature development WITH prusik feels too slow (operator-felt); overhead side of overhead-to-catch ratio is unmeasured",
+  "detail": "",
+  "feature": null,
+  "content_hash": "e7fe8177cc8c",
+  "repro": "Run a normal feature sprint with the harness enabled; compare wall-clock vs the same work harness-off. No prusik surface reports where sprint time went (gate latency vs ceremony vs block-retry loops vs actual work). catches measures gate value; nothing measures gate cost. Known: ~100ms hook hot-path (interpreter startup) x thousands of tool calls/session.",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
