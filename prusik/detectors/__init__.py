@@ -12,11 +12,11 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from prusik.detectors import binding, ci_orphan_specs, test_reach
+from prusik.detectors import binding, ci_orphan_specs, convention_rules, test_reach
 from prusik.detectors.base import Finding, ScanContext  # noqa: F401 (re-export)
 
 # name → detector module (each exposes NAME / DESCRIPTION / detect(ctx))
-BUILTIN = {m.NAME: m for m in (binding, ci_orphan_specs, test_reach)}
+BUILTIN = {m.NAME: m for m in (binding, ci_orphan_specs, convention_rules, test_reach)}
 
 LOCAL_DIR = ".claude/detectors"
 

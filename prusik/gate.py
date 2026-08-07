@@ -994,6 +994,10 @@ def sprint_start(args) -> int:
         state["lane"] = "trivial"
 
     phases.set_sprint_state(state)
+    # fb-cda76f07f7e8: baseline the map's section hashes so sprint-complete
+    # can flag sections that reference touched files yet never changed.
+    from prusik import map_check as _mc
+    _mc.snapshot(root)
     ledger.append("sprint_started", feature=feature, cleaned_worktrees=cleaned,
                   lane=state.get("lane", "standard"))
 
@@ -1425,6 +1429,27 @@ def sprint_complete(args) -> int:
     if args.escalated:
         actual["mode"] = "team" if predicted.get("mode") == "solo" else actual["mode"]
         actual["escalated"] = True
+
+    # Map re-verify (fb-cda76f07f7e8): a section naming files this sprint
+    # touched, yet byte-identical since sprint-start, is a map plausibly
+    # lying about the changed subsystem. ADVISORY by design — prose truth is
+    # not gateable (honest-limits); the flag names its evidence for a human.
+    from prusik import consistency as _cons, map_check as _mc
+    try:
+        _stale = _mc.stale_sections(root, _cons.sprint_changed_files(root))
+    except Exception:  # noqa: BLE001 — advisory must never block completion
+        _stale = []
+    if _stale:
+        print("[prusik-gate] map re-verify ADVISORY — these map sections "
+              "name files this sprint touched but were NOT updated:")
+        for s_ in _stale:
+            print(f"    ## {s_['section']}  (references: "
+                  f"{', '.join(s_['references'][:4])})")
+        print("  Re-verify each section against post-sprint reality "
+              "(fb-cda76f07f7e8: a refreshed map still described the "
+              "pre-refactor model).")
+        ledger.append("map_reverify_flagged", feature=feature,
+                      sections=[s_["section"] for s_ in _stale])
 
     # Push-or-park at the terminal (fb-eef892a3e033): a COMPLETED sprint is
     # exactly the artifact that must not live on one disk. Same semantics as

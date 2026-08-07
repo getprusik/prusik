@@ -3,6 +3,24 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.202.0] — conventions sweep + map content re-verify
+
+Two field findings, one release. `prusik scan` gains the
+`convention-rules` built-in: adopters declare mechanical conventions in
+`.claude/conventions/rules.yaml` (`forbid` line-regex and `pair`
+file-level classes, glob-scoped) and the sweep names every violation
+file:line repo-wide — diff-gating stops new debt, the sweep retires old
+debt; an invalid rule is itself a loud finding, and no rules file means
+fully dormant. Closes fb-7f0bc1640914 (moat-finding:fb-7f0bc1640914).
+
+And the map can no longer quietly lie about the subsystem a sprint
+changed: sprint-start snapshots design/map.md section hashes;
+sprint-complete flags — advisory, by name, with a `map_reverify_flagged`
+event — every section that references a touched file yet stayed
+byte-identical. Advisory by design: prose truth is not gateable; the flag
+names its evidence for a human. Closes fb-cda76f07f7e8
+(moat-finding:fb-cda76f07f7e8).
+
 ## [0.201.0] — CI credit is a claim about execution
 
 A green check can no longer credit a spec CI never runs. New `ci_exec`
