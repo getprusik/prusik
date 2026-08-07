@@ -3,6 +3,22 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.201.0] — CI credit is a claim about execution
+
+A green check can no longer credit a spec CI never runs. New `ci_exec`
+resolves every workflow test invocation's executed file set via the
+RUNNER'S OWN resolver (`playwright --list` / pytest `--collect-only`) —
+the YAML arg list is never treated as truth. At sprint-complete, a
+`verify_in: ci` criterion referencing spec file(s) (explicit
+`ci_executes:` or extracted from its verify commands) is REFUSED credit
+when any referenced spec is outside the CI-resolved union — before the
+green is even consulted — with `ci_execution_refused`/`_verified` ledger
+events. New `prusik scan` built-in `ci-orphan-specs` names every on-disk
+e2e spec no CI invocation executes; an unresolvable invocation (dynamic
+`${{ }}` args, runner absent on this host) is loudly UNRESOLVED and
+counts as covering nothing — a sweep that can't see never says "no
+orphans". Closes fb-39bd12ff439b (moat-finding:fb-39bd12ff439b).
+
 ## [0.200.0] — phase-entry reality: briefs re-verify the world
 
 Two field failures, one mechanism. A criteria.yaml may record

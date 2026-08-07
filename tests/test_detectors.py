@@ -27,7 +27,7 @@ from prusik.detectors.base import Finding, ScanContext
 # ---------- registry ----------
 
 def test_builtin_registry_has_both_detectors():
-    assert set(detectors.BUILTIN) == {"binding", "test-reach"}
+    assert set(detectors.BUILTIN) == {"binding", "ci-orphan-specs", "test-reach"}
     for name, mod in detectors.BUILTIN.items():
         assert mod.NAME == name
         assert callable(mod.detect)
@@ -173,7 +173,7 @@ def test_scan_json_routes_through_detectors_unchanged():
 
 def test_load_default_is_builtins():
     reg = detectors.load(config={})
-    assert set(reg) == {"binding", "test-reach"}
+    assert set(reg) == {"binding", "ci-orphan-specs", "test-reach"}
 
 
 def test_load_enabled_restricts():
@@ -183,7 +183,7 @@ def test_load_enabled_restricts():
 
 def test_load_disabled_drops():
     reg = detectors.load(config={"disabled": ["test-reach"]})
-    assert set(reg) == {"binding"}
+    assert set(reg) == {"binding", "ci-orphan-specs"}
 
 
 def test_scan_rc_fail_on_severity():
@@ -251,7 +251,7 @@ def test_load_skips_malformed_local(capsys=None):
         (root / ".claude" / "detectors" / "broken.py").write_text("NAME = 'x'\n")  # no detect()
         (root / ".claude" / "detectors" / "syntaxerr.py").write_text("def detect(:\n")
         reg = detectors.load(root=root, config={})
-        assert set(reg) == {"binding", "test-reach"}  # neither bad file registered
+        assert set(reg) == {"binding", "ci-orphan-specs", "test-reach"}  # neither bad file registered
 
 
 def test_scan_surfaces_local_detector_findings():

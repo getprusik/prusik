@@ -1224,6 +1224,30 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
                           reason=reason)
             continue
 
+        # fb-39bd12ff439b: a CI credit is a claim about EXECUTION. When the
+        # criterion references spec file(s), every one must be inside the
+        # CI-resolved executed union (the runners' OWN resolvers) — a green
+        # check that never runs the spec is refused BEFORE the green is even
+        # consulted. A criterion referencing no spec claims nothing.
+        if ci_shaped:
+            from prusik import ci_exec
+            exec_ok, exec_why = ci_exec.credit_check(root, entry)
+            if not exec_ok:
+                results.append({"id": cid, "passed": False, "exit_code": -1,
+                                "output_path": str(out_path),
+                                "verify_command": vc,
+                                "expected_exit": expected})
+                all_passed = False
+                out_path.write_text(f"[prusik-gate] CI-EXECUTION credit "
+                                    f"REFUSED (criterion id={cid!r}): "
+                                    f"{exec_why}\n")
+                ledger.append("ci_execution_refused", feature=feature,
+                              id=cid, reason=exec_why)
+                continue
+            if ci_exec.spec_refs(entry):
+                ledger.append("ci_execution_verified", feature=feature,
+                              id=cid, detail=exec_why)
+
         if not vc:
             why = ("ci_verify_command missing — a CI-verified criterion (verify_in: ci) "
                    "must PROVE the required CI check is green on the merge commit "
