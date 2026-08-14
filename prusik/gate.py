@@ -14,7 +14,7 @@ import shlex
 import sys
 from pathlib import Path
 
-from prusik import consistency, discovery, ledger, phases, schema
+from prusik import consistency, discovery, gate_class, ledger, phases, schema
 
 
 def _read_stdin_json() -> dict:
@@ -56,6 +56,7 @@ def pre_tool(args=None) -> int:
                           target=(event.file_targets[0] if event.file_targets else None),
                           command=event.command, phase=state0.get("phase"),
                           feature=state0.get("feature"),
+                          gate_class=gate_class.WRITER_LEASE,
                           reason="shared-tree writer lease held by another session",
                           holder=(prior or {}).get("session"))
             return adapter.deny(main_writer.deny_message(prior or {}))
@@ -147,7 +148,8 @@ def _gate_tool_event(event, config: dict, phase: str, feature, adapter) -> int:
             # ledger, not here).
             rel = _worktree_redirect_rel(target, config, phase, feature)
             ledger.append("gate_blocked", tool=event.tool, target=target,
-                          phase=phase, feature=feature, reason=reason,
+                          phase=phase, feature=feature,
+                          gate_class=gate_class.WRITABLE_SCOPE, reason=reason,
                           redirect_rel=rel)
             hint = _worktree_redirect_hint(target, config, phase, feature)
             msg = f"[prusik-gate] phase '{phase}' blocks write to {target}: {reason}"
@@ -169,6 +171,7 @@ def _gate_tool_event(event, config: dict, phase: str, feature, adapter) -> int:
             if not ok:
                 ledger.append("gate_blocked", tool=event.tool, command=cmd,
                               phase=phase, feature=feature,
+                              gate_class=gate_class.WRITABLE_SCOPE,
                               reason=f"bash redirect to unwriteable path: {target} ({reason})")
                 hint = _worktree_redirect_hint(target, config, phase, feature)
                 msg = f"[prusik-gate] phase '{phase}' blocks bash redirect to {target}: {reason}"
@@ -182,6 +185,7 @@ def _gate_tool_event(event, config: dict, phase: str, feature, adapter) -> int:
             if _command_denied(executable, denied):
                 ledger.append("gate_blocked", tool=event.tool, command=cmd,
                               phase=phase, feature=feature,
+                              gate_class=gate_class.DENY_COMMAND,
                               reason=f"deny command: {denied}")
                 return adapter.deny(f"[prusik-gate] phase '{phase}' blocks command: {denied!r}")
 
@@ -190,7 +194,9 @@ def _gate_tool_event(event, config: dict, phase: str, feature, adapter) -> int:
         for pattern in phase_spec.get("deny_bash", []):
             if re.search(pattern, executable):
                 ledger.append("gate_blocked", tool=event.tool, command=cmd,
-                              phase=phase, feature=feature, reason=f"deny pattern: {pattern}")
+                              phase=phase, feature=feature,
+                              gate_class=gate_class.DENY_COMMAND,
+                              reason=f"deny pattern: {pattern}")
                 return adapter.deny(f"[prusik-gate] phase '{phase}' blocks bash pattern /{pattern}/")
 
     return 0
@@ -936,7 +942,8 @@ def sprint_start(args) -> int:
         print("[prusik-gate] Cannot start sprint: unmet pre-sprint gates:", file=sys.stderr)
         for u in unmet:
             print(f"  - {u}", file=sys.stderr)
-        ledger.append("sprint_start_blocked", feature=feature, unmet=unmet)
+        ledger.append("sprint_start_blocked", feature=feature, unmet=unmet,
+                      gate_class=gate_class.SPRINT_START_GATE)
         return 2
 
     # Phase-entry reality (fb-4c542a24db7c): a brief with a recorded
@@ -946,7 +953,8 @@ def sprint_start(args) -> int:
     from prusik import ground_truth as _gt
     if not _gt.sprint_start_check(feature, root):
         ledger.append("sprint_start_blocked", feature=feature,
-                      unmet=["ground_truth_drift"])
+                      unmet=["ground_truth_drift"],
+                      gate_class=gate_class.SPRINT_START_GATE)
         return 2
 
     # v0.3.9: wipe stale worktrees before the sprint begins. Worktrees are
@@ -1592,7 +1600,7 @@ def _full_suite_gate(current: str, target_phase: str, feature: str) -> int | Non
               f"(`prusik prove --kind tests -- <full test command>`) before advancing."
               f"{trigger}", file=sys.stderr)
         ledger.append("advance_blocked", from_phase=current, to_phase=target_phase,
-                      feature=feature,
+                      feature=feature, gate_class=gate_class.FULL_SUITE_NOT_PROVEN,
                       reason=f"full-suite not proven: {problem}"
                              + (" [shared-test-infra]" if shared else ""))
         return 2
@@ -1653,7 +1661,8 @@ def advance(args) -> int:
         print("  rather than `phase_advance` so retros show the flip.",
               file=sys.stderr)
         ledger.append("advance_blocked", from_phase=current, to_phase=target_phase,
-                      feature=feature, reason="rewind without --allow-rewind")
+                      feature=feature, gate_class=gate_class.REWIND_GUARD,
+                      reason="rewind without --allow-rewind")
         return 2
 
     # Forward advance: verify exit artifacts + consistency on the phase we're leaving.
@@ -1696,6 +1705,7 @@ def advance(args) -> int:
                         consistency.emit_fabrication_warnings(suspects)
                     ledger.append("advance_blocked", from_phase=current,
                                   to_phase=target_phase, feature=feature,
+                                  gate_class=gate_class.UNMET_EXIT_ARTIFACTS,
                                   missing=missing)
                     return 2
             else:
@@ -1704,7 +1714,9 @@ def advance(args) -> int:
                 for m in missing:
                     print(f"  - {m}", file=sys.stderr)
                 ledger.append("advance_blocked", from_phase=current, to_phase=target_phase,
-                              feature=feature, missing=missing)
+                              feature=feature,
+                              gate_class=gate_class.UNMET_EXIT_ARTIFACTS,
+                              missing=missing)
                 return 2
 
         inconsistencies = consistency.run_for_phase(current, ledger.project_root(), feature)
@@ -1764,7 +1776,9 @@ def advance(args) -> int:
             for i in inconsistencies:
                 print(f"  - {i}", file=sys.stderr)
             ledger.append("advance_blocked", from_phase=current, to_phase=target_phase,
-                          feature=feature, inconsistencies=inconsistencies)
+                          feature=feature,
+                          gate_class=gate_class.CROSS_ARTIFACT_INCONSISTENCY,
+                          inconsistencies=inconsistencies)
             return 2
 
     # v0.49.0 — convergence-stall control. A rewind that brings this feature
@@ -1788,6 +1802,7 @@ def advance(args) -> int:
                                      feature, target_phase):
             ledger.append("advance_blocked", from_phase=current,
                           to_phase=target_phase, feature=feature,
+                          gate_class=gate_class.PUSH_OR_PARK,
                           reason="push_or_park require: unpushed sprint work")
             return 2
 

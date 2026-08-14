@@ -3,6 +3,40 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.204.0] — remedy quality is measurable: the repeat-bounce lens
+
+A gate block is a teaching moment — it stops the agent and names a fix. If the
+agent re-hits the *same gate class* within the *same sprint*, the remedy didn't
+land: it bounced off the fence twice, a wasted fix-round with a known cause.
+That re-bounce is a signal on the **remedy**, the value-side companion to what
+`catch_quality` is for the gate — and until now it was invisible.
+
+Two pieces make it a first-class, retrospective measurement:
+
+- **`gate_class`, a stable key on every block event.** New `prusik/gate_class.py`
+  owns the closed set of block classes (writable-scope, unmet-exit-artifacts,
+  cross-artifact-inconsistency, full-suite-not-proven, rewind-guard, push-or-park,
+  deny-command, writer-lease, sprint-start-gate). Every `gate_blocked` /
+  `advance_blocked` / `sprint_start_blocked` site now self-labels its class
+  (a source-scan test is the forcing function, mirroring `capture_diagnose`'s
+  KNOWN_MODES parity), so the key survives a remedy *reword* — which is exactly
+  what a free-text-`reason`-derived key could not. `classify()` also derives the
+  class from a legacy event's own fields (`missing=`/`inconsistencies=`/reason),
+  so the entire pre-field ledger still classifies; a block that recorded nothing
+  identifying is honestly `unclassified`, never guessed.
+- **`prusik bounces`** — a read-only report: per gate class, fires vs. wasted
+  re-bounces vs. rate, worst-remedy-first, so the highest-waste remedy gets
+  rewritten first and the rewrite's effect is *provable* (re-run, watch the rate
+  fall) rather than asserted. Retrospective over the append-only ledger — no new
+  sprint required. The same read feeds the proportional-rigor question: a class
+  that re-bounces on low-blast work is a ceremony smell.
+
+Baseline read across the fleet's existing ledgers: ~half of all block events
+were wasted re-bounces, dominated by the writable-scope class (rate up to ~70%)
+— a concrete, ranked remedy-rewrite queue turned from a hunch into a number.
+Read-only, no gate behavior changed; this is the measurement phase before any
+remedy is touched.
+
 ## [0.203.0] — a stale bundler cache is a false-RED, not evidence
 
 The capture classifier gains a third registered non-evidence mode:

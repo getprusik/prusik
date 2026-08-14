@@ -485,6 +485,18 @@ def main():
                        help="Silence longer than this (minutes) counts as "
                             "idle, not phase cost (default 30)")
 
+    # bounces — the REMEDY-quality lens: how often a gate class is re-hit in one
+    # sprint (the remedy didn't land). Names the worst remedy to rewrite first;
+    # re-run after a rewrite to prove the rate dropped. Read-only, retrospective.
+    p_bounce = sub.add_parser("bounces",
+                              help="Repeat-bounce report: which gate classes get "
+                                   "re-hit within a sprint (remedy-quality signal).")
+    p_bounce.add_argument("--json", action="store_true",
+                          help="Emit machine-readable JSON instead of text")
+    p_bounce.add_argument("--ledger", default=None,
+                          help="Analyze a specific ledger file (e.g. a copied "
+                               "field ledger) instead of this repo's")
+
     # v0.48.0 — showcase: the composed trust narrative. Brings the ledger
     # timeline + adversarial verdicts + evidence + catch-quality + effort into
     # one legible per-feature story (intent→…→objective). Trust is christened
@@ -1048,6 +1060,9 @@ def main():
                             hook_bench_flag=args.hook_bench,
                             bench_n=args.bench_n, ledger_path=args.ledger,
                             idle_min=args.idle_min)
+    if args.cmd == "bounces":
+        from prusik import bounce
+        return bounce.run(json_output=args.json, ledger_path=args.ledger)
     if args.cmd == "trust-report":
         from prusik import trust_report
         return trust_report.run(json_output=args.json,
