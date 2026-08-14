@@ -59,6 +59,24 @@ def _is_turbo_cache_replay(text: str) -> bool:
     return bool(_TURBO_CACHE_REPLAY_RE.search(text))
 
 
+# A vite pre-bundle cache (`node_modules/.vite`) survives a lockfile-affecting dependency
+# bump AND `turbo run <task> --force` (--force busts turbo's OWN cache, not vite's), then
+# serves stale pre-bundles that fail to resolve packages pnpm just re-linked — a
+# false-RED (fb-7fb7e0cfd21b). The signature is vite's import-analysis plugin failing on a
+# BARE specifier (a package name / scoped pkg — never a leading `./`, `../`, `/`): a
+# node_modules package that can't resolve right after a reinstall is a stale bundle, not a
+# code break. A relative-path resolution failure IS a real break (moved/deleted file) and
+# must pass through untouched.
+_VITE_IMPORT_ANALYSIS_RE = re.compile(r"vite:import-analysis", re.IGNORECASE)
+_VITE_BARE_UNRESOLVED_RE = re.compile(
+    r"""[Ff]ailed to resolve import ["']([^"'./][^"']*)["']""")
+
+
+def _is_vite_bare_unresolved(text: str) -> bool:
+    return bool(_VITE_IMPORT_ANALYSIS_RE.search(text)
+                and _VITE_BARE_UNRESOLVED_RE.search(text))
+
+
 def _command_not_found(r: CaptureResult) -> NonEvidence | None:
     # bash exit 127 = the tool never ran. Real test/lint runners exit 0-5, never 127,
     # so the signal is precise (fb-53f161606abc).
@@ -98,11 +116,40 @@ def _cache_replay(r: CaptureResult) -> NonEvidence | None:
     )
 
 
+def _stale_bundler_cache(r: CaptureResult) -> NonEvidence | None:
+    # A stale vite pre-bundle cache serves a false-RED after a lockfile-affecting bump:
+    # exit≠0 with vite's import-analysis failing to resolve a BARE specifier pnpm just
+    # re-linked (fb-7fb7e0cfd21b). `turbo run <task> --force` does NOT touch it — --force
+    # busts turbo's cache, vite keeps its own `node_modules/.vite`. Refuse the red: it's
+    # not evidence of a code defect. SOUND because self-correcting — clearing `.vite` and
+    # re-capturing goes green if it was stale, and STAYS red if the dep is genuinely
+    # unresolved (which then correctly routes to a dependency fix). A relative-path
+    # ("./x") resolution failure is a real break and never reaches here (bare-only regex),
+    # so a genuine code defect can't be masked. Value-agnostic: a false-red carries a real
+    # passed+failed count, so we key on exit + the vite signature, not on value.
+    if not (r.exit_code != 0 and _is_vite_bare_unresolved(r.output)):
+        return None
+    return NonEvidence(
+        "stale_bundler_cache",
+        f"vite's import-analysis failed to resolve a bare package specifier in this "
+        f"{r.kind} run — a package pnpm re-linked that a STALE `node_modules/.vite` "
+        f"pre-bundle cache can't see. `turbo … --force` busts turbo's cache but NOT "
+        f"vite's own, so this false-RED survives it; it is not execution evidence and no "
+        f"entry was recorded. Fix: clear the pre-bundle cache in every workspace "
+        f"(`rm -rf packages/*/node_modules/.vite node_modules/.vite`) after a "
+        f"lockfile-affecting dependency bump, then re-capture. If the SAME bare import "
+        f"still fails to resolve on a cache-cleared run, the dependency is genuinely "
+        f"unresolved — fix the dependency, don't clear again.",
+        1,
+    )
+
+
 # The registered non-evidence modes, in match order. Order matters only when two could
 # match the same result; today they're disjoint. APPEND new detectors here.
 _DETECTORS = (
     _command_not_found,
     _cache_replay,
+    _stale_bundler_cache,
 )
 
 # Stable names of every registered mode — the completeness test pins this to _DETECTORS
@@ -111,6 +158,7 @@ _DETECTORS = (
 KNOWN_MODES = (
     "command_not_found",
     "cache_replay",
+    "stale_bundler_cache",
 )
 
 

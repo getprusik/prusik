@@ -3,6 +3,27 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.203.0] — a stale bundler cache is a false-RED, not evidence
+
+The capture classifier gains a third registered non-evidence mode:
+`stale_bundler_cache`. After a lockfile-affecting dependency bump, vite's
+`node_modules/.vite` pre-bundle cache survives `turbo run <task> --force`
+(--force busts turbo's OWN cache, never vite's) and serves stale pre-bundles
+that fail to resolve packages pnpm just re-linked — a false-RED that read as a
+real test failure (fb-7fb7e0cfd21b: a whole spec set "failed" on
+`Failed to resolve import "next/navigation"` until `.vite` was cleared).
+
+`prusik gate capture` now refuses to record it and names the remedy (clear
+`node_modules/.vite` in every workspace, then re-capture). Keyed on vite's
+import-analysis failing a **bare** specifier only — a relative-path
+(`./missing`) resolution failure is a genuine code break and passes through
+untouched. Sound by construction: self-correcting — a stale cache goes green on
+a cache-cleared re-capture, a genuinely-unresolved dependency stays red and
+correctly routes to a dependency fix, so a real failure can never be masked.
+Registered the module's one way (detector + KNOWN_MODES + test), not a new
+branch in `gate.capture()`. Closes fb-7fb7e0cfd21b
+(moat-finding:fb-7fb7e0cfd21b).
+
 ## [0.202.0] — conventions sweep + map content re-verify
 
 Two field findings, one release. `prusik scan` gains the

@@ -5,6 +5,7 @@ detector + a name in KNOWN_MODES + a test here — never a new inline branch in
 gate.capture(). The completeness test is the forcing function that keeps it that way.
 
 moat-finding: fb-b587d8d9b71c
+moat-finding: fb-7fb7e0cfd21b
 """
 
 from __future__ import annotations
@@ -33,7 +34,10 @@ def test_known_modes_match_detector_count_and_are_unique():
 def test_every_emitted_verdict_uses_a_known_mode():
     # Drive each detector to fire and confirm its mode is registered.
     for r in (_res(exit_code=127),
-              _res(value=0, output=">>> FULL TURBO")):
+              _res(value=0, output=">>> FULL TURBO"),
+              _res(exit_code=1, value=62, output=(
+                  '[vite:import-analysis] Failed to resolve import "next/navigation" '
+                  'from "src/app/page.tsx"'))):
         v = cd.diagnose(r)
         assert v is not None and v.mode in cd.KNOWN_MODES
 
@@ -67,6 +71,30 @@ def test_cache_replay_fires_only_on_zero_count_replay():
     assert cd.diagnose(_res(value=730, output=">>> FULL TURBO\n730 passed")) is None
     # adversarial: a non-zero exit replay is a real failure, not a 0-executed false-clean
     assert cd.diagnose(_res(value=0, exit_code=1, output=">>> FULL TURBO")) is None
+
+
+def test_stale_bundler_cache_fires_on_bare_vite_unresolved_only():
+    # A false-RED: exit≠0, real count, vite import-analysis can't resolve a BARE package
+    # that pnpm just re-linked — a stale node_modules/.vite pre-bundle (fb-7fb7e0cfd21b).
+    out = ('[vite:import-analysis] Failed to resolve import "next/navigation" '
+           'from "src/app/page.tsx". Does the file exist?')
+    hit = cd.diagnose(_res(kind="tests", exit_code=1, value=62, output=out))
+    assert hit.mode == "stale_bundler_cache" and hit.exit_code == 1
+    assert ".vite" in hit.remedy                              # names the exact remedy
+    # scoped bare specifier is bare too (leads with @, not a path)
+    assert cd.diagnose(_res(exit_code=1, output=(
+        'vite:import-analysis Failed to resolve import "@scope/pkg" from "a.ts"'))) is not None
+    # adversarial — a RELATIVE-path resolution failure is a REAL code break (moved/deleted
+    # file), NOT a stale cache: it must pass through and be recorded as a red.
+    assert cd.diagnose(_res(exit_code=1, output=(
+        'vite:import-analysis Failed to resolve import "./missing" from "a.ts"'))) is None
+    # adversarial — a bare "failed to resolve" WITHOUT the vite plugin isn't this class
+    # (could be any tool's message); don't refuse it on the phrase alone.
+    assert cd.diagnose(_res(exit_code=1, output=(
+        'Error: Failed to resolve import "lodash"'))) is None
+    # adversarial — a green run mentioning the phrase in passing is still evidence.
+    assert cd.diagnose(_res(exit_code=0, value=62, output=(
+        'vite:import-analysis Failed to resolve import "next/link"'))) is None
 
 
 # ---- end-to-end through gate.capture: refusal is logged for measurability ---------
