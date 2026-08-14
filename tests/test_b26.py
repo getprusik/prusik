@@ -508,10 +508,16 @@ def test_v089_redirect_hint_prefers_concrete_role_over_wildcard():
 
 def test_v089_iface_deny_message_includes_redirect_arrow_marker():
     """Operator-facing string contract: when a redirect hint fires, the
-    deny message contains the `→` arrow followed by the hint. This is the
-    marker that operators / CI parsers can scan for."""
-    p = (Path(__file__).parent.parent / "prusik" / "gate.py").read_text()
-    assert "msg += f\"\\n  → {hint}\"" in p, \
-        "deny construction must use the `→` arrow marker for the redirect hint"
+    deny message contains the `→` arrow followed by the hint — the marker
+    operators / CI parsers scan for. Asserts the BEHAVIOR (the rendered
+    message) rather than a source line, so a remedy refactor can't silently
+    drop the marker (the v0.205.0 writable-scope rewrite routed both sites
+    through `_writable_scope_deny_msg`)."""
+    cfg = {"phases": [{"name": "building",
+                       "writable": ["worktrees/{teammate}/**"]}]}
+    msg = gate._writable_scope_deny_msg(
+        "write", "src/x.py", "not in writable patterns", cfg, "building", "feat")
+    assert "→" in msg and "worktrees/" in msg, \
+        "deny message must carry the `→` arrow marker with the redirect hint"
 
 

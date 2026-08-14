@@ -3,6 +3,24 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.205.0] — the writable-scope remedy shows the whole boundary
+
+The first **measured actuation** off the v0.204.0 bounce baseline: `writable_scope`
+was the fleet's worst-re-bouncing gate (up to ~70% — an agent re-hitting the
+write-lock location after location). The old deny named only the blocked path
+and, at most, one redirect for that one path — so an agent that didn't know the
+phase's writable *set* guessed a new path on each rejection.
+
+Both writable-scope deny sites (Write/Edit target and bash redirect) now route
+through one `_writable_scope_deny_msg`, which shows the **whole** writable set for
+the phase at once, the concrete worktree route for this target, and an explicit
+"don't retry other locations — each is the same block." One write can now be
+valid on the first try instead of the fifth. The `gate_class` is unchanged
+(`writable_scope`), by design: re-running `prusik bounces` over the next sprints
+measures whether the rewrite actually drops the rate — the remedy's effect is
+proven, not asserted. The redirect-arrow (`→`) operator contract is preserved and
+now pinned behaviorally rather than by a source-line grep.
+
 ## [0.204.0] — remedy quality is measurable: the repeat-bounce lens
 
 A gate block is a teaching moment — it stops the agent and names a fix. If the

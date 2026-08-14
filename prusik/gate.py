@@ -151,11 +151,8 @@ def _gate_tool_event(event, config: dict, phase: str, feature, adapter) -> int:
                           phase=phase, feature=feature,
                           gate_class=gate_class.WRITABLE_SCOPE, reason=reason,
                           redirect_rel=rel)
-            hint = _worktree_redirect_hint(target, config, phase, feature)
-            msg = f"[prusik-gate] phase '{phase}' blocks write to {target}: {reason}"
-            if hint:
-                msg += f"\n  → {hint}"
-            return adapter.deny(msg)
+            return adapter.deny(_writable_scope_deny_msg(
+                "write", target, reason, config, phase, feature))
 
     if event.command is not None:
         cmd = event.command
@@ -173,11 +170,8 @@ def _gate_tool_event(event, config: dict, phase: str, feature, adapter) -> int:
                               phase=phase, feature=feature,
                               gate_class=gate_class.WRITABLE_SCOPE,
                               reason=f"bash redirect to unwriteable path: {target} ({reason})")
-                hint = _worktree_redirect_hint(target, config, phase, feature)
-                msg = f"[prusik-gate] phase '{phase}' blocks bash redirect to {target}: {reason}"
-                if hint:
-                    msg += f"\n  → {hint}"
-                return adapter.deny(msg)
+                return adapter.deny(_writable_scope_deny_msg(
+                    "bash redirect", target, reason, config, phase, feature))
 
         # Preferred: deny_commands — token-based match. Immune to prose
         # inside heredocs or strings because we check command-position only.
@@ -252,6 +246,36 @@ def _worktree_redirect_rel(target: str, config: dict, phase: str,
     if rel.startswith("worktrees/"):
         return None                          # already a worktree-shaped path
     return rel
+
+
+def _writable_scope_deny_msg(action: str, target: str, reason: str | None, config: dict,
+                             phase: str, feature: str | None) -> str:
+    """The writable-scope deny message. The old remedy named only the blocked
+    path (plus, sometimes, ONE redirect for that path) — so an agent that didn't
+    know the phase's writable SET re-bounced location-by-location, guessing a new
+    path each rejection. Measured: this class re-bounced up to ~70% of the time
+    (`prusik bounces`) — the worst remedy in the fleet. The fix shows the WHOLE
+    allowed set once, the concrete worktree route for THIS target, and an explicit
+    'don't retry other locations' — so the next write can be valid on the first
+    try instead of the fifth. Same `gate_class` (writable_scope), so the rewrite's
+    effect is provable by re-running the bounce report."""
+    reason = reason or "outside the phase's writable set"
+    lines = [f"[prusik-gate] phase '{phase}' blocks {action} to {target}: {reason}"]
+    allowed = phases.writable_patterns(config, phase, feature)
+    if allowed:
+        shown = ", ".join(allowed[:8]) + (" …" if len(allowed) > 8 else "")
+        lines.append(f"  '{phase}' may write ONLY to: {shown}")
+    hint = _worktree_redirect_hint(target, config, phase, feature)
+    if hint:
+        lines.append(f"  → {hint}")
+    elif allowed:
+        lines.append("  → target one of the writable paths above — don't retry "
+                     "other locations (each is the same block).")
+    else:
+        lines.append(f"  → '{phase}' declares no writable location for this path; a "
+                     f"build-time write goes in the builder worktree, or advance to "
+                     f"the phase that owns this output.")
+    return "\n".join(lines)
 
 
 def _worktree_redirect_hint(target: str, config: dict, phase: str,
