@@ -3,6 +3,28 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.206.0] — capture runs in the tree it stamps (no wrong-tree greens)
+
+`prusik gate capture` forced the command's working directory to the project
+root, unconditionally. So a worktree-scoped capture — `cd worktrees/solo &&
+prusik gate capture … -- <cmd>` — ran `<cmd>` against **main**, while the
+evidence hash stamped the **worktree** file-set. The dangerous direction: a
+capture scores GREEN against main while the reviewed worktree code is broken —
+hash-bound evidence that is provably about the wrong tree, a laundered
+false-green in the one layer that must never lie (fb-caff9937144e). This is the
+worktree-awareness `prove` got in v0.197.21, never carried to `capture`.
+
+Now capture runs the command in the **invocation cwd** when it is inside the
+project (so the `cd worktrees/solo` the agent already did is honored), falling
+back to root otherwise and never running outside the repo. Every evidence entry
+records `exec_dir` (the tree the command actually ran in) as provenance, and a
+worktree-mode sprint that captures at the project root gets a **loud warning**
+naming the wrong-tree risk and the `cd worktrees/<role>` remedy. The warning is
+not a hard block — a reviewing/integration capture legitimately runs against the
+integrated root, so the recorded `exec_dir` is what makes a genuine wrong-tree
+capture auditable rather than a false-refusal. Closes fb-caff9937144e
+(moat-finding:fb-caff9937144e).
+
 ## [0.205.0] — the writable-scope remedy shows the whole boundary
 
 The first **measured actuation** off the v0.204.0 bounce baseline: `writable_scope`

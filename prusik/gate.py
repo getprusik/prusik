@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shlex
 import sys
@@ -2205,6 +2206,43 @@ def _capture_env_path() -> str:
     return _CAPTURE_PATH_CACHE
 
 
+def _resolve_exec_dir(root: Path) -> Path:
+    """The directory the captured command should RUN in. Honors the invocation
+    cwd when it is inside the project (so `cd worktrees/solo && prusik gate
+    capture -- <cmd>` runs <cmd> against the worktree it names), else the project
+    root. Never runs outside the repo. fb-caff9937144e: capture used to force
+    cwd=root regardless, so a worktree-scoped capture executed against MAIN while
+    the evidence hash stamped the worktree — a laundered wrong-tree green."""
+    try:
+        cwd = Path(os.getcwd()).resolve()
+    except OSError:
+        return root
+    try:
+        cwd.relative_to(root.resolve())
+        return cwd
+    except ValueError:
+        return root
+
+
+def _wrong_tree_warning(exec_dir: Path, root: Path) -> str | None:
+    """A loud warning when a WORKTREE-mode sprint captured at the project ROOT —
+    the command measured main, not the reviewed worktree code, yet the evidence
+    hash stamps the worktree file-set (fb-caff9937144e). Warn, not refuse:
+    a reviewing/integration capture legitimately runs against the integrated root,
+    so a hard block here would false-refuse it — the provenance (`exec_dir`,
+    recorded on every entry) is what makes a genuine wrong-tree capture auditable."""
+    wt = root / "worktrees"
+    if not (wt.is_dir() and any(p.is_dir() for p in wt.iterdir())):
+        return None                                  # solo/no-worktree: root is correct
+    if exec_dir.resolve() != root.resolve():
+        return None                                  # ran inside a worktree (or subdir)
+    return ("[prusik-gate] capture ran at the PROJECT ROOT, but this sprint has "
+            "worktrees — if this command was meant to exercise reviewed worktree "
+            "code, it just measured main instead (the evidence hash stamps the "
+            "worktree). `cd worktrees/<role>` before capturing, or pass the command "
+            "an explicit `cd worktrees/<role> && …`, so the run and the hash agree.")
+
+
 def capture(args) -> int:
     """Run a reviewer command, record prusik-captured execution evidence, and
     exit with the command's own exit code (transparent to pass/fail).
@@ -2250,10 +2288,15 @@ def capture(args) -> int:
     # shlex.join would wrongly quote into one literal command.
     cmd_str = cmd[0] if len(cmd) == 1 else shlex.join(cmd)
 
-    import os as _os
-    cap_env = {**_os.environ, "PATH": _capture_env_path()}
+    cap_env = {**os.environ, "PATH": _capture_env_path()}
+    # fb-caff9937144e: run in the invocation cwd (a worktree, when the agent cd'd
+    # into one) — NOT unconditionally at root — so the command exercises the same
+    # code the evidence hash stamps. Warn loudly on the wrong-tree danger.
+    exec_dir = _resolve_exec_dir(root)
+    if (wt_warn := _wrong_tree_warning(exec_dir, root)):
+        print(wt_warn, file=sys.stderr)
     try:
-        proc = subprocess.run(["/bin/bash", "-c", cmd_str], cwd=str(root), env=cap_env,
+        proc = subprocess.run(["/bin/bash", "-c", cmd_str], cwd=str(exec_dir), env=cap_env,
                                capture_output=True, text=True,
                                timeout=_CAPTURE_TIMEOUT_SEC, check=False)
         exit_code = proc.returncode
@@ -2297,6 +2340,10 @@ def capture(args) -> int:
     role = _PHASE_ROLE.get(args.phase, "")
     wt_hash = _worktree_substantive_hash(root, _REVIEWER_INPUTS.get(role, ()))
 
+    try:
+        exec_rel = str(exec_dir.resolve().relative_to(root.resolve())) or "."
+    except ValueError:
+        exec_rel = "."
     entry = {
         "phase": args.phase,
         "command": cmd_str,
@@ -2304,6 +2351,9 @@ def capture(args) -> int:
         "nonempty_primitive": {"kind": kind, "value": value},
         "output_sha": out_sha,
         "worktree_hash": wt_hash,
+        # fb-caff9937144e: the tree the command ACTUALLY ran in ("." = project
+        # root), so wrong-tree evidence is auditable, not silent.
+        "exec_dir": exec_rel,
         "captured_by": schema.EVIDENCE_CAPTURED_BY,
     }
     # field bridge #3: record observed FAILED count for a tests capture, so the
