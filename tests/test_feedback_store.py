@@ -7,9 +7,30 @@ verify, and a zero-executed/all-skipped verify — must NEVER close a finding.
 
 from __future__ import annotations
 
+import os
+import stat
 import sys
 
 from prusik import feedback_store as fs
+
+
+def _shim_prusik_on_path(tmp_path, monkeypatch, version):
+    """Put a `prusik` on PATH that reports `version`, and make it the ONLY one found.
+
+    `_version_floor_verify` deliberately shells to the `prusik` CLI on PATH (the
+    installed engine, as an adopter sees it) — but on a dev box PATH may carry a
+    STALE global prusik (e.g. 0.205.0) while the tests import the in-repo engine
+    (0.207.0). The floor check then compares the imported version against the stale
+    CLI and goes spuriously RED — a false-RED that has nothing to do with the SUT.
+    Pin PATH to a shim reporting the engine-under-test version so the test measures
+    the transfer logic, not whatever global happens to be installed."""
+    bindir = tmp_path / "shim-bin"
+    bindir.mkdir()
+    exe = bindir / "prusik"
+    exe.write_text(f"#!/bin/sh\necho 'prusik {version}'\n")
+    exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    # sole PATH: a stale global prusik earlier on the real PATH must not shadow the shim.
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}/usr/bin{os.pathsep}/bin")
 
 
 def _open(tmp_path, **kw):
@@ -59,13 +80,14 @@ def test_close_shipped_verifies_green_surfaces_the_rest(tmp_path):
     assert "fb-dddddddddddd" not in sum(out.values(), [])
 
 
-def test_proof_transfer_closes_moat_backed_engine_finding(tmp_path):
+def test_proof_transfer_closes_moat_backed_engine_finding(tmp_path, monkeypatch):
     # an engine finding backed by a moat test (green in prusik CI) closes by transfer
     # when THIS engine carries the fix (version floor) — a real local green, not an
     # assertion. Adversarial: a moat version ABOVE the current engine must NOT close
     # (the fix isn't present), and a shipped finding with NO moat marker must NOT
     # transfer (no captured proof to inherit) — it needs an adopter-side verify.
     import prusik
+    _shim_prusik_on_path(tmp_path, monkeypatch, prusik.__version__)
     _mk(tmp_path, "fb-aaaaaaaaaaaa")   # moat-proven, fix version <= engine → transfers
     _mk(tmp_path, "fb-bbbbbbbbbbbb")   # moat version far above engine → not present
     _mk(tmp_path, "fb-cccccccccccc")   # shipped but no moat marker → needs verify
@@ -81,10 +103,11 @@ def test_proof_transfer_closes_moat_backed_engine_finding(tmp_path):
     assert "fb-bbbbbbbbbbbb" in out["needs_verify"]
 
 
-def test_proof_transfer_verify_is_a_real_rerunnable_check(tmp_path):
+def test_proof_transfer_verify_is_a_real_rerunnable_check(tmp_path, monkeypatch):
     # the transfer isn't a fake close: it stores a runnable version-floor verify, so a
     # later re-verify re-checks currency (a downgrade below the fix reopens it).
     import prusik
+    _shim_prusik_on_path(tmp_path, monkeypatch, prusik.__version__)
     _mk(tmp_path, "fb-aaaaaaaaaaaa")
     low = ".".join(str(x) for x in
                    tuple(int(x) for x in prusik.__version__.split("."))[:2]) + ".0"
