@@ -34,7 +34,11 @@ Run `test -d .git && echo git || echo non-git` via Bash. The result determines y
    git add -A
    git commit -m "<plan's goal recap in imperative mood>"
    ```
-6. `git push` only if the user has explicitly authorized it for this sprint; otherwise leave the merge local.
+6. `git push` only if the user has explicitly authorized it for this sprint; otherwise leave the merge local. **When you do push, push SYNCHRONOUSLY — never background it.** A push is an outward, irreversible operation you MUST observe to completion:
+   - Record the before SHA: `git rev-parse origin/<branch>` (or note the branch is new).
+   - Run `git push` in the FOREGROUND — never via `run_in_background`, never `git push &`. A backgrounded push is orphaned the instant your turn ends: the process dies, origin never moves, and the whole sprint sits on one disk with the retro unwritten (fb-60d5c11b2f99). Block until it returns.
+   - Observe the pre-push hook chain output; if any hook fails, the push did not land — report the failure, do not claim success.
+   - CONFIRM against the remote, not your local ref: `git ls-remote origin <branch>` tip MUST equal local `HEAD`. Report the pushed range `before..after` and the confirmation. If `ls-remote` ≠ `HEAD`, the push did NOT land — say so and retry synchronously; never report a push you could not confirm on origin.
 
 ---
 
@@ -75,6 +79,7 @@ If the brief has no `<feature>.criteria.yaml` sibling, this step is skipped (v0.
 - Do not force-merge / force-overwrite. If reviewers haven't produced PASS reports, don't integrate — escalate.
 - No destructive operations outside the scope of integration (no `rm -rf`, no `git reset --hard`, no full-tree `cp -r`).
 - `git push` (Mode A) is opt-in. Default is local only.
+- Never fire-and-forget an outward, irreversible operation (push, release, deploy) and return. You cannot observe its result and the process dies with your turn — origin/registry/host may never actually change while you report done. Run it synchronously and verify the remote state moved (fb-60d5c11b2f99). `prusik gate sprint-complete` cross-checks the push against `git ls-remote` and, under `push_or_park: {require: true}`, HARD-BLOCKS a close whose push it can't confirm on origin.
 
 **Convergence-stall response** (v0.8.11). If you observe a `[prusik-convergence-stall]`-prefixed message in any Bash tool result, prusik has detected that your last N=3 consecutive identical results indicate a non-converging inner loop. STOP. Do NOT retry the same command shape. Your only valid action is:
 

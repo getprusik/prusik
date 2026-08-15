@@ -3,6 +3,31 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.209.0] — a push is confirmed against the remote, not the local ref
+
+The integrator merged correctly, then launched `git push` as a **background** task
+and returned while "waiting." The process died with its turn: origin never moved, the
+`retro.md` exit artifact was never written, and a completed sprint sat on one disk
+(fb-60d5c11b2f99). The safety net held (the exit-artifact gate + push-or-park blocked
+the close), but two gaps remained: the integrator fire-and-forgot an outward,
+irreversible operation, and the push check trusted the **local** `@{upstream}` cache —
+which a killed or forged tracking ref leaves stale while origin never received a thing.
+
+- **Remote-truth confirmation.** `push_guard.remote_confirm` consults the remote
+  itself (`git ls-remote`), not the local tracking ref. At `sprint-complete` — where
+  the push has supposedly landed — a branch that reads *parked* locally but whose
+  `HEAD` origin does **not** carry is surfaced as `push_unconfirmed` and, under
+  `push_or_park: {require: true}`, **hard-blocks** the close. Scoped to the terminal so
+  the frequent pre-push advance checks pay no network cost; offline degrades **loudly**
+  to the local signal, never a silent pass.
+- **Integrator spec.** The push must run **synchronously** in the foreground — never
+  backgrounded — observe the pre-push hook chain, confirm `git ls-remote origin
+  <branch>` equals `HEAD`, and report the pushed `before..after` range. A general rule
+  is added: never fire-and-forget an outward, irreversible operation (push, release,
+  deploy) and return — you cannot observe its result and the process dies with the turn.
+
+Closes fb-60d5c11b2f99 (moat-finding:fb-60d5c11b2f99).
+
 ## [0.208.0] — a silent-clean typecheck counts on the first capture
 
 `tsc` prints nothing on a clean typecheck, so `prusik gate capture --kind types --
