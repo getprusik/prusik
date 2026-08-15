@@ -3,6 +3,28 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.207.0] — CI credit: wired is not observed-green
+
+v0.201.0 made a `verify_in: ci` criterion prove its spec is **wired** into a
+resolvable CI job (the runner's own resolver). But a spec that's wired into
+`ci.yml` and never actually *run* is not evidence — a wired-but-unrun spec ships
+latent bugs that surface on the first real CI execution (fb-41877c6a453f, a
+recurring high-cost class). The credit now separates the two halves:
+
+- **WIRED** — `credit_check` passing is recorded as `ci_execution_wired`, a
+  *necessary* precondition, no longer the misleading `ci_execution_verified`.
+  Calling wiring "verified" was the false comfort that let unrun specs read as
+  passed.
+- **OBSERVED-GREEN** — a criterion is credited only when its `ci_verify_command`
+  actually ran **green**, recorded as `ci_observed_green` bound to the
+  integration commit + the specs it covers (the "reference to an observed green
+  run" a static wiring check can't supply; a stale green on an older commit is
+  now distinguishable).
+
+A `verify_in: ci` criterion whose spec is wired but has no green-attesting
+command is refused as **UNVERIFIED**, not PASS, with that exact framing. Closes
+fb-41877c6a453f (moat-finding:fb-41877c6a453f).
+
 ## [0.206.0] — capture runs in the tree it stamps (no wrong-tree greens)
 
 `prusik gate capture` forced the command's working directory to the project

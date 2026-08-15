@@ -1172,6 +1172,19 @@ def _clean_worktrees(root) -> list[str]:
 _VERIFY_DEFAULT_TIMEOUT_SEC = 300
 
 
+def _head_sha(root: Path) -> str:
+    """The integration commit an observed-green CI credit is bound to, or
+    'working-tree' when unavailable — so a `ci_observed_green` record names the
+    exact code the green ran against (fb-41877c6a453f)."""
+    import subprocess as _sp
+    try:
+        r = _sp.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                    capture_output=True, text=True, timeout=10, check=False)
+        return r.stdout.strip() or "working-tree"
+    except (OSError, _sp.TimeoutExpired):
+        return "working-tree"
+
+
 def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
     """Run each verify_command from briefs/<feature>.criteria.yaml.
 
@@ -1281,16 +1294,36 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
                 ledger.append("ci_execution_refused", feature=feature,
                               id=cid, reason=exec_why)
                 continue
+            # WIRED ≠ observed-green (fb-41877c6a453f). credit_check only proves the
+            # spec is in a resolvable CI job's run list; it does NOT prove that job
+            # RAN and went green on this commit. Record it as `ci_execution_wired`
+            # (a necessary precondition), never `..._verified` — the green is only
+            # observed when the ci_verify_command below actually passes. Calling
+            # wiring "verified" is the false comfort that shipped 3 latent bugs.
             if ci_exec.spec_refs(entry):
-                ledger.append("ci_execution_verified", feature=feature,
+                ledger.append("ci_execution_wired", feature=feature,
                               id=cid, detail=exec_why)
 
         if not vc:
-            why = ("ci_verify_command missing — a CI-verified criterion (verify_in: ci) "
-                   "must PROVE the required CI check is green on the merge commit "
-                   "(e.g. `gh pr checks <pr> --required`, exit 0 only when green); it "
-                   "closes on real CI evidence, never a faked/skipped local run"
-                   ) if ci_shaped else "missing verify_command"
+            wired_specs = ci_shaped and bool(ci_exec.spec_refs(entry))
+            if wired_specs:
+                # fb-41877c6a453f: the spec is WIRED into a CI job but nothing
+                # attests it RAN GREEN — UNVERIFIED, not PASS. Wiring a spec into
+                # ci.yml and never observing a green run is exactly how 3 latent
+                # bugs shipped (they surfaced on the FIRST real CI execution).
+                why = ("wired but never observed-green — UNVERIFIED: the spec is in a "
+                       "CI job's run list, but no observed green run proves it executed "
+                       "and passed. Add a ci_verify_command that proves the required CI "
+                       "check green on the integration commit (e.g. `gh pr checks <pr> "
+                       "--required`, exit 0 only when green) — a wired-but-unrun spec "
+                       "is not evidence.")
+            elif ci_shaped:
+                why = ("ci_verify_command missing — a CI-verified criterion (verify_in: ci) "
+                       "must PROVE the required CI check is green on the merge commit "
+                       "(e.g. `gh pr checks <pr> --required`, exit 0 only when green); it "
+                       "closes on real CI evidence, never a faked/skipped local run")
+            else:
+                why = "missing verify_command"
             results.append({"id": cid, "passed": False, "exit_code": -1,
                             "output_path": str(out_path),
                             "verify_command": vc, "expected_exit": expected})
@@ -1323,6 +1356,18 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
             timed_out = False
 
         passed = (not timed_out) and (exit_code == expected)
+
+        # fb-41877c6a453f: the observed-green half of the CI credit. A ci_shaped
+        # criterion is credited only now — when its ci_verify_command actually ran
+        # GREEN — and we bind that observation to the integration commit + the
+        # specs it covers. This is the "reference to an observed green run" the
+        # wired check (ci_execution_wired, above) cannot supply: a stale green on an
+        # older commit is distinguishable, and "wired but never observed-green" can
+        # no longer read as PASS. (ci_shaped skips the local execution-evidence /
+        # prove_red flips below, so `passed` here is final for it.)
+        if ci_shaped and passed and ci_exec.spec_refs(entry):
+            ledger.append("ci_observed_green", feature=feature, id=cid,
+                          commit=_head_sha(root), specs=ci_exec.spec_refs(entry))
 
         # Execution-evidence (prove-it-fires, generalized to success criteria). A
         # criterion may declare kind: tests|lint|types. When it does and exits
