@@ -52,6 +52,28 @@ def test_glued_and_alt_separator_adopter_forms_are_caught():
     assert not pat.search("fb-" + frag + "def123456")   # hex fragment ≠ leak
 
 
+def test_findings_dir_is_public_surface_and_scanned(tmp_path):
+    """The engine's own findings/ tickets are committed to the PUBLIC repo, so an
+    adopter name in a ticket is a public identity leak — yet findings/ was excluded
+    from the scan as 'private plane' (true for an adopter's repo, false for the public
+    engine), and two real names (fb-56ee9ebcf4e6/fb-ff4271c46232) slipped through for
+    weeks. findings/ must be scanned public surface; a name in a ticket is caught.
+
+    moat-finding: fb-ac17c362d5c6
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("boundary_check", _SCRIPT)
+    bc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bc)
+    assert "findings" in bc.PUBLIC_SURFACE           # the direct guard against regression
+    token = "ac" + "me"                              # runtime-built; no literal token in source
+    (tmp_path / "findings").mkdir()
+    (tmp_path / "findings" / "fb-000000000000.json").write_text(
+        f'{{"detail": "{token} walkthrough surfaced this"}}\n')
+    snippets = " | ".join(h["snippet"] for h in bc.scan(tmp_path, [token]))
+    assert token in snippets, "an adopter name in a public findings/ ticket must be caught"
+
+
 def test_adopter_token_glued_into_snake_case_identifier_is_caught(tmp_path):
     """Regression: an adopter token embedded in a snake_case / camelCase / plural
     identifier (`_<NAME>_SHAPE`, `_<name>_like_project`, `<name>s`, `<name>Shape`) MUST

@@ -3,6 +3,24 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.212.0] — the identity gate covers the engine's own tickets
+
+`boundary_check` (the open-core identity gate) excluded `findings/` from its
+public-surface scan, treating it as private plane. That is correct for an adopter's
+own private repo, but wrong for the **public** engine: the engine's own dogfooding
+tickets are committed to `getprusik/prusik`, so a ticket that names the adopter which
+surfaced it is a public identity leak — and two did, undetected, for weeks
+(fb-ac17c362d5c6).
+
+`findings/` is now scanned public surface: a committed ticket carrying an adopter name
+fails the gate at commit time. The id→adopter crosswalk stays in the private plane
+(prusik-hq / the adopter's own repo, where this gate does not run); the public engine's
+tickets cite by `fb-<id>` only. The two leaked tickets are scrubbed to a generic
+"Adopter walkthrough" in HEAD. (The names remain in prior public history — a separate
+maintainer decision, deliberately not rewritten under the covers.)
+
+Closes fb-ac17c362d5c6 (moat-finding:fb-ac17c362d5c6).
+
 ## [0.211.0] — the cross-artifact block tells you how to clear it
 
 `prusik bounces` (the v0.204.0 remedy-quality lens) ranked

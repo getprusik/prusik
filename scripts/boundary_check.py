@@ -46,12 +46,20 @@ DEFAULT_REGISTRY = REPO_ROOT / "hq" / "products.local.json"
 
 # Files/dirs that ship publicly (PyPI sdist/wheel + the public repo). Anything
 # NOT listed here is private-by-default and is not scanned — that is where full
-# adopter context (findings/, hq/, docs/design-passes/, benchmarks/) lives.
+# adopter context (hq/, docs/design-passes/) lives.
+#
+# findings/ is IN this list, not out of it (fb-56ee9ebcf4e6/fb-ff4271c46232): the
+# engine's own dogfooding tickets are committed to the PUBLIC repo, so a ticket that
+# names the adopter that surfaced it IS a public identity leak. The id→adopter
+# crosswalk lives in the PRIVATE plane (prusik-hq / the adopter's own repo), never
+# here; the public engine's findings must cite by fb-<id> only. (In an adopter's
+# private repo this gate does not run, so their findings/ keeps full identity.)
 PUBLIC_SURFACE = (
     "prusik",           # the engine package (ships in the wheel)
     "tests",            # ship in the public repo (not the wheel, but public)
     "scripts",          # public maintainer tooling (regen_closures, this gate itself)
     "benchmarks",       # eval corpus the public test suite reads from
+    "findings",         # the engine's own tickets are committed public — must be identity-clean
     "examples",
     "README.md",
     "CHANGELOG.md",

@@ -1,0 +1,39 @@
+{
+  "id": "fb-ac17c362d5c6",
+  "created_at": "2026-08-15T23:24:14.564408+00:00",
+  "kind": "bug",
+  "severity": "high",
+  "title": "boundary_check excluded findings/ from the public-surface scan, so an adopter name committed in an engine ticket leaked to the public repo undetected",
+  "detail": "getprusik/prusik is PUBLIC and the engine's own findings/*.json tickets are committed there, but boundary_check's PUBLIC_SURFACE list excluded findings/ as 'private plane' \u2014 a correct assumption for an ADOPTER's private repo, wrong for the public engine. Two engine tickets carried an adopter name in their detail ('<adopter> walkthrough 2026-07-27: \u2026') and rode to the public remote for weeks, undetected by the identity gate. Fix: add findings/ to PUBLIC_SURFACE so committed tickets are scanned; the id\u2192adopter crosswalk stays in the private plane (prusik-hq / the adopter's repo), the public engine's findings cite by fb-<id> only. HEAD scrubbed to generic 'Adopter walkthrough'. Residual: the names remain in git HISTORY on the public remote (already public since v0.197.35) \u2014 a separate operator decision on whether to rewrite public history.",
+  "feature": null,
+  "content_hash": "ac17c362d5c6",
+  "repro": "PUBLIC_SURFACE omitted 'findings'; boundary_check skipped findings/*.json",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": {
+    "type": "fix",
+    "verify": "CUR=$(prusik --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1); [ -n \"$CUR\" ] && [ \"$(printf '%s\\n%s\\n' '0.212.0' \"$CUR\" | sort -V | head -1)\" = '0.212.0' ] && echo \"1 passed: engine carries moat-proven fix fb-ac17c362d5c6 (prusik $CUR >= 0.212.0)\"",
+    "fixed_in": "0.212.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-08-15T23:29:53.999920+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "9c3a6ca-dirty"
+    },
+    {
+      "at": "2026-08-15T23:29:54.322482+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "9c3a6ca-dirty"
+    }
+  ],
+  "status": "fixed"
+}

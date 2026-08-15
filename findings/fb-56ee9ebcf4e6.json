@@ -4,7 +4,7 @@
   "kind": "bug",
   "severity": "med",
   "title": "feedback --list shows legacy 'open' status instead of the ticket's derived state",
-  "detail": "saavi walkthrough 2026-07-27: prusik feedback --list rendered 8 findings as 'open' while their tickets were verified-closed (derive_state). The list reads the legacy jsonl status field \u2014 a second source of truth that goes stale the moment the ticket loop closes a finding. Adopters see a lying scoreboard right after prusik update closes their findings.",
+  "detail": "Adopter walkthrough 2026-07-27: prusik feedback --list rendered 8 findings as 'open' while their tickets were verified-closed (derive_state). The list reads the legacy jsonl status field \u2014 a second source of truth that goes stale the moment the ticket loop closes a finding. Adopters see a lying scoreboard right after prusik update closes their findings.",
   "feature": null,
   "content_hash": "56ee9ebcf4e6",
   "repro": "cd adopter-repo && prusik feedback --list  # states disagree with prusik feedback show <id>",
