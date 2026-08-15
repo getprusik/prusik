@@ -2288,6 +2288,22 @@ def _wrong_tree_warning(exec_dir: Path, root: Path) -> str | None:
             "an explicit `cd worktrees/<role> && …`, so the run and the hash agree.")
 
 
+def _augment_types_count(cmd_str: str) -> str:
+    """tsc is SILENT on a clean typecheck, so `prusik gate capture --kind types --
+    tsc --noEmit` records types=0 → false-clean → a forced re-capture with the
+    counting flag EVERY reviewing phase (fb-c76ae6da2255, a confirmed re-bounce
+    source). When the command's last statement is a bare tsc with no diagnostics
+    flag, append `--extendedDiagnostics` so a genuine clean typecheck prints
+    `Files: N` and counts on the FIRST capture. tsc-only: mypy prints `N source
+    files` and ruff/eslint are loud on an empty scope, so they already count."""
+    tail = re.split(r"&&|;|\|\||\n", cmd_str)[-1]
+    if not re.search(r"\btsc\b", tail):
+        return cmd_str                       # tsc not the command that runs last
+    if re.search(r"--(?:extendedDiagnostics|diagnostics)\b", cmd_str):
+        return cmd_str                       # the count is already emitted
+    return cmd_str + " --extendedDiagnostics"
+
+
 def capture(args) -> int:
     """Run a reviewer command, record prusik-captured execution evidence, and
     exit with the command's own exit code (transparent to pass/fail).
@@ -2332,6 +2348,16 @@ def capture(args) -> int:
     # A SINGLE arg stays raw — it's a deliberate shell line (e.g. `"a && b"`), which
     # shlex.join would wrongly quote into one literal command.
     cmd_str = cmd[0] if len(cmd) == 1 else shlex.join(cmd)
+    # fb-c76ae6da2255: make a silent-clean tsc emit its file count on the FIRST
+    # capture instead of recording types=0 and bouncing the reviewer into a manual
+    # re-capture. Only touches a trailing bare tsc; the recorded evidence command
+    # shows the flag, so the augmentation is auditable.
+    if args.kind == "types":
+        augmented = _augment_types_count(cmd_str)
+        if augmented != cmd_str:
+            print("[prusik-gate] capture: appended --extendedDiagnostics so the "
+                  "typecheck reports its file count (kind=types).", file=sys.stderr)
+            cmd_str = augmented
 
     cap_env = {**os.environ, "PATH": _capture_env_path()}
     # fb-caff9937144e: run in the invocation cwd (a worktree, when the agent cd'd

@@ -3,6 +3,24 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.208.0] — a silent-clean typecheck counts on the first capture
+
+`tsc` prints nothing on a clean typecheck, so `prusik gate capture --kind types --
+tsc --noEmit` recorded `types=0` — a false-clean the advance gate correctly rejected
+as "nothing measurable ran." The reviewer then had to manually re-capture with
+`tsc --noEmit --extendedDiagnostics` (which prints `Files: N`) and hand-delete the
+stale `types=0` entry — a round-trip that recurred **every** reviewing phase
+(fb-c76ae6da2255, a confirmed re-bounce source).
+
+Capture now augments a trailing bare `tsc` under `--kind types`: it appends
+`--extendedDiagnostics` so a genuine clean typecheck emits its file count and counts
+on the FIRST capture. The augmentation is narrow and auditable — it fires only when
+the command's last statement is `tsc` with no diagnostics flag already present, and
+the recorded evidence command shows the appended flag (with a stderr notice), so a
+reviewer sees exactly what ran. Scoped to `tsc`: `mypy` prints `N source files` and
+`ruff` is loud on an empty scope, so they already count; a silent lint runner is left
+for a demand-pulled follow-up. Closes fb-c76ae6da2255 (moat-finding:fb-c76ae6da2255).
+
 ## [0.207.0] — CI credit: wired is not observed-green
 
 v0.201.0 made a `verify_in: ci` criterion prove its spec is **wired** into a
