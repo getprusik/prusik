@@ -3201,8 +3201,8 @@ def _check_pre_sprint_gates(config: dict, feature: str, root) -> list[str]:
             unmet.append(f"[{gate_name}] missing {path} — {hint}")
             continue
         must_contain = gate_spec.get("must_contain")
-        if must_contain and must_contain not in abs_path.read_text():
-            unmet.append(f"[{gate_name}] {path} must contain {must_contain!r}")
+        if must_contain and not _verdict_line_ok(abs_path.read_text(), must_contain):
+            unmet.append(f"[{gate_name}] {path} verdict line must be {must_contain!r}")
     return unmet
 
 
@@ -3257,6 +3257,26 @@ def _try_carry_forward(path: str, feature: str | None, root: Path) -> bool:
     return True
 
 
+def _verdict_line_ok(text: str, token: str) -> bool:
+    """A verdict artifact — regression/conventions `PASS`, scope/plan `APPROVED`,
+    brief-critique `PASS` — carries its verdict on the FIRST non-empty line; every
+    producing role spec mandates "first line must be exactly <verdict>". Match the
+    LEADING TOKEN of that line, NOT a substring anywhere in the body.
+
+    fb-d3c6dd0da1e6: `must_contain` was a substring-anywhere check, so a stale
+    FAIL-bodied regression.txt whose fix-instructions merely mentioned "PASS"
+    satisfied the reviewing exit gate and rode into integrating. (conventions.txt
+    carried the identical binding and only blocked by luck — its FAIL body happened
+    not to contain the token; scope/plan `APPROVED` had the same latent hole.)
+    Carry-forward writes `<token> (carried forward — …)`, so the leading-token match
+    keeps that legitimate path green while rejecting a verdict buried in prose."""
+    for line in text.splitlines():
+        s = line.strip()
+        if s:
+            return s.split(maxsplit=1)[0] == token
+    return False
+
+
 def _unsatisfied_exit_artifacts(phase_spec: dict, feature: str | None) -> list[str]:
     root = ledger.project_root()
     missing: list[str] = []
@@ -3307,10 +3327,10 @@ def _unsatisfied_exit_artifacts(phase_spec: dict, feature: str | None) -> list[s
             if sec not in abs_path.read_text():
                 missing.append(f"{path} (missing section: {sec})")
         mc = artifact.get("must_contain")
-        if mc and mc not in abs_path.read_text():
+        if mc and not _verdict_line_ok(abs_path.read_text(), mc):
             if _try_carry_forward(path, feature, root):
                 continue
-            missing.append(f"{path} (must contain: {mc!r})")
+            missing.append(f"{path} (verdict line must be {mc!r})")
     return missing
 
 

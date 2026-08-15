@@ -3,6 +3,28 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.210.0] — a verdict gate reads the verdict line, not any line
+
+The reviewing exit gate bound `regression.txt` with `must_contain: PASS` — but that
+was a **substring-anywhere** check. A stale FAIL-bodied report left over from a prior
+fix-round, whose fix-instructions merely *mentioned* "PASS" ("re-run until it reports
+PASS"), satisfied the gate, and `gate advance integrating` succeeded on a report whose
+verdict was FAIL (fb-d3c6dd0da1e6). `conventions.txt` carried the identical binding
+and only blocked by luck — its FAIL body happened not to contain the token; the
+scope/plan `APPROVED` artifacts had the same latent hole (a "NOT APPROVED, revise…"
+body would have passed).
+
+Every producing role spec mandates the verdict on the **first line** ("first line must
+be exactly PASS/FAIL", "APPROVED/REJECTED"). The gate now matches the **leading token
+of the first non-empty line**, not a substring anywhere — `_verdict_line_ok`, applied
+to both the exit-artifact gate and the pre-sprint gate. A verdict buried in prose no
+longer satisfies; carry-forward's `<token> (carried forward — …)` line still passes.
+This is a pure engine fix keyed to a shipped field, so it reaches the whole fleet on
+`pip install -U prusik` with no per-project config change — and it hardens conventions
+and the APPROVED artifacts at the same time, not just the one that was caught.
+
+Closes fb-d3c6dd0da1e6 (moat-finding:fb-d3c6dd0da1e6).
+
 ## [0.209.0] — a push is confirmed against the remote, not the local ref
 
 The integrator merged correctly, then launched `git push` as a **background** task
