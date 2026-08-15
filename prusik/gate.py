@@ -1841,10 +1841,14 @@ def advance(args) -> int:
                 return fs_block
 
         if inconsistencies:
-            print(f"[prusik-gate] Cannot advance from '{current}': cross-artifact inconsistencies:",
-                  file=sys.stderr)
+            n = len(inconsistencies)
+            print(f"[prusik-gate] BLOCKED advancing '{current}' → '{target_phase}': "
+                  f"{n} cross-artifact inconsistency item(s). Each is a DRIFT between "
+                  f"what an artifact DECLARES and what the worktree CONTAINS — reconcile "
+                  f"the two on disk:", file=sys.stderr)
             for i in inconsistencies:
                 print(f"  - {i}", file=sys.stderr)
+            print(_cross_artifact_remedy_footer(feature), file=sys.stderr)
             ledger.append("advance_blocked", from_phase=current, to_phase=target_phase,
                           feature=feature,
                           gate_class=gate_class.CROSS_ARTIFACT_INCONSISTENCY,
@@ -3255,6 +3259,32 @@ def _try_carry_forward(path: str, feature: str | None, root: Path) -> bool:
     abs_path.write_text(marker + "\n")
     ledger.append("verdict_carried_forward", feature=feature, approval=path)
     return True
+
+
+def _cross_artifact_remedy_footer(feature: str | None) -> str:
+    """The reconciliation footer for a cross-artifact-inconsistency block.
+
+    fb-25937f6926fa: this class re-bounced at 56% (the worst untargeted remedy in
+    the fleet bounces metric) because the message named the DRIFT but not the
+    fix-route or the futility of a bare retry — so agents re-ran `gate advance`
+    unchanged and bounced identically. Rewritten in the v0.205.0 writable_scope mold:
+    state plainly that nothing changes without a disk edit, and name the
+    source-of-truth decision per drift-type. gate_class + detection stay unchanged so
+    `prusik bounces` re-measurement is a clean before/after."""
+    feat = feature or "<feature>"
+    return (
+        "  ── to clear this ─────────────────────────────────────────────\n"
+        "  Re-running `prusik gate advance` alone WILL NOT pass — the block re-fires "
+        "byte-identically until the named drift is gone on disk. Pick the source of "
+        "truth for each item, then advance once:\n"
+        "    • file outside the plan's boundary → move it back into a scoped module, "
+        f"OR log it as `DEV-NNN: <path> — <why>` in design/{feat}/deviations.md "
+        "(always-writable; scope.md is phase-locked mid-build, so deviations.md is the "
+        "sanctioned in-band record)\n"
+        "    • tool-emitted cache dir in a worktree → delete it NOW (`rm -rf <dir>`); "
+        "it must never be integrated into project root\n"
+        "    • brief type/size conflict → fix the brief's type or narrow its scope so "
+        "the two agree")
 
 
 def _verdict_line_ok(text: str, token: str) -> bool:

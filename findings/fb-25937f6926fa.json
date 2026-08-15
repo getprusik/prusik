@@ -1,0 +1,39 @@
+{
+  "id": "fb-25937f6926fa",
+  "created_at": "2026-08-15T22:54:50.187260+00:00",
+  "kind": "friction",
+  "severity": "low",
+  "title": "cross_artifact_inconsistency remedy re-bounces at 56% \u2014 the advance-block wrapper lists drifts but gives no source-of-truth route or anti-retry framing, so agents re-run gate advance unchanged",
+  "detail": "prusik bounces (fleet ledger, 189 events) ranks cross_artifact_inconsistency at 19/34 = 56% wasted re-bounces \u2014 tied for the worst remedy-quality rate and, unlike unmet_exit_artifacts (fb-c76ae6da2255) and writable_scope (v0.205.0 rewrite), NOTHING targets it. Root cause: the advance-block wrapper (gate.py, the 'cross-artifact inconsistencies:' branch) prints the per-item strings but adds no framing that each item is a DECLARED-vs-CONTAINED drift requiring a source-of-truth edit, and \u2014 critically \u2014 no statement that re-running 'gate advance' without changing an artifact/worktree re-fires the block BYTE-IDENTICALLY. Agents re-bounce because the message doesn't say 'change X on disk, then advance'. The worktrees_clean_of_cache_artifacts item also buries its immediate fix (delete the cache dir now) under next-time prevention advice. Fix: rewrite the wrapper remedy in the v0.205.0 writable_scope mold \u2014 name the reconciliation route per drift-type + explicit don't-retry \u2014 keeping the gate_class + detection unchanged so 'prusik bounces' re-measurement is a clean before/after.",
+  "feature": null,
+  "content_hash": "25937f6926fa",
+  "repro": "prusik bounces  # cross_artifact_inconsistency 19/34 56%, untargeted",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": {
+    "type": "fix",
+    "verify": "CUR=$(prusik --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1); [ -n \"$CUR\" ] && [ \"$(printf '%s\\n%s\\n' '0.211.0' \"$CUR\" | sort -V | head -1)\" = '0.211.0' ] && echo \"1 passed: engine carries moat-proven fix fb-25937f6926fa (prusik $CUR >= 0.211.0)\"",
+    "fixed_in": "0.211.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-08-15T23:04:13.529340+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "0ab865c-dirty"
+    },
+    {
+      "at": "2026-08-15T23:04:14.164576+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "0ab865c-dirty"
+    }
+  ],
+  "status": "fixed"
+}

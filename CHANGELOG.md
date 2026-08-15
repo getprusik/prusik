@@ -3,6 +3,27 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.211.0] — the cross-artifact block tells you how to clear it
+
+`prusik bounces` (the v0.204.0 remedy-quality lens) ranked
+`cross_artifact_inconsistency` at 19/34 = **56% wasted re-bounces** — tied for the
+worst remedy-quality rate in the fleet and, unlike `unmet_exit_artifacts` and
+`writable_scope`, targeted by nothing (fb-25937f6926fa). Root cause: the advance-block
+message listed *what* had drifted but never named the fix-route or said that a bare
+retry is futile, so agents re-ran `prusik gate advance` unchanged and bounced
+identically.
+
+Rewritten in the v0.205.0 `writable_scope` mold: the remedy now states plainly that
+the block **re-fires byte-identically until the drift is gone on disk**, and names the
+source-of-truth decision per drift-type — an out-of-boundary file goes back into scope
+or into `design/<feature>/deviations.md`; a worktree cache dir is deleted now; a brief
+type/size conflict is fixed in the brief. The `worktrees_clean_of_cache_artifacts` item
+now leads with the immediate delete instead of trailing next-sprint prevention advice.
+The gate class and its detection are unchanged **by design**, so re-running `prusik
+bounces` after the next sprints measures the remedy's effect as a clean before/after.
+
+Closes fb-25937f6926fa (moat-finding:fb-25937f6926fa).
+
 ## [0.210.0] — a verdict gate reads the verdict line, not any line
 
 The reviewing exit gate bound `regression.txt` with `must_contain: PASS` — but that

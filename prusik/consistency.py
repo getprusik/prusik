@@ -594,11 +594,13 @@ def worktrees_clean_of_cache_artifacts(project_root: Path, feature: str
     ] + [f"  - {p}" for p in polluted[:10]] + (
         [f"  ... and {len(polluted) - 10} more"] if len(polluted) > 10 else []
     ) + [
-        "  Reviewers should pass --no-cache (or equivalent) flags:",
+        "  FIX NOW: delete these dirs from the worktree (`rm -rf <dir>`) before "
+        "advancing — they are tool output, not deliverables, and must not be "
+        "integrated into project root.",
+        "  PREVENT next time: reviewers pass --no-cache (or equivalent) flags —",
         "    pytest -p no:cacheprovider",
         "    ruff check --no-cache",
         "    mypy --no-incremental --cache-dir=/dev/null",
-        "  Or delete the cache dirs from worktrees/ before advancing.",
     ]
 
 
