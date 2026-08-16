@@ -3,8 +3,8 @@
   "created_at": "2026-08-16T02:55:34.917679+00:00",
   "kind": "friction",
   "severity": "high",
-  "title": "criteria evidence layers (criterion_evidence, criterion_prove_red) are dormant fleet-wide because kind:/prove_red: are opt-in and never declared — criteria are trusted on exit-code alone",
-  "detail": "Fleet dashboard: criterion_evidence and criterion_prove_red never fired across all adopters. Cause is NOT that criteria aren't written (they are, heavily) — it is that kind: and prove_red: are OPT-IN and no criterion declares them. So a local verify_command is trusted on exit code alone: a vacuous verify (exit 0, nothing executed) passes, and an acceptance test that was never RED proves nothing (vacuous-green). Two fixes, fb-c76 philosophy (make evidence the default, not a flag): (a) INFER kind from a test/lint/type-shaped verify_command (pytest/vitest/mypy/tsc/ruff/eslint) so execution-evidence arms automatically — bare tsc augmented with --extendedDiagnostics so a silent-clean typecheck still emits its count; npm/pnpm wrappers NOT inferred (opaque). (b) A deterministic brief-lint advisory that flags a new_feature brief whose local acceptance criteria lack prove_red, nudging a RED-baseline capture so the acceptance test is load-bearing. charter_freshness is NOT part of this — it is a benign preventive advisory that correctly hasn't fired (charters fresh).",
+  "title": "criteria evidence layers (criterion_evidence, criterion_prove_red) are dormant fleet-wide because kind:/prove_red: are opt-in and never declared \u2014 criteria are trusted on exit-code alone",
+  "detail": "Fleet dashboard: criterion_evidence and criterion_prove_red never fired across all adopters. Cause is NOT that criteria aren't written (they are, heavily) \u2014 it is that kind: and prove_red: are OPT-IN and no criterion declares them. So a local verify_command is trusted on exit code alone: a vacuous verify (exit 0, nothing executed) passes, and an acceptance test that was never RED proves nothing (vacuous-green). Two fixes, fb-c76 philosophy (make evidence the default, not a flag): (a) INFER kind from a test/lint/type-shaped verify_command (pytest/vitest/mypy/tsc/ruff/eslint) so execution-evidence arms automatically \u2014 bare tsc augmented with --extendedDiagnostics so a silent-clean typecheck still emits its count; npm/pnpm wrappers NOT inferred (opaque). (b) A deterministic brief-lint advisory that flags a new_feature brief whose local acceptance criteria lack prove_red, nudging a RED-baseline capture so the acceptance test is load-bearing. charter_freshness is NOT part of this \u2014 it is a benign preventive advisory that correctly hasn't fired (charters fresh).",
   "feature": null,
   "content_hash": "d34fb5d5c7a5",
   "repro": "fleet dashboard ceremony-watch: criterion_evidence 0/0, criterion_prove_red 0/0; 0 criteria declare kind:/prove_red: across the fleet",
@@ -23,7 +23,7 @@
       "exit": 1,
       "executed_count": 0,
       "verdict": false,
-      "why": "command exited 1 (non-zero) — not clean",
+      "why": "command exited 1 (non-zero) \u2014 not clean",
       "worktree_hash": "64c751d-dirty"
     },
     {
@@ -31,9 +31,17 @@
       "exit": 1,
       "executed_count": 0,
       "verdict": false,
-      "why": "command exited 1 (non-zero) — not clean",
+      "why": "command exited 1 (non-zero) \u2014 not clean",
       "worktree_hash": "64c751d-dirty"
+    },
+    {
+      "at": "2026-08-16T03:39:44.054941+00:00",
+      "exit": 0,
+      "executed_count": 1,
+      "verdict": true,
+      "why": "1 test(s) executed, exit 0",
+      "worktree_hash": "6fb919e"
     }
   ],
-  "status": "fixed"
+  "status": "verified-closed"
 }
