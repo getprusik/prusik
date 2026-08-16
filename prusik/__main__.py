@@ -496,6 +496,11 @@ def main():
     p_bounce.add_argument("--ledger", default=None,
                           help="Analyze a specific ledger file (e.g. a copied "
                                "field ledger) instead of this repo's")
+    p_bounce.add_argument("--since", default=None, metavar="DATE",
+                          help="Window to block events on/after an ISO date "
+                               "(e.g. 2026-08-15, the day you upgraded to the fixed "
+                               "engine) — measures a remedy rewrite on the POST-FIX "
+                               "sprint cohort instead of the frozen cumulative rate")
 
     # v0.48.0 — showcase: the composed trust narrative. Brings the ledger
     # timeline + adversarial verdicts + evidence + catch-quality + effort into
@@ -1062,7 +1067,8 @@ def main():
                             idle_min=args.idle_min)
     if args.cmd == "bounces":
         from prusik import bounce
-        return bounce.run(json_output=args.json, ledger_path=args.ledger)
+        return bounce.run(json_output=args.json, ledger_path=args.ledger,
+                          since=args.since)
     if args.cmd == "trust-report":
         from prusik import trust_report
         return trust_report.run(json_output=args.json,

@@ -3,6 +3,25 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.214.0] — `bounces --since`: measure a remedy on the post-fix cohort
+
+`prusik bounces` computes per-class re-bounce rates over the **entire** append-only
+ledger (dozens of sprints per class). So the remedy-quality loop's promise — rewrite the
+worst remedy, re-run, watch the rate drop — didn't hold: one post-fix sprint adds a
+handful of events against a ~190-event history, and the rate stays frozen (49% before a
+fix, 49% after), while the classes a fix targeted may not even fire in a single sprint
+(fb-efb97d03d9d9). The cumulative view can't attribute an improvement to a fix.
+
+`prusik bounces --since DATE` windows block events (by their ledger `ts`) to the sprints
+run **on the fixed engine** — pass the day you upgraded. The rewrite's effect is then
+measured on the post-fix cohort as a clean before/after instead of drowned by history;
+a class that re-bounced heavily in the past but not since the fix now reads clean. The
+window states `N of M block events` so the sample size is explicit, and a version-shaped
+`--since` is rejected with a pointer to the date form (a version has no offline date in
+an adopter repo). Read-only and retrospective, like the base report.
+
+Closes fb-efb97d03d9d9 (moat-finding:fb-efb97d03d9d9).
+
 ## [0.213.0] — success criteria carry evidence by default, not by opt-in
 
 The fleet dashboard showed `criterion_evidence` and `criterion_prove_red` had **never

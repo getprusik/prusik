@@ -1,0 +1,39 @@
+{
+  "id": "fb-efb97d03d9d9",
+  "created_at": "2026-08-16T16:49:18.536292+00:00",
+  "kind": "friction",
+  "severity": "med",
+  "title": "prusik bounces is cumulative over the whole ledger, so a remedy rewrite's effect is undetectable \u2014 one post-fix sprint's few events cannot move a rate computed over dozens of sprints",
+  "detail": "The remedy-quality loop promises: rewrite the worst remedy, re-run bounces, watch the rate drop. But bounces computes per-class rates over the ENTIRE append-only ledger (17-36 sprints per class). A single post-fix sprint adds about 4 events against a 190-event history, so the rate is mathematically frozen (49 percent before a fix, 49 percent after) and the classes a fix targeted may not even fire in one sprint. Re-running the cumulative view sprint-by-sprint reports the same number for months, so remedy-as-curriculum can never be validated. Fix: add a bounces since-DATE window that filters block events by ts to the sprints run on the fixed engine (adopters know their upgrade date), so a rewrite effect is measured on the post-fix cohort as a clean before/after instead of drowned by history.",
+  "feature": null,
+  "content_hash": "efb97d03d9d9",
+  "repro": "prusik bounces before a fix and after one post-fix sprint both report 49 percent wasted (cumulative dilution)",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": {
+    "type": "fix",
+    "verify": "CUR=$(prusik --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1); [ -n \"$CUR\" ] && [ \"$(printf '%s\\n%s\\n' '0.214.0' \"$CUR\" | sort -V | head -1)\" = '0.214.0' ] && echo \"1 passed: engine carries moat-proven fix fb-efb97d03d9d9 (prusik $CUR >= 0.214.0)\"",
+    "fixed_in": "0.214.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-08-16T16:58:04.517736+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "988736a-dirty"
+    },
+    {
+      "at": "2026-08-16T16:58:07.422679+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "988736a-dirty"
+    }
+  ],
+  "status": "fixed"
+}
