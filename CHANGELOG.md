@@ -3,6 +3,35 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.213.0] — success criteria carry evidence by default, not by opt-in
+
+The fleet dashboard showed `criterion_evidence` and `criterion_prove_red` had **never
+fired** across any adopter. The cause was not that criteria go unwritten (they are,
+heavily) — it was that `kind:` and `prove_red:` are opt-in and **no criterion declares
+them**, so a local `verify_command` was trusted on exit code alone: a vacuous verify
+(exit 0, nothing executed) passed, and an acceptance test that was never RED proved
+nothing (fb-d34fb5d5c7a5). Same shape as fb-c76 — a discipline that exists but isn't
+the default doesn't happen. Two fixes make evidence the default:
+
+- **Inferred `kind:`.** When a local criterion doesn't declare `kind:`, it's inferred
+  from a test/lint/type-shaped `verify_command` (`pytest`/`vitest`/`mypy`/`tsc`/`ruff`/
+  `eslint`), so the false-clean guard arms automatically — a pytest verify that exits 0
+  having run nothing now FAILS. Only tools the evidence parser reliably counts are
+  inferred; a bare `tsc` is augmented with `--extendedDiagnostics` (fb-c76ae6da2255) so
+  a silent-clean typecheck still emits its file count; opaque `npm`/`pnpm` wrappers are
+  never inferred (they'd risk false-failing a clean run). A `criterion_kind_inferred`
+  event makes the newly-armed criteria visible to the fleet.
+- **`prove_red` shift-left.** `prusik gate brief-lint` now warns (advisory) when a
+  `new_feature` brief's local acceptance criteria never declare `prove_red` — an
+  acceptance test that was never red is vacuous-green. It nudges marking the
+  new-behavior criteria and capturing a RED baseline before implementing, and leaves
+  regression / CI-verified criteria alone.
+
+`charter_freshness` was examined and is **not** part of this — it's a benign preventive
+advisory that correctly hasn't fired (the fleet's charters are fresh).
+
+Closes fb-d34fb5d5c7a5 (moat-finding:fb-d34fb5d5c7a5).
+
 ## [0.212.0] — the identity gate covers the engine's own tickets
 
 `boundary_check` (the open-core identity gate) excluded `findings/` from its

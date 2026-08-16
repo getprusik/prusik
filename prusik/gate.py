@@ -1255,6 +1255,15 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
         vc = (entry.get("ci_verify_command", "") if ci_shaped
               else entry.get("verify_command", ""))
         expected = entry.get("expected_exit", 0)
+        # fb-d34fb5d5c7a5: arm execution-evidence by DEFAULT. If a local criterion
+        # doesn't hand-declare `kind:`, infer it from a test/lint/type-shaped
+        # verify_command so the false-clean guard engages without opt-in. A bare tsc
+        # is augmented (fb-c76ae6da2255) so a silent-clean typecheck still counts.
+        inferred_kind = None
+        if not ci_shaped and not entry.get("kind") and vc:
+            inferred_kind = _infer_kind(vc)
+            if inferred_kind == "types":
+                vc = _augment_types_count(vc)
         out_path = reports_dir / f"verify-{cid}.txt"
 
         # v0.81.0 (field finding #16) — operator-declared external block. A criterion that
@@ -1375,13 +1384,18 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
         # with nothing executed (the 'tests pass ✅ but nothing ran' false-clean
         # that brief-time coherence is blind to) FAILS. Same evidence layer as
         # `prusik prove`. Local-only (a ci_verify status check has no such output).
-        kind = entry.get("kind")
+        kind = entry.get("kind") or inferred_kind
         executed = None
         if passed and kind and expected == 0 and not ci_shaped:
             from prusik import evidence as _ev
             min_exec = int(entry.get("min_executed", 1))
             executed = _ev.executed_count(kind, out_text, vc)
             proven, why = _ev.prove_verdict(kind, exit_code, executed, min_exec)
+            if inferred_kind and not entry.get("kind"):
+                # visibility: inference armed a criterion the adopter didn't opt in on
+                # (the fleet signal that criterion_evidence is no longer dormant).
+                ledger.append("criterion_kind_inferred", feature=feature,
+                              id=cid, kind=inferred_kind)
             if not proven:
                 passed = False
                 ledger.append("criterion_evidence_fired", feature=feature,
@@ -2306,6 +2320,35 @@ def _augment_types_count(cmd_str: str) -> str:
     if re.search(r"--(?:extendedDiagnostics|diagnostics)\b", cmd_str):
         return cmd_str                       # the count is already emitted
     return cmd_str + " --extendedDiagnostics"
+
+
+# Tool → evidence kind, for criteria that don't hand-declare `kind:`. ONLY tools the
+# evidence parser reliably counts (fb-d34fb5d5c7a5) — inference must never turn a
+# genuinely-clean verify into a false-clean FAIL. bare `tsc` is safe because the
+# criteria path augments it with --extendedDiagnostics before running (fb-c76ae6da2255).
+_INFER_KIND_TOOLS: tuple[tuple[str, str], ...] = (
+    ("tests", r"\b(?:pytest|vitest|jest)\b"),
+    ("tests", r"\bgo\s+test\b"),
+    ("types", r"\bmypy\b"),
+    ("types", r"\btsc\b"),
+    ("lint",  r"\b(?:ruff|eslint|flake8)\b"),
+)
+
+
+def _infer_kind(vc: str) -> str | None:
+    """The evidence kind implied by a test/lint/type-shaped verify_command, so a
+    criterion arms execution-evidence WITHOUT a hand-declared `kind:` (fb-d34fb5d5c7a5):
+    an adopter writes `verify_command: pytest …` and the false-clean guard (exit 0 but
+    nothing executed) engages by default. Inferred from the command that runs LAST
+    (`cd x && pytest` → pytest), and only for tools `evidence.executed_count` reliably
+    parses. `npm`/`pnpm`/`yarn` wrappers are deliberately NOT inferred — they alias
+    arbitrary scripts, so inferring a kind could false-fail a clean run whose output the
+    parser can't read; an explicit `kind:` is still honored for those."""
+    last = re.split(r"&&|;|\|\||\n", vc)[-1]
+    for kind, pat in _INFER_KIND_TOOLS:
+        if re.search(pat, last):
+            return kind
+    return None
 
 
 def capture(args) -> int:

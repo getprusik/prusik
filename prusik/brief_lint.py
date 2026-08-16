@@ -356,6 +356,32 @@ def _ui_smoke_warning(brief_text: str, criteria_path: Path,
             f"a round-trip you can skip by fixing it now.")
 
 
+def _prove_red_warning(brief_text: str, criteria_path: Path) -> str | None:
+    """A new_feature brief asserts NEW behavior, so its acceptance criteria should be
+    load-bearing — proven to FAIL without the change (a captured RED baseline). Warn
+    when none of the local criteria declare `prove_red` (fb-d34fb5d5c7a5): an
+    acceptance test that was never red proves nothing (vacuous-green), and prove_red is
+    opt-in that nobody opts into, so the guard stays dormant. Advisory — the human
+    marks the criteria that truly assert new behavior; CI-verified criteria are exempt
+    (a green required-CI check is its own evidence). None when not new_feature, no local
+    criteria, or the discipline is already present."""
+    btype = schema.parse_sections(brief_text).get("## Type", "")
+    btype = (btype.strip().split() or [""])[0].strip("`*_").rstrip(",.").lower()
+    if btype != "new_feature":
+        return None
+    criteria = schema.load_criteria(criteria_path) if criteria_path.exists() else []
+    local = [c for c in criteria
+             if str(c.get("verify_in", "")).lower() != "ci" and c.get("verify_command")]
+    if not local or any(c.get("prove_red") for c in local):
+        return None
+    return (f"new_feature brief with {len(local)} local acceptance criterion(s) but "
+            f"none declare prove_red — an acceptance test that was never RED proves "
+            f"nothing (vacuous-green). Mark the criteria that assert NEW behavior "
+            f"`prove_red: true` and capture the baseline (`prusik gate prove-red "
+            f"--feature <feature>`) BEFORE implementing, so the test is load-bearing. "
+            f"Leave regression/existing-behavior criteria as-is.")
+
+
 def lint(brief_path: str | Path | None = None,
          root: Path | None = None,
          cutoff: float = 0.80) -> int:
@@ -417,6 +443,11 @@ def lint(brief_path: str | Path | None = None,
         # discovered only by a full LLM brief-critic round.
         if (ui_warn := _ui_smoke_warning(brief_text, criteria_path, root)):
             print(f"  [ui-smoke-warn] {ui_warn}")
+
+        # prove_red shift-left (fb-d34fb5d5c7a5) — advisory: a new_feature brief whose
+        # acceptance criteria are never proven RED ships vacuous-green tests.
+        if (pr_warn := _prove_red_warning(brief_text, criteria_path)):
+            print(f"  [prove-red-warn] {pr_warn}")
 
         candidates = _extract_candidates(brief_text)
         # v0.4.4: per-brief allow-list for proposed-new-IDs. Tokens declared
