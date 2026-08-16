@@ -33,7 +33,31 @@
       "verdict": false,
       "why": "command exited 1 (non-zero) \u2014 not clean",
       "worktree_hash": "988736a-dirty"
+    },
+    {
+      "at": "2026-08-16T17:16:04.503739+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "7e38ecf-dirty"
+    },
+    {
+      "at": "2026-08-16T17:16:10.713785+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "7e38ecf-dirty"
+    },
+    {
+      "at": "2026-08-16T17:22:30.227850+00:00",
+      "exit": 0,
+      "executed_count": 1,
+      "verdict": true,
+      "why": "1 test(s) executed, exit 0",
+      "worktree_hash": "3c65f09-dirty"
     }
   ],
-  "status": "fixed"
+  "status": "verified-closed"
 }
