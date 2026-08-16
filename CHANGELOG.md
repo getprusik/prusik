@@ -3,6 +3,29 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.215.0] — the product-fit parser tolerates prose, like scope/brief already do
+
+An adopter's well-formed `product-fit.md` was rejected across ~4 sprint-start iterations
+with cryptic errors (fb-d4d401114c19). Two modes, one root cause: `product_fit._bullets`
+was a **naive re-implementation** of bullet extraction that never routed through
+`schema.extract_list_items` — the one extractor (used by 8+ consumers) that requires a
+**space** after a `*` marker. So a markdown emphasis span at line start (`*wiring*`) was
+parsed as a phantom bullet with its leading `*` stripped, and `## Related` slugs were
+never split from trailing prose or stripped of `**markdown**`. This is the exact
+brittleness class the scope/brief parsers already fixed (fb-6a4075fb15fe et al.), which
+re-surfaced because a new artifact bypassed the shared parser.
+
+- `_bullets` now delegates to `schema.extract_list_items` — emphasis is prose, not a
+  bullet, and sub-bullets / HR / ordered items are handled uniformly.
+- `## Related` extracts the leading slug up to the first `:`/`—`/` - ` delimiter
+  (internal hyphens in slugs preserved) and strips markdown wrappers via
+  `artifact_variants`, so `**beta-ready-rebase** — the source` resolves to the slug.
+- The errors now name the fix (cite a pillar id; use a bare slug; put prose after a
+  delimiter and non-brief notes in an HTML comment) instead of echoing the mangled
+  string. A genuinely missing brief still blocks.
+
+Closes fb-d4d401114c19 (moat-finding:fb-d4d401114c19).
+
 ## [0.214.0] — `bounces --since`: measure a remedy on the post-fix cohort
 
 `prusik bounces` computes per-class re-bounce rates over the **entire** append-only

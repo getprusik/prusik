@@ -37,7 +37,7 @@ import re
 import sys
 from pathlib import Path
 
-from prusik import ledger, schema
+from prusik import artifact_variants, ledger, schema
 
 
 def charter_path(root: Path) -> Path:
@@ -49,14 +49,14 @@ def fit_path(root: Path, feature: str) -> Path:
 
 
 def _bullets(text: str) -> list[str]:
-    out = []
-    for line in text.splitlines():
-        s = line.strip()
-        if s.startswith(("-", "*")):
-            body = s[1:].strip()
-            if body:
-                out.append(body)
-    return out
+    # ONE source of truth for bullet extraction — schema.extract_list_items, the same
+    # parser scope/brief/plan use. It requires a SPACE after a `*`/`-` marker, so a
+    # markdown emphasis span (`*x*`, `**x**`) at line start is prose, NOT a bullet.
+    # The naive reimpl here treated a leading `*` as a bullet marker and stripped it,
+    # so `*wiring* and only *ran* …` parsed as a phantom bullet `wiring* and only *ran*`
+    # — the emphasis-as-citation class the scope/brief parsers already fixed
+    # (fb-6a4075fb15fe et al.), re-surfaced on product-fit.md (fb-d4d401114c19).
+    return schema.extract_list_items(text)
 
 
 def _parse_pillars(text: str) -> list[dict]:
@@ -245,8 +245,10 @@ def check(feature: str, root: Path | None = None, *,
                 any(n and n in al for n in names)
             if not hit:
                 pill = [p["id"] or p["name"] for p in charter["pillars"]]
-                errors.append(f"## Advances cites {a!r}, not a pillar in "
-                              f"design/product.md (pillars: {pill})")
+                errors.append(f"## Advances bullet {a!r} names no charter pillar — "
+                              f"cite a pillar id or name from design/product.md "
+                              f"(pillars: {pill}). Markdown emphasis in the prose is "
+                              f"fine; only the pillar reference must be present.")
 
     # ## Related — every cited prior feature must exist as a brief.
     related = _bullets(sections.get("## Related", ""))
@@ -255,12 +257,21 @@ def check(feature: str, root: Path | None = None, *,
                       "reconciles with, or state 'none'")
     else:
         for r in related:
-            feat = r.split(":", 1)[0].strip()
+            # The slug is the LEADING token; a Related bullet may carry prose after a
+            # ':' or ' — '/' - ' delimiter ('- beta-ready-rebase — the direct source').
+            # Split on the first such delimiter (NOT internal hyphens, which slugs use),
+            # then strip markdown wrappers via the shared authority so `**slug**` /
+            # `` `slug` `` resolve (fb-d4d401114c19).
+            feat = re.split(r"\s+[—–]\s+|\s+-\s+|:\s*", r, maxsplit=1)[0].strip()
+            feat = artifact_variants.strip_markdown_wrappers(feat).strip()
             if feat.lower() == "none" or feat == feature:
                 continue
             if not (root / "briefs" / f"{feat}.md").exists():
                 errors.append(f"## Related cites feature {feat!r} but "
-                              f"briefs/{feat}.md does not exist")
+                              f"briefs/{feat}.md does not exist — use a BARE feature "
+                              f"slug (the brief filename without .md); put prose after "
+                              f"a ' — ' or ':', and non-brief notes (fb-ids, umbrella "
+                              f"refs) in an HTML comment so they aren't read as briefs.")
 
     # ## Concepts — reconcile domain terms with the canonical glossary.
     glossary = set(charter["glossary"])

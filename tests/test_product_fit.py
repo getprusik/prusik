@@ -79,7 +79,7 @@ def test_phantom_pillar_blocks():
         _charter(tmp)
         _fit(tmp, "feat", advances="- P9 — advances a pillar that isn't real")
         ok, errs = pf.check("feat", root=tmp)
-        assert not ok and any("not a pillar" in e for e in errs)
+        assert not ok and any("names no charter pillar" in e for e in errs)
     finally:
         shutil.rmtree(tmp)
 
@@ -311,7 +311,7 @@ def test_form_failure_precedes_critique_check():
         _fit(tmp, "feat", advances="- P9 — phantom pillar")
         _critique(tmp, "feat", "PASS")  # even a PASS critique can't rescue bad form
         unmet = gate._check_pre_sprint_gates(_PF_GATE, "feat", tmp)
-        assert any("not a pillar" in u for u in unmet)
+        assert any("names no charter pillar" in u for u in unmet)
     finally:
         shutil.rmtree(tmp)
 
