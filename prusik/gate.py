@@ -1012,6 +1012,13 @@ def sprint_start(args) -> int:
     # HERE (sprint-start) not at triage — triage runs AFTER scoping, too
     # late to skip the scope-critic ceremony that is the actual cost.
     state: dict = {"phase": "scoping", "feature": feature}
+    # Record the base commit so a completing sprint can diff EXACTLY what it changed,
+    # independent of push state (fb-e340cd203897: the ci-deliverable-observation check
+    # needs the sprint's own diff even after the work is pushed, when @{upstream}..HEAD
+    # is empty). Best-effort — absent in a non-git project, and the check falls back.
+    _base = _head_sha(root)
+    if _base:
+        state["base_commit"] = _base
     if getattr(args, "trivial", False):
         btype = schema.parse_sections(brief_path.read_text()).get("## Type", "")
         btype = (btype.strip().split() or [""])[0].strip("`*_").rstrip(",.")
@@ -1547,8 +1554,17 @@ def sprint_complete(args) -> int:
     # exactly the artifact that must not live on one disk. Same semantics as
     # the advance check: advisory + event, blocking under require.
     from prusik import push_guard
-    if not push_guard.gate_check(root, phases.load_sprint_config() or {},
-                                 feature, "sprint-complete"):
+    _sc_config = phases.load_sprint_config() or {}
+    if not push_guard.gate_check(root, _sc_config, feature, "sprint-complete"):
+        return 2
+
+    # CI-deliverable observation at the terminal (fb-e340cd203897): if the sprint's
+    # deliverable is a CI job/workflow whose trigger can't fire on the sprint's push,
+    # its runtime was never observed — a job that only runs on a PR/schedule can ship
+    # broken under a green reviewing gate. Runs here (post-merge, before clearing state)
+    # so the base_commit..HEAD diff sees the workflow change regardless of push state.
+    from prusik import ci_deliverable
+    if not ci_deliverable.gate_check(root, _sc_config, feature, "sprint-complete"):
         return 2
 
     ledger.append("sprint_complete", feature=feature,
@@ -2349,6 +2365,56 @@ def _infer_kind(vc: str) -> str | None:
         if re.search(pat, last):
             return kind
     return None
+
+
+def mark_ci_observed(args) -> int:
+    """Record that a CI-job DELIVERABLE was OBSERVED green (fb-e340cd203897) — the
+    real dispatch/PR run that the sprint's own push could never fire. gh-VERIFIED, not
+    asserted: the named run must report `conclusion == success`, or we refuse to record
+    it (proof-not-assertion). Fail-closed if gh is absent — an unverifiable claim is not
+    an observation. Clears the ci-observe gate for that workflow on this feature."""
+    root = ledger.project_root()
+    feature = args.feature or (phases.current_sprint_state() or {}).get("feature")
+    run_ref = str(args.run)
+    run_id = run_ref.rstrip("/").split("/")[-1]     # accept a full URL or a bare id
+    import shutil
+    import subprocess
+    if not shutil.which("gh"):
+        print("[prusik-gate] mark-ci-observed REFUSED: `gh` not on PATH — an observed "
+              "run must be VERIFIED against GitHub, never taken on faith. Install/auth "
+              "gh, or run the workflow and pass its run id once gh is available.",
+              file=sys.stderr)
+        return 2
+    try:
+        proc = subprocess.run(
+            ["gh", "run", "view", run_id, "--json", "conclusion,workflowName,url"],
+            cwd=str(root), capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"[prusik-gate] mark-ci-observed REFUSED: gh could not read run {run_id!r} "
+              f"({e}).", file=sys.stderr)
+        return 2
+    if proc.returncode != 0:
+        print(f"[prusik-gate] mark-ci-observed REFUSED: gh could not resolve run "
+              f"{run_id!r} — {proc.stderr.strip()}", file=sys.stderr)
+        return 2
+    import json as _json
+    try:
+        data = _json.loads(proc.stdout)
+    except ValueError:
+        print("[prusik-gate] mark-ci-observed REFUSED: unparseable gh output.",
+              file=sys.stderr)
+        return 2
+    if data.get("conclusion") != "success":
+        print(f"[prusik-gate] mark-ci-observed REFUSED: run {run_id} concluded "
+              f"{data.get('conclusion')!r}, not 'success' — an observed run that was "
+              f"not GREEN is not an observation (that is exactly the broken-deliverable "
+              f"the gate catches). Fix the job and record a green run.", file=sys.stderr)
+        return 2
+    ledger.append("ci_deliverable_observed", feature=feature, workflow=args.workflow,
+                  run=data.get("url") or run_id, workflow_name=data.get("workflowName"))
+    print(f"[prusik-gate] ci-observe: recorded {args.workflow} observed GREEN "
+          f"(run {run_id}) — the ci-observe gate is cleared for this deliverable.")
+    return 0
 
 
 def capture(args) -> int:

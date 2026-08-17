@@ -281,6 +281,17 @@ def main():
     p_gt.add_argument("--feature", required=True, type=_slug)
     p_gt.add_argument("--capture", action="store_true",
                       help="Record current reality as the baseline")
+    p_mcio = gsub.add_parser("mark-ci-observed",
+                             help="Record that a CI-job/workflow DELIVERABLE was "
+                                  "observed running GREEN (fb-e340cd203897) — clears "
+                                  "the ci-observe gate for a job whose trigger can't "
+                                  "fire on the sprint's push. gh-verified: the named "
+                                  "run must actually be a success, never an assertion.")
+    p_mcio.add_argument("workflow", help="Workflow filename (e.g. nightly-e2e-full.yml)")
+    p_mcio.add_argument("--run", required=True,
+                        help="The GitHub Actions run id/URL to verify green via gh")
+    p_mcio.add_argument("--feature", default=None, type=_slug,
+                        help="Feature to attribute the observation to (default: active sprint)")
     p_sprintinit = gsub.add_parser("sprint-init",
                                     help="Orchestrator: run discovery + fingerprint + "
                                          "sprint-start, guide agent steps")

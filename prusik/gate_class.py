@@ -38,6 +38,7 @@ CROSS_ARTIFACT_INCONSISTENCY = "cross_artifact_inconsistency"  # advance: cross-
 FULL_SUITE_NOT_PROVEN = "full_suite_not_proven"      # advance: full-suite evidence missing
 REWIND_GUARD = "rewind_guard"                        # advance: rewind without --allow-rewind
 PUSH_OR_PARK = "push_or_park"                         # advance: unpushed sprint work
+CI_OBSERVE = "ci_observe"                             # advance: CI-job deliverable never observed running
 SPRINT_START_GATE = "sprint_start_gate"              # sprint-start: unmet pre-sprint gate(s)
 UNCLASSIFIED = "unclassified"                         # recorded nothing identifying — never guessed
 
@@ -53,6 +54,7 @@ GATE_CLASSES = (
     FULL_SUITE_NOT_PROVEN,
     REWIND_GUARD,
     PUSH_OR_PARK,
+    CI_OBSERVE,
     SPRINT_START_GATE,
     UNCLASSIFIED,
 )
@@ -97,6 +99,8 @@ def _derive(event: dict) -> str:
             return REWIND_GUARD
         if reason.startswith("push_or_park"):
             return PUSH_OR_PARK
+        if reason.startswith("ci_observe"):
+            return CI_OBSERVE
         return UNCLASSIFIED
 
     return UNCLASSIFIED

@@ -1,0 +1,39 @@
+{
+  "id": "fb-e340cd203897",
+  "created_at": "2026-08-16T17:41:51.779608+00:00",
+  "kind": "bug",
+  "severity": "med",
+  "title": "an infra sprint whose deliverable IS a CI job/workflow completes done with the deliverable's runtime never observed \u2014 a PR-only or schedule-only job never fires in the sprint's push context, so reviewing PASS is hollow for that deliverable class",
+  "detail": "Distinct from fb-41877c6a453f (there, criteria were explicitly verify_in:ci). Here a sprint changed .github/workflows/*.yml adding a PR-only gate job and a schedule-only nightly; both passed reviewing (real for the CODE) and the sprint completed done, but NEITHER had ever executed in its real runtime because their on: triggers cannot fire on a push to the sprint branch. When later dispatched manually, the nightly's FIRST observed run was RED (real contamination failures) \u2014 the deliverable was broken and done hid it. This is wired-not-observed recurring one meta-level up: the sprint that BUILDS a CI gate never observes the gate. Fix: at the integrating/sprint-complete gate, detect a changed workflow whose changed job trigger does NOT include a push matching the sprint branch, and REQUIRE either a defer-marker committing to a post-integration observed run OR a recorded observed run (a real green dispatch), before done. Advisory by default, blocking under an opt-in, same shape as push_or_park; escape via a gh-verified mark-ci-observed. Reuses the ci_observed_green machinery.",
+  "feature": null,
+  "content_hash": "e340cd203897",
+  "repro": "sprint edits a .github/workflows job whose on: is pull_request/schedule/workflow_dispatch only (no push to the sprint branch); sprint-complete records done with the job never observed",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": {
+    "type": "fix",
+    "verify": "CUR=$(prusik --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1); [ -n \"$CUR\" ] && [ \"$(printf '%s\\n%s\\n' '0.216.0' \"$CUR\" | sort -V | head -1)\" = '0.216.0' ] && echo \"1 passed: engine carries moat-proven fix fb-e340cd203897 (prusik $CUR >= 0.216.0)\"",
+    "fixed_in": "0.216.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-08-17T04:57:59.037212+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "14f7ff7-dirty"
+    },
+    {
+      "at": "2026-08-17T04:57:59.421367+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "14f7ff7-dirty"
+    }
+  ],
+  "status": "fixed"
+}

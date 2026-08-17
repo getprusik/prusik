@@ -3,6 +3,30 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.216.0] — a CI-job deliverable must be observed running, not just merged
+
+A sprint whose deliverable *is* a CI job/workflow could complete `done` with the
+deliverable's **runtime never observed**: a job triggered only on `pull_request` /
+`schedule` / `workflow_dispatch` never fires on the sprint's push to its branch, so the
+reviewing gate (real for the code) is systematically hollow for the job as a
+deliverable — and an adopter shipped a nightly whose *first* real run was RED (a broken
+deliverable, green under review). This is the wired≠observed class (fb-41877c6a453f)
+one meta-level up: the sprint that builds a CI gate never observes the gate
+(fb-e340cd203897).
+
+At **sprint-complete**, prusik now diffs the workflows the sprint changed (against the
+`base_commit` recorded at sprint-start, so it's independent of push state) and reads
+each one's `on:` triggers — handling GitHub's YAML gotcha where a bare `on:` key parses
+as the boolean `True`. A changed workflow whose triggers can't fire on a push to the
+sprint's branch is a **deliverable never observed**: advisory + a
+`ci_deliverable_unobserved` event by default, a hard block under `ci_observe: {require:
+true}`. The escape is proof, not assertion — `prusik gate mark-ci-observed <workflow>
+--run <id>` records it only after `gh` confirms that run concluded **success**; it
+refuses a non-green run (that's exactly the broken deliverable) or an absent `gh`. A
+job that also runs on `push` is observed by the normal CI run and never flagged.
+
+Closes fb-e340cd203897 (moat-finding:fb-e340cd203897).
+
 ## [0.215.0] — the product-fit parser tolerates prose, like scope/brief already do
 
 An adopter's well-formed `product-fit.md` was rejected across ~4 sprint-start iterations
