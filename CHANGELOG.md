@@ -3,6 +3,18 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.217.0] — proof-transfer for the CI-observe fix reaches the reporter's ticket
+
+v0.216.0 shipped the CI-deliverable-observation gate under a freshly-filed engine
+finding id, but the adopter's own ticket for it carries a different content-addressed
+id (same issue, different text → different hash), so the fix wouldn't proof-transfer to
+close their ticket. The moat test now co-tags the adopter's finding id, so
+`prusik update` closes it by version-floor like any other. No behavior change — the
+gate is identical to 0.216.0.
+
+Closes fb-556f5caebef2 (moat-finding:fb-556f5caebef2) — the adopter-side twin of
+fb-e340cd203897.
+
 ## [0.216.0] — a CI-job deliverable must be observed running, not just merged
 
 A sprint whose deliverable *is* a CI job/workflow could complete `done` with the

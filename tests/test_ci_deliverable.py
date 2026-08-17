@@ -6,6 +6,7 @@ deliverable was broken and 'done' hid it). The wired≠observed class (fb-41877c
 recurring one meta-level up: the sprint that BUILDS a CI gate never observes the gate.
 
 moat-finding: fb-e340cd203897
+moat-finding: fb-556f5caebef2
 """
 
 from __future__ import annotations
