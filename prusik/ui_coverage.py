@@ -41,12 +41,31 @@ _NAV_RE = re.compile(
 _E2E_SPEC_RE = re.compile(r"(?:[\w.-]+/)*[\w.-]+\.(?:spec|e2e|test|cy)\.[jt]sx?\b")
 
 
-def _is_ui_file(rel: str) -> bool:
-    return rel.endswith(_UI_EXT) or bool(_UI_TEMPLATE_RE.search(rel))
+def rendered_surface_extra(root: Path) -> list[str]:
+    """Project-declared globs for rendered-behavior files that AREN'T themselves a
+    component/markup extension — e.g. a `.ts` module that reverse-imports into rendered
+    `.tsx` components (fb-436a9cf46e37). Sprint-mode `ui-e2e-check` matched by extension
+    only, so it FALSE-NEGATIVED files a project's CI gate (which carries its own
+    rendered-extra list) correctly flags — the two modes of the same gate disagreed.
+    Declaring the list here in `ui_coverage.rendered_surface_extra` makes them converge;
+    absent → the extension match alone, so existing projects are unchanged."""
+    from prusik import phases
+    cfg = phases.load_sprint_config(root) or {}
+    extra = (cfg.get("ui_coverage") or {}).get("rendered_surface_extra") or []
+    return [str(g) for g in extra if isinstance(g, str)]
+
+
+def _is_ui_file(rel: str, extra_globs: tuple[str, ...] = ()) -> bool:
+    if rel.endswith(_UI_EXT) or _UI_TEMPLATE_RE.search(rel):
+        return True
+    import fnmatch
+    return any(fnmatch.fnmatch(rel, g) for g in extra_globs)
 
 
 def changed_ui_files(root: Path) -> list[str]:
-    return sorted(f for f in consistency.sprint_changed_files(root) if _is_ui_file(f))
+    extra = tuple(rendered_surface_extra(root))
+    return sorted(f for f in consistency.sprint_changed_files(root)
+                  if _is_ui_file(f, extra))
 
 
 def _read_spec(rel: str, root: Path) -> str | None:
@@ -133,7 +152,8 @@ def run(feature: str, json_output: bool = False, strict: bool = False) -> int:
         return 0
 
     ledger.append("ui_e2e_flagged", feature=feature, ui_files=len(rep["ui_files"]))
-    print(f"[prusik-ui] '{feature}': {len(rep['ui_files'])} UI/markup file(s) changed, "
+    print(f"[prusik-ui] '{feature}': {len(rep['ui_files'])} rendered-surface file(s) "
+          f"changed (UI/markup, or declared in ui_coverage.rendered_surface_extra), "
           f"but NO rendered (browser) e2e criterion verifies them:")
     for f in rep["ui_files"][:15]:
         print(f"    · {f}")

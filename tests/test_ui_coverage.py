@@ -112,3 +112,38 @@ def test_ui_extensions_recognised():
     for ext in ("a.tsx", "b.jsx", "c.vue", "d.svelte", "e.astro"):
         assert ui_coverage._is_ui_file(f"src/{ext}") is True
     assert ui_coverage._is_ui_file("src/util.ts") is False
+
+
+# ---- fb-436a9cf46e37: sprint-mode honors the project-declared rendered-surface-extra
+# so it converges with CI-mode (which carries its own RENDERED_EXTRA list) ------------
+# moat-finding: fb-436a9cf46e37
+
+def _config(root, body):
+    d = root / ".claude"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "sprint-config.yaml").write_text(body)
+
+
+def test_declared_rendered_extra_ts_file_is_flagged(tmp_path):
+    """A .ts reverse-importer into rendered .tsx (the reported api.ts) is NOT a UI extension,
+    so extension-matching alone false-negatived it. Declared in rendered_surface_extra,
+    sprint-mode now flags it — matching what CI-mode already detects."""
+    _criteria(tmp_path, "feat", _API_ONLY)
+    _wt_file(tmp_path, "packages/frontend/src/lib/api.ts")
+    # without the declaration → not flagged (extension-only, backward compatible)
+    assert ui_coverage.ui_coverage_check("feat", tmp_path)["flagged"] is False
+    # declared as rendered surface → flagged, converging with CI mode
+    _config(tmp_path, "ui_coverage:\n  rendered_surface_extra:\n"
+                      "    - 'packages/frontend/src/lib/api.ts'\n")
+    rep = ui_coverage.ui_coverage_check("feat", tmp_path)
+    assert rep["flagged"] is True
+    assert "packages/frontend/src/lib/api.ts" in rep["ui_files"]
+
+
+def test_declared_extra_accepts_globs_and_leaves_non_matches_alone(tmp_path):
+    _criteria(tmp_path, "feat", _API_ONLY)
+    _wt_file(tmp_path, "src/stores/session.ts")     # matches the glob → rendered surface
+    _wt_file(tmp_path, "src/utils/math.ts")         # pure util → NOT rendered surface
+    _config(tmp_path, "ui_coverage:\n  rendered_surface_extra:\n    - 'src/stores/*.ts'\n")
+    ui = ui_coverage.ui_coverage_check("feat", tmp_path)["ui_files"]
+    assert "src/stores/session.ts" in ui and "src/utils/math.ts" not in ui

@@ -3,6 +3,24 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.218.0] — ui-e2e-check honors the project's declared rendered surface
+
+`prusik ui-e2e-check` matched rendered-behavior files by **extension** (`.tsx`/`.vue`/
+…), so a non-component file that reverse-imports *into* rendered components — a `.ts`
+store or api module — was a false negative: sprint-mode returned `{"ui_files": [],
+"flagged": false}` and silently auto-passed the local reviewing gate, while the
+project's *CI* gate (carrying its own rendered-extra list) correctly flagged the same
+change. The two modes of one gate disagreed, which masks a real gap on any project
+whose CI doesn't independently re-check (fb-436a9cf46e37).
+
+`ui-e2e-check` now also honors a project-declared glob list,
+`ui_coverage.rendered_surface_extra` in sprint-config, so a declared reverse-importer
+flags in sprint-mode too — converging with CI-mode. Absent → extension match only, so
+existing projects are unchanged; keep the list in sync with your CI's rendered-extra
+set (ideally one source).
+
+Closes fb-436a9cf46e37 (moat-finding:fb-436a9cf46e37).
+
 ## [0.217.0] — proof-transfer for the CI-observe fix reaches the reporter's ticket
 
 v0.216.0 shipped the CI-deliverable-observation gate under a freshly-filed engine

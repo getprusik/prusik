@@ -72,6 +72,17 @@ kit_version: "0.1.0"
 reviewing_defer_markers:
   - browser_smoke      # @pytest.mark.browser_smoke / -m browser_smoke
 
+# v0.218.0 (fb-436a9cf46e37) — `prusik ui-e2e-check` flags a rendered-surface change
+# with no browser e2e. It matches component/markup EXTENSIONS (.tsx/.vue/…) by default,
+# so a non-.tsx file that reverse-imports INTO rendered components (a .ts store/api
+# module) is missed in sprint-mode even when your CI gate flags it. Declare those globs
+# here so sprint-mode and CI-mode agree — keep this list in sync with your CI's
+# rendered-extra set (ideally the single source). Empty/absent → extension match only.
+# ui_coverage:
+#   rendered_surface_extra:
+#     - "packages/frontend/src/lib/api.ts"
+#     - "src/stores/*.ts"
+
 # v0.125.0 (fb-91c75e51c214) — a fresh git worktree does NOT inherit
 # gitignored files. If your project keeps real secrets in a gitignored .env that
 # tests read, secret-dependent tests FALSE-RED inside a worktree (the keys are
