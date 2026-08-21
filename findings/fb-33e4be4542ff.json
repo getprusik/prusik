@@ -33,7 +33,15 @@
       "verdict": false,
       "why": "command exited 1 (non-zero) \u2014 not clean",
       "worktree_hash": "bc9974a-dirty"
+    },
+    {
+      "at": "2026-08-21T00:35:28.703391+00:00",
+      "exit": 0,
+      "executed_count": 1,
+      "verdict": true,
+      "why": "1 test(s) executed, exit 0",
+      "worktree_hash": "02a6b00"
     }
   ],
-  "status": "fixed"
+  "status": "verified-closed"
 }
