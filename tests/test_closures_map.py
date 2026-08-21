@@ -56,3 +56,26 @@ def test_known_moat_finding_is_transfer_eligible():
     # a finding closed this session with a moat test must be in the manifest.
     assert "fb-f02412bdfd4d" in changelog.installed_moat_closures()
     assert changelog.installed_closed_ids() == set(changelog.installed_moat_closures())
+
+
+def test_capability_findings_never_version_floor_close():
+    """fb-33e4be4542ff — an OPT-IN/config-gated fix (marked `moat-capability:`) must
+    NEVER enter the version-floor closure manifest: the engine shipping the capability
+    is not the adopter's field gap closing (the repro reproduces until they configure
+    it), so auto-closing it on `engine >= X` is a false-close. This invariant makes the
+    class impossible: capability ids and version-floor-closeable ids are disjoint.
+
+    moat-finding: fb-33e4be4542ff
+    """
+    manifest = set(json.loads((_ROOT / "prusik" / "_closures.json").read_text()))
+    capability = set(changelog.scan_capability_markers(_ROOT))
+    leaked = sorted(capability & manifest)
+    assert not leaked, (
+        f"opt-in-gated (moat-capability) findings in the version-floor manifest: "
+        f"{leaked} — these would proof-transfer-close on engine>=X while the adopter "
+        f"hasn't opted in (false-close). Remove them from _closures.json; they close "
+        f"on the adopter's own verify.")
+    # and the two marker verbs are disjoint — a finding is EITHER version-floor-closeable
+    # OR opt-in-gated, never ambiguously both.
+    both = sorted(set(changelog.scan_test_moat_markers(_ROOT)) & capability)
+    assert not both, f"ids marked BOTH moat-finding and moat-capability: {both}"

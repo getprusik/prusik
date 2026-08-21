@@ -116,7 +116,12 @@ def test_ui_extensions_recognised():
 
 # ---- fb-436a9cf46e37: sprint-mode honors the project-declared rendered-surface-extra
 # so it converges with CI-mode (which carries its own RENDERED_EXTRA list) ------------
-# moat-finding: fb-436a9cf46e37
+# moat-CAPABILITY (not moat-finding): this ships an OPT-IN capability — the engine can
+# now honor a declared list, but it only takes effect once the ADOPTER declares it, so
+# the adopter finding must NOT version-floor proof-transfer (that false-closed it while
+# the field repro still reproduced). The test proves the capability; closure of the
+# adopter's field gap is on their own verify (see fb-33e4be4542ff).
+# moat-capability: fb-436a9cf46e37
 
 def _config(root, body):
     d = root / ".claude"

@@ -3,6 +3,28 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.219.0] — a capability-shipped fix no longer false-closes an adopter's ticket
+
+Proof-transfer closes an adopter finding on a **version floor** (`engine >= fix
+version`) when the fix carries a `moat-finding:` marker. That is sound for an
+**engine-only** fix — a parser or gate fix takes effect the moment the engine ships.
+It is a **false-close** for a fix that ships a **capability requiring adopter opt-in**
+(a config flag, a declared list): the moat test proves "engine *can*, when configured",
+not "the adopter's repro passes", so the ticket auto-closes while the field gap persists
+until the adopter opts in. v0.218.0 hit exactly this — a `ui-e2e-check` config option
+shipped and its adopter finding version-floor-closed, but the adopter never declared the
+config, so the under-match still reproduced (fb-33e4be4542ff).
+
+The fix is a distinct marker, `moat-capability:`, for opt-in-gated fixes. It is
+**deliberately excluded from `_closures.json`** (the version-floor closure map), so such
+a finding can never proof-transfer-close on `engine >= X` — it closes on the adopter's
+own real verify. A guard test pins the invariant `capability_ids ∩ _closures.json = ∅`
+(and that the two marker verbs are disjoint), so the false-close class cannot recur.
+fb-436a9cf46e37 is retagged `moat-capability:` and removed from the manifest
+accordingly; the ui-e2e capability itself (v0.218.0) is unchanged.
+
+Closes fb-33e4be4542ff (moat-finding:fb-33e4be4542ff).
+
 ## [0.218.0] — ui-e2e-check honors the project's declared rendered surface
 
 `prusik ui-e2e-check` matched rendered-behavior files by **extension** (`.tsx`/`.vue`/
@@ -19,7 +41,10 @@ flags in sprint-mode too — converging with CI-mode. Absent → extension match
 existing projects are unchanged; keep the list in sync with your CI's rendered-extra
 set (ideally one source).
 
-Closes fb-436a9cf46e37 (moat-finding:fb-436a9cf46e37).
+Ships the opt-in capability requested in fb-436a9cf46e37
+(moat-capability:fb-436a9cf46e37) — the engine can now honor a declared list, but the
+adopter's field gap closes only once they DECLARE it (or harden their own wrapper), so
+this is deliberately NOT a version-floor close (see v0.219.0 / fb-33e4be4542ff).
 
 ## [0.217.0] — proof-transfer for the CI-observe fix reaches the reporter's ticket
 

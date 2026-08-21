@@ -1,0 +1,39 @@
+{
+  "id": "fb-33e4be4542ff",
+  "created_at": "2026-08-20T23:51:26.925524+00:00",
+  "kind": "bug",
+  "severity": "high",
+  "title": "version-floor proof-transfer false-closes an opt-in/config-gated engine fix \u2014 the adopter finding auto-closes on engine>=X while the field repro still reproduces because the adopter hasn't configured the new capability",
+  "detail": "Proof-transfer closes an adopter finding on a version-floor when the fix has a moat-finding marker + is in _closures.json. That is CORRECT for an engine-only fix (a parser/gate fix takes effect the moment the engine ships). It is a FALSE-CLOSE for a fix that ships a CAPABILITY requiring adopter opt-in (a config flag / declared list): the moat test proves 'engine can when configured', not 'the adopter repro passes', so engine>=X closes the ticket while the field gap persists until the adopter opts in. Concrete: a ui-e2e-check config option shipped, its adopter finding version-floor-closed, but the adopter never declared the config so the under-match still reproduces. Fix (sustainable): a distinct moat-capability: marker for opt-in-gated fixes, DELIBERATELY excluded from _closures.json (changelog.scan_capability_markers), so such findings never version-floor-close \u2014 they close on the adopter's own real verify. Guard test pins the invariant capability_ids INTERSECT _closures.json == empty, so the class can't recur.",
+  "feature": null,
+  "content_hash": "33e4be4542ff",
+  "repro": "tag an opt-in-gated fix's adopter finding with moat-finding: + regen \u2192 it enters _closures.json \u2192 prusik update version-floor-closes it though the adopter never configured the capability",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": {
+    "type": "fix",
+    "verify": "CUR=$(prusik --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1); [ -n \"$CUR\" ] && [ \"$(printf '%s\\n%s\\n' '0.219.0' \"$CUR\" | sort -V | head -1)\" = '0.219.0' ] && echo \"1 passed: engine carries moat-proven fix fb-33e4be4542ff (prusik $CUR >= 0.219.0)\"",
+    "fixed_in": "0.219.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-08-21T00:32:52.756426+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "bc9974a-dirty"
+    },
+    {
+      "at": "2026-08-21T00:32:53.262591+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "bc9974a-dirty"
+    }
+  ],
+  "status": "fixed"
+}

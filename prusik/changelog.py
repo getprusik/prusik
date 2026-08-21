@@ -22,6 +22,15 @@ _CLOSURE_LEAD = re.compile(
     r"(?:Closes|Fixes|Resolves|Closed)\s+"
     r"((?:fb-[0-9a-f]{12}(?:\s*,\s*|\s+and\s+)?)+)", re.I)
 _MOAT_MARK = re.compile(r"moat-finding:\s*(fb-[0-9a-f]{12})", re.I)
+# A CAPABILITY marker (fb-436a9cf46e37): the moat test proves an engine capability that
+# only takes effect once the ADOPTER OPTS IN (declares a config, sets a flag). Such a
+# fix must NOT version-floor proof-transfer — the engine shipping the capability is not
+# the adopter's field gap closing (the repro still reproduces until they configure it).
+# So a `moat-capability:` id is DELIBERATELY excluded from `_closures.json`; its adopter
+# finding closes on the adopter's own real verify, never on `engine >= X`. Distinct verb
+# from `moat-finding:` so the closure scan naturally skips it, and a guard test pins the
+# invariant `capability_ids ∩ _closures.json == ∅`.
+_MOAT_CAPABILITY = re.compile(r"moat-capability:\s*(fb-[0-9a-f]{12})", re.I)
 _FB_ANY = re.compile(r"fb-[0-9a-f]{12}")
 
 
@@ -40,7 +49,19 @@ def scan_test_moat_markers(root: Path) -> frozenset[str]:
     moat metric credits), and the sole source of the closure manifest's membership.
     Test files must use this marker ONLY for the finding they guard, never as literal
     parser test-data (build such inputs at runtime), or they pollute this scan."""
-    pat = re.compile(r"moat-finding:\s*(fb-[0-9a-f]{12})")
+    return _scan_markers(root, r"moat-finding:\s*(fb-[0-9a-f]{12})")
+
+
+def scan_capability_markers(root: Path) -> frozenset[str]:
+    """Every id carried by a `moat-capability:` marker — an OPT-IN-gated engine fix
+    (fb-436a9cf46e37). These are excluded from the version-floor closure manifest by
+    construction (they need the adopter's own verify), so a fix that only takes effect
+    once the adopter configures it can never false-close on `engine >= X`."""
+    return _scan_markers(root, r"moat-capability:\s*(fb-[0-9a-f]{12})")
+
+
+def _scan_markers(root: Path, pattern: str) -> frozenset[str]:
+    pat = re.compile(pattern)
     found: set[str] = set()
     for sub in ("tests", "benchmarks/cases"):
         base = root / sub
