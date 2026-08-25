@@ -119,6 +119,12 @@ Possible outputs:
 
   Then re-run `prusik gate sprint-init --feature $ARGUMENTS`.
 
+- **"product-fit … soundness is UNJUDGED"** (charter present + `require_critique`; fb-8295dd5d4859) → invoke `product-fit-critic` instead of leaving it for a manual round-trip. First ensure `design/$ARGUMENTS/product-fit.md` exists (`prusik gate product-fit $ARGUMENTS --bootstrap` drafts it), then:
+
+      Agent(subagent_type='product-fit-critic', prompt='review design/$ARGUMENTS/product-fit.md per your role spec and write reports/$ARGUMENTS/product-fit-critique.txt (PASS/FAIL)')
+
+  **Apply the same reviewer artifact fallback** as brief-critic: if the file wasn't written but the agent's first word is a literal `PASS`/`FAIL`, write it from the response, then `prusik gate mark-fallback --role product-fit-critic --feature $ARGUMENTS`. On `FAIL`, the critic names the specific coherence gap (usually an uncited overlapping sibling) — fix `## Related` in product-fit.md, then re-run sprint-init. Sequencing it here collapses the form-pass→manual-critic→re-run round-trip.
+
 - **"map drift Nn% > 30%"** → re-invoke cartographer, then re-run sprint-init.
 
 Loop until sprint-init exits 0 and the phase advances to `scoping`.

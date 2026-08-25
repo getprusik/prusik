@@ -27,14 +27,21 @@ Start a sprint for feature `$ARGUMENTS`.
 
    If FAIL (either from the file or via fallback): show the user the critique and stop — they need to fix the brief.
 
-3. **Pre-sprint gate: map freshness.** Age (>7 days) is only a weak floor — the real signal is whether THIS feature's subsystem drifted since the map was generated. If `.sprint/dep-graph.json` or `.sprint/map-fingerprint.json` is missing or stale, if `design/map.md` doesn't exist, OR if a dependency in the feature's own subsystem merged after the map was fingerprinted (the engine's `map_freshness` gate detects this feature-scoped drift even when the map is recent — fb-76ff51b273de), run discovery + cartographer first:
+3. **Pre-sprint gate: product-fit critique (auto-sequenced).** Only when a product charter exists (`design/product.md`) and `.claude/sprint-config.yaml` has `pre_sprint_gates.product_fit.require_critique: true`. The engine's `prusik gate sprint-start` (step 5) BLOCKS until `reports/$ARGUMENTS/product-fit-critique.txt` reads `PASS` — so run the critic HERE, rather than letting the form-check pass and then bouncing off that gate (fb-8295dd5d4859: that form→manual-critic→re-run two-step recurred EVERY sprint).
+
+   a. Ensure `design/$ARGUMENTS/product-fit.md` exists (the acknowledgement the critic judges). If missing, draft it first: `prusik gate product-fit $ARGUMENTS --bootstrap`.
+   b. Invoke the `product-fit-critic` agent (Agent tool, `subagent_type=product-fit-critic`). It judges SOUNDNESS (not reference-resolution) and writes `reports/$ARGUMENTS/product-fit-critique.txt` whose first line is `PASS` or `FAIL`; a FAIL names the specific coherence gap (typically an uncited overlapping sibling).
+   c. **Reviewer artifact fallback** (same as brief-critic): if the file wasn't written but the agent's first word is a literal `PASS`/`FAIL`, write it from the response, then `prusik gate mark-fallback --role product-fit-critic --feature $ARGUMENTS`.
+   d. If FAIL: show the user the named finding and stop — they fix `product-fit.md` (usually: cite the named sibling in `## Related` with its overlap/supersede relationship), then re-run. Sequencing the critic here collapses the round-trip into one pass instead of a form-pass followed by a separate manual critic + re-run.
+
+4. **Pre-sprint gate: map freshness.** Age (>7 days) is only a weak floor — the real signal is whether THIS feature's subsystem drifted since the map was generated. If `.sprint/dep-graph.json` or `.sprint/map-fingerprint.json` is missing or stale, if `design/map.md` doesn't exist, OR if a dependency in the feature's own subsystem merged after the map was fingerprinted (the engine's `map_freshness` gate detects this feature-scoped drift even when the map is recent — fb-76ff51b273de), run discovery + cartographer first:
    - `prusik discovery all` via Bash — refresh inventory and dep graph (zero tokens)
    - Invoke the `cartographer` agent (Agent tool, `subagent_type=cartographer`) to produce or refresh `design/map.md`
    - `prusik discovery fingerprint-map` via Bash — snapshot the current dep-graph as the baseline for future freshness checks
 
-4. Run `prusik gate sprint-start $ARGUMENTS` via Bash. The engine validates the brief, checks the `brief_critique` gate, and checks the `map_freshness` gate — it recomputes the dep-graph fresh, then fails on either global drift exceeding `max_drift_pct` OR a drifted module inside the feature's own subsystem (feature-scoped, independent of age/global %). If any gate is unmet, the command exits 2 with a specific reason; show the user the errors and stop.
+5. Run `prusik gate sprint-start $ARGUMENTS` via Bash. The engine validates the brief, checks the `brief_critique` gate, the `product_fit` gate (form + `require_critique`), and the `map_freshness` gate — it recomputes the dep-graph fresh, then fails on either global drift exceeding `max_drift_pct` OR a drifted module inside the feature's own subsystem (feature-scoped, independent of age/global %). If any gate is unmet, the command exits 2 with a specific reason; show the user the errors and stop.
 
-5. On success, tell the user:
+6. On success, tell the user:
    - Sprint is in the `scoping` phase.
    - Next: invoke the `scoping` role (Agent tool, `subagent_type=scoping`) to produce `design/$ARGUMENTS/scope.md`.
    - Then: invoke the `scope-critic` role to produce `reports/$ARGUMENTS/scope-approval.txt` (APPROVED or REJECTED).

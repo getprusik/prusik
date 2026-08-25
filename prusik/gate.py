@@ -2303,7 +2303,15 @@ def _resolve_exec_dir(root: Path) -> Path:
         return root
 
 
-def _wrong_tree_warning(exec_dir: Path, root: Path) -> str | None:
+def _cmd_self_navigates_to_worktree(cmd_str: str) -> bool:
+    """True when the captured command itself `cd`s into a worktree before running —
+    `cd worktrees/<role> && …` (fb-d3adb6e68c43). Then the command exercises the
+    worktree even though capture's own cwd is root, so the wrong-tree warning would be
+    a FALSE alarm (the worktree_hash confirms it measured the worktree, not main)."""
+    return bool(re.search(r"\bcd\s+[\"']?(?:\./)?worktrees/", cmd_str))
+
+
+def _wrong_tree_warning(exec_dir: Path, root: Path, cmd_str: str = "") -> str | None:
     """A loud warning when a WORKTREE-mode sprint captured at the project ROOT —
     the command measured main, not the reviewed worktree code, yet the evidence
     hash stamps the worktree file-set (fb-caff9937144e). Warn, not refuse:
@@ -2315,6 +2323,8 @@ def _wrong_tree_warning(exec_dir: Path, root: Path) -> str | None:
         return None                                  # solo/no-worktree: root is correct
     if exec_dir.resolve() != root.resolve():
         return None                                  # ran inside a worktree (or subdir)
+    if _cmd_self_navigates_to_worktree(cmd_str):
+        return None                                  # the command `cd`s in itself — no false alarm
     return ("[prusik-gate] capture ran at the PROJECT ROOT, but this sprint has "
             "worktrees — if this command was meant to exercise reviewed worktree "
             "code, it just measured main instead (the evidence hash stamps the "
@@ -2477,7 +2487,7 @@ def capture(args) -> int:
     # into one) — NOT unconditionally at root — so the command exercises the same
     # code the evidence hash stamps. Warn loudly on the wrong-tree danger.
     exec_dir = _resolve_exec_dir(root)
-    if (wt_warn := _wrong_tree_warning(exec_dir, root)):
+    if (wt_warn := _wrong_tree_warning(exec_dir, root, cmd_str)):
         print(wt_warn, file=sys.stderr)
     try:
         proc = subprocess.run(["/bin/bash", "-c", cmd_str], cwd=str(exec_dir), env=cap_env,

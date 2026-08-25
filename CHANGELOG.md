@@ -3,6 +3,31 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.220.0] — auto-sequence the product-fit critic; stop the false wrong-tree warning
+
+Two adopter-filed harness fixes:
+
+- **product-fit-critic is now auto-sequenced (fb-8295dd5d4859).** The sprint-start flow
+  ran the product-fit *form* check, passed, then told the human to run the
+  product-fit-critic **separately** and re-run — a 3–4 round-trip dance that recurred
+  every sprint (corroborating the 67% `sprint_start_gate` rebounce that `bounces
+  --since` flagged). brief-critic / scope-critic / plan-critic were already
+  auto-invoked in the command templates; product-fit-critic was the odd one out.
+  `/sprint-start` and `/sprint-run` now invoke it right after the form check (with the
+  same reviewer-artifact fallback), so a FAIL surfaces the specific coherence gap
+  (usually an uncited overlapping sibling) in one pass instead of a form-pass followed
+  by a manual critic and a re-run. Same rigor, fewer round-trips.
+
+- **No more false wrong-tree warning (fb-d3adb6e68c43).** `gate capture` printed its
+  "ran at PROJECT ROOT — measured main instead" warning even when the command itself
+  embeds `cd worktrees/<role> && …` and correctly stamps the worktree hash — a false
+  alarm that cost reviewer time re-checking the evidence file. The warning is now
+  suppressed when the command self-navigates into a worktree; a genuine root-run without
+  that `cd` still warns.
+
+Closes fb-8295dd5d4859 (moat-finding:fb-8295dd5d4859), fb-d3adb6e68c43
+(moat-finding:fb-d3adb6e68c43).
+
 ## [0.219.0] — a capability-shipped fix no longer false-closes an adopter's ticket
 
 Proof-transfer closes an adopter finding on a **version floor** (`engine >= fix
