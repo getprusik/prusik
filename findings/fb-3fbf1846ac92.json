@@ -1,0 +1,16 @@
+{
+  "id": "fb-3fbf1846ac92",
+  "created_at": "2026-10-25T21:27:53.514880+00:00",
+  "kind": "bug",
+  "severity": "high",
+  "title": "record-verdict in a main-tree (no-worktree) build binds the verdict to the EMPTY-input hash, so verdict-current reports 'unchanged' after code is fixed \u2014 stale verdict carries forward",
+  "detail": "Observed 2026-10-25, sprint deferred-tier-destination (solo, built in the main tree, no worktrees/): conventions-enforcer's recorded verdict is bound to hash e3b0c44298fc1c14 (sha256 of empty input) because the substantive-hash source for a reviewer verdict is the worktrees artifact, empty in a main-tree build. verdict-current would then match after ANY later code change, letting a FAIL/PASS verdict carry forward across a fix \u2014 the content-addressed re-gating (v0.10.0 Fix 3) degrades to always-current. Engine self-builds are routinely main-tree. Suggest: hash the actually-changed set (git diff vs sprint base) when worktrees/ is empty, and refuse to record a verdict against the empty hash (fail closed).",
+  "feature": "deferred-tier-destination",
+  "content_hash": "3fbf1846ac92",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

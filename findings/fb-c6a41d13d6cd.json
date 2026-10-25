@@ -1,0 +1,16 @@
+{
+  "id": "fb-c6a41d13d6cd",
+  "created_at": "2026-10-25T21:17:35.716070+00:00",
+  "kind": "bug",
+  "severity": "med",
+  "title": "triage scope_summary.modules records '- + `path`' new-file bullets as a bare '+' (path lost)",
+  "detail": "Repro: design/deferred-tier-destination/scope.md (2026-10-25) lists new files as '- + `prusik/deferred_tier.py` \u2014 \u2026' \u2014 the dash-then-plus form the scoping role spec explicitly accepts ('Either bullet form is accepted'). prusik gate scope validates it, but decisions/deferred-tier-destination.json scope_summary.modules contains two literal '+' entries in place of prusik/deferred_tier.py and tests/test_deferred_tier.py. Two parsers of the same Modules-touched section disagree: the scope validator handles the marker, the triage summarizer does not. Downstream consumers of scope_summary.modules (triage reasoning, plan cross-refs, HQ exports) see phantom '+' modules and miss the new files. Suggest: one shared Modules-touched parser used by both, moat-tested on both bullet forms.",
+  "feature": "deferred-tier-destination",
+  "content_hash": "c6a41d13d6cd",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

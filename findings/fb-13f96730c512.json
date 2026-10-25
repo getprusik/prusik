@@ -1,0 +1,16 @@
+{
+  "id": "fb-13f96730c512",
+  "created_at": "2026-10-25T21:41:45.250668+00:00",
+  "kind": "friction",
+  "severity": "low",
+  "title": "writable gate's bash-redirect detection is quote-blind: '| tee f' inside a quoted python -c string is blocked as a real write",
+  "detail": "Observed 2026-10-25 in solo_execute: a Bash command '.venv/bin/python -c \"...print(s._statements(\\\"... ; echo ok | tee f\\\"))...\"' was blocked with 'blocks bash redirect to f: f not in writable patterns' \u2014 the 'tee f' was inside a quoted Python string literal, never executed by the shell. The redirect detector scans raw text rather than shell-tokenized statements. Low severity (false block, fail-closed, easily rephrased) but it trains agents to rephrase around the gate. Suggest: tokenize with shlex(punctuation_chars) \u2014 the same quote-aware statement split schema._statements now uses \u2014 before looking for redirects/tee targets.",
+  "feature": "deferred-tier-destination",
+  "content_hash": "13f96730c512",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

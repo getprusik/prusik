@@ -1,0 +1,16 @@
+{
+  "id": "fb-8e11cf737632",
+  "created_at": "2026-10-25T21:03:20.876367+00:00",
+  "kind": "friction",
+  "severity": "low",
+  "title": "brief-lint ui-smoke-warn fires on the bare word 'template' (e.g. 'role templates', 'sprint-config template') \u2014 false UI-surface signal",
+  "detail": "Repro: briefs/deferred-tier-destination.md and briefs/feedback-discoverability.md (2026-10-25) \u2014 neither describes a UI surface; both trip [ui-smoke-warn] solely via _UI_SURFACE_RE's \\btemplate\\b (prusik/brief_lint.py:308) matching 'role templates'/'sprint-config template'. The warning text claims the brief-critic 'would otherwise FAIL on' this, which is misleading noise that trains operators to ignore the warn. 'template' is a weak signal on its own (config/email/doc templates are not rendered UI). Suggest: require a UI-specific co-signal (render/DOM/component/.html/.tsx) or qualify 'template' (html/jinja/view template), with a moat test using these two briefs as negatives.",
+  "feature": null,
+  "content_hash": "8e11cf737632",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
