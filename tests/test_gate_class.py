@@ -72,6 +72,8 @@ def test_derives_every_class_from_pre_field_history():
         ({"event": "advance_blocked", "reason": "push_or_park require: unpushed sprint work"},
          gc.PUSH_OR_PARK),
         ({"event": "sprint_start_blocked", "unmet": ["map_freshness"]}, gc.SPRINT_START_GATE),
+        ({"event": "advance_blocked", "reason": "deferred tier unproven: browser_smoke"},
+         gc.DEFERRED_TIER),
     ]
     for e, expected in cases:
         assert gc.classify(e) == expected, e
@@ -91,19 +93,21 @@ def test_non_block_event_is_unclassified():
 # ---- the forcing function: every emission site is labeled -------------------
 
 def test_every_block_emission_site_declares_a_valid_gate_class():
-    src = (Path(__file__).resolve().parent.parent / "prusik" / "gate.py").read_text()
-    lines = src.splitlines()
+    pkg = Path(__file__).resolve().parent.parent / "prusik"
     valid = {f"gate_class.{k}" for k, v in vars(gc).items()
              if k.isupper() and isinstance(v, str) and v in gc.GATE_CLASSES}
     sites = 0
-    for i, ln in enumerate(lines):
-        m = re.search(r'ledger\.append\("(gate_blocked|advance_blocked|sprint_start_blocked)"', ln)
-        if not m:
-            continue
-        sites += 1
-        window = "\n".join(lines[i:i + 7])
-        assert "gate_class=gate_class." in window, \
-            f"{m.group(1)} at line {i+1} has no gate_class= label"
-        assert any(v in window for v in valid), \
-            f"{m.group(1)} at line {i+1} labels a class outside GATE_CLASSES"
-    assert sites >= 12, f"expected the known block sites, found {sites}"
+    for src_file in ("gate.py", "deferred_tier.py"):
+        lines = (pkg / src_file).read_text().splitlines()
+        for i, ln in enumerate(lines):
+            m = re.search(r'ledger\.append\("(gate_blocked|advance_blocked|sprint_start_blocked)"',
+                          ln)
+            if not m:
+                continue
+            sites += 1
+            window = "\n".join(lines[i:i + 7])
+            assert "gate_class=gate_class." in window, \
+                f"{src_file}: {m.group(1)} at line {i+1} has no gate_class= label"
+            assert any(v in window for v in valid), \
+                f"{src_file}: {m.group(1)} at line {i+1} labels a class outside GATE_CLASSES"
+    assert sites >= 13, f"expected the known block sites, found {sites}"

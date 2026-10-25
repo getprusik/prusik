@@ -1509,6 +1509,14 @@ def sprint_complete(args) -> int:
         print("\n".join(lines), file=sys.stderr)
         return 1
 
+    # fb-afbe9deead21: the reviewing-deferred test tier (reviewing_defer_markers) must
+    # have RUN somewhere before done — sprint-complete is its destination. Blocks by
+    # default; `deferred_tier: {require: false}` is the loud operator opt-out.
+    from prusik import deferred_tier
+    _sc_config = phases.load_sprint_config() or {}     # shared by the terminal gates below
+    if not deferred_tier.gate_check(root, _sc_config, feature, verify_results):
+        return 2
+
     predicted = _recover_predicted(root, feature)
     actual = {
         "mode": predicted.get("mode"),  # will be overwritten by --escalated
@@ -1554,7 +1562,6 @@ def sprint_complete(args) -> int:
     # exactly the artifact that must not live on one disk. Same semantics as
     # the advance check: advisory + event, blocking under require.
     from prusik import push_guard
-    _sc_config = phases.load_sprint_config() or {}
     if not push_guard.gate_check(root, _sc_config, feature, "sprint-complete"):
         return 2
 

@@ -66,9 +66,16 @@ kit_version: "0.1.0"
 # lives in worktrees/* while the running server is still the OLD binary, so a new
 # route's smoke fails with a REAL assertion error — a false-FAIL the sentinel
 # can't tell from a regression (the mirror of the server-DOWN false-PASS `prove`
-# closed). These tests are gated at SPRINT-COMPLETE instead, by their browser-
-# level criteria.yaml verify_command (prove-wrapped, run after the server is
+# closed). These tests are gated at SPRINT-COMPLETE instead (run after the server is
 # restarted on integrated code). Default covers the common marker; add yours.
+#
+# fb-afbe9deead21 — the destination is ENFORCED: when tracked tests apply a deferred
+# marker (`@pytest.mark.<m>` / `pytestmark`), sprint-complete BLOCKS until a passed
+# criterion selecting it, or a proven `prusik prove -- <cmd> -m "<m>"` run for the
+# sprint after it entered integrating, shows the tier ran green. Optional:
+#   deferred_tier:
+#     command: "make smoke"   # your server-managed smoke run, credited when proven
+#     require: false          # opt OUT (loud: prints + records the unproven tier)
 reviewing_defer_markers:
   - browser_smoke      # @pytest.mark.browser_smoke / -m browser_smoke
 

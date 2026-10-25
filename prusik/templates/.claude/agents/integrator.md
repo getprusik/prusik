@@ -69,6 +69,12 @@ Driven by m4-h2 (acceptance metric missed but reviewer waved through) and m4-s9a
 
 If the brief has no `<feature>.criteria.yaml` sibling, this step is skipped (v0.9.0→v0.10.0 deprecation window). v0.10.0 will require the file unless sprint-config opts out.
 
+**7. Run the deferred test tier on the integrated code** (fb-afbe9deead21). Reviewing EXCLUDED the `reviewing_defer_markers` tests (default `browser_smoke`) because pre-integration the live server ran the old binary — integration is where they must run. Restart the server on the integrated code, then prove-wrap each deferred marker the project's tests use:
+
+    prusik prove -- <your test command> -m "browser_smoke"
+
+(or the project's declared `deferred_tier.command`). `prusik gate sprint-complete` BLOCKS when tracked tests apply a deferred marker and neither a passed criterion selecting it nor a proven run like this one (for this feature, after entering integrating) exists. An all-skip run — server down — reads NOT PROVEN; fix the server, don't re-word the command. Record which deferred tiers ran in `integration.txt`.
+
 **Output (both modes):**
 - An integrated project tree (merged branch in Mode A, updated paths in Mode B).
 - `reports/{feature}/integration.txt` summarizing what integrated when (which files, from which worktree, and which smoke tests passed post-integration).

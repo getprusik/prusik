@@ -96,3 +96,30 @@ def test_multiple_markers_all_must_be_excluded():
     markers = ("browser_smoke", "live_server")
     assert f("pytest tests/e2e -m 'not browser_smoke'", markers) is True   # missed live_server
     assert f("pytest tests/e2e -m 'not (browser_smoke or live_server)'", markers) is False
+
+
+# ---- fb-afbe9deead21 unified -m evaluator: verdicts that must hold (regression review R1/R2)
+
+def test_positive_expression_not_naming_the_marker_stays_flagged():
+    # `-m slow` still runs a slow+browser_smoke test: neither excludes nor targets the tier
+    f = schema._behavior_run_unscoped
+    for vc in ("pytest tests/e2e -m slow", "pytest tests/e2e -m e2e",
+               "pytest tests/e2e -m 'slow and not unit'"):
+        assert f(vc) is True, vc
+        assert not schema.command_targets_marker(vc, "browser_smoke"), vc
+    # deliberately targeting the tier is the deferred-tier criterion — accepted
+    assert f("pytest tests/e2e -m browser_smoke") is False
+    assert f("pytest tests/e2e -m 'browser_smoke or slow'") is False
+
+
+def test_wrapper_runners_keep_their_marker_expression():
+    f = schema._behavior_run_unscoped
+    for vc in ('tox -e e2e -- tests/e2e -m "not browser_smoke"',
+               'nox -s e2e -- tests/unit -m "not browser_smoke"',
+               'hatch run test tests/e2e -m "not browser_smoke"',
+               "make e2e PYTEST_ARGS=\"tests/e2e -m 'not browser_smoke'\"",
+               "bash -c 'tox -e e2e -- -m \"not browser_smoke\"'"):
+        assert f(vc) is False, vc
+    assert schema.command_selects_marker("tox -e e2e -- -m browser_smoke", "browser_smoke")
+    # an interpreter's own module flag is still never a marker expression
+    assert not schema.command_selects_marker("python -m browser_smoke", "browser_smoke")

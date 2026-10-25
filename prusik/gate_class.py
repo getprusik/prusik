@@ -40,6 +40,7 @@ REWIND_GUARD = "rewind_guard"                        # advance: rewind without -
 PUSH_OR_PARK = "push_or_park"                         # advance: unpushed sprint work
 CI_OBSERVE = "ci_observe"                             # advance: CI-job deliverable never observed running
 SPRINT_START_GATE = "sprint_start_gate"              # sprint-start: unmet pre-sprint gate(s)
+DEFERRED_TIER = "deferred_tier"                       # sprint-complete: deferred test tier never proven
 UNCLASSIFIED = "unclassified"                         # recorded nothing identifying — never guessed
 
 # Completeness anchor — the test pins this to the module's constants so a class
@@ -56,6 +57,7 @@ GATE_CLASSES = (
     PUSH_OR_PARK,
     CI_OBSERVE,
     SPRINT_START_GATE,
+    DEFERRED_TIER,
     UNCLASSIFIED,
 )
 
@@ -101,6 +103,8 @@ def _derive(event: dict) -> str:
             return PUSH_OR_PARK
         if reason.startswith("ci_observe"):
             return CI_OBSERVE
+        if reason.startswith("deferred tier unproven"):
+            return DEFERRED_TIER
         return UNCLASSIFIED
 
     return UNCLASSIFIED

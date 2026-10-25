@@ -3,6 +3,44 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.221.0] — a deferred test tier must have a destination
+
+- **Sprint-complete now enforces where deferred tests run (fb-afbe9deead21, HIGH).**
+  Reviewing deliberately excludes `reviewing_defer_markers` tests (live-server /
+  browser smokes: pre-integration the running server is still the old binary) and
+  defers them to sprint-complete — but only a brief's own criteria ever ran them there.
+  A sprint whose criteria never selected the marker ran that tier nowhere before done,
+  and a real regression shipped exactly that way (an adopter's integration-only
+  criteria; caught only by post-merge live smoke). Now, when tracked tests **apply** a
+  deferred marker (decorator / `pytestmark`, detected by parsing — a marker that only
+  appears as text never counts), sprint-complete **blocks** until each such tier has
+  prove-wrapped green evidence on the integrated tree: a passed criterion that selects
+  it, or a proven `prusik prove -- <cmd> -m "<marker>"` run recorded for this feature
+  after it entered integrating. An all-skip run (server down) is NOT PROVEN by design;
+  an old or feature-less run never counts. The block names the unproven markers and
+  the exact remedy, and is classified (`gate_class: deferred_tier`) so catches/bounces
+  measure it. Projects with no applied deferred marker are unaffected.
+  **Blocking by default** — unlike the advisory-default terminal gates, this restores a
+  check prusik itself moved out of reviewing. Opt-outs: `deferred_tier: {command:
+  "<your smoke run>"}` credits your server-managed command; `deferred_tier: {require:
+  false}` opts out loudly (printed + recorded).
+- **One pytest `-m` evaluator.** Three consumers (the criteria lint, brief-lint's
+  browser-criterion check, the new gate) carried their own substring rules and
+  disagreed. `schema` now owns one evaluator with three defined predicates — *selects*,
+  *targets*, *excludes* — evaluated as pytest does (last `-m` wins; flags after the
+  pytest token; wrapper runners' args read; an interpreter's module flag never). Two
+  intended verdict changes: `-m 'not slow or browser_smoke'` no longer reads as
+  excluding the marker, and a behaviour-dir criterion that deliberately targets a
+  deferred marker (`pytest tests/behavior -m browser_smoke`) now lints clean — it is
+  the sprint-complete criterion the role templates prescribe. Substring false matches
+  (`not browser_smoke_x`, `notebook_browser_smoke`) are corrected.
+- `prusik prove` ledger events now record the command and the active sprint's
+  feature/phase, so a proof is attributable.
+- Role templates (regression-sentinel, integrator, backend/frontend-builder) and the
+  sprint-config template state the enforced destination and the remedy.
+
+Closes fb-afbe9deead21 (moat-finding:fb-afbe9deead21).
+
 ## [0.220.0] — auto-sequence the product-fit critic; stop the false wrong-tree warning
 
 Two adopter-filed harness fixes:

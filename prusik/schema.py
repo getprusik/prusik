@@ -7,8 +7,10 @@ This module parses markdown artifacts into sections and validates them against t
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import re
+import shlex
 from pathlib import Path
 
 import yaml
@@ -389,6 +391,225 @@ def _verify_command_is_bare_path(vc: str) -> bool:
 
 DEFAULT_DEFER_MARKERS = ("browser_smoke",)
 
+
+def defer_markers(config: dict | None) -> tuple[str, ...]:
+    """The project's `reviewing_defer_markers` (sprint-config), else the default — the
+    ONE resolver every defer-marker consumer reads (brief-lint, the criteria lint, the
+    sprint-complete deferred-tier gate). A non-empty list wins; empty/absent → default."""
+    raw = (config or {}).get("reviewing_defer_markers")
+    if isinstance(raw, list):
+        out = tuple(str(m).strip() for m in raw if str(m).strip())
+        if out:
+            return out
+    return DEFAULT_DEFER_MARKERS
+
+
+# ---- pytest `-m` semantics: ONE evaluator (fb-afbe9deead21) ----------------------------
+#
+# Three consumers ask "does this command run marker M's tests?" — the criteria lint
+# (does a broad behaviour-dir run EXCLUDE the deferred markers?), brief-lint (does a
+# criterion drive the browser tier?), and the sprint-complete deferred-tier gate (did
+# the deferred tier actually run?). They used to carry their own substring rules and
+# disagreed (`not slow or browser_smoke` read as excluding). One evaluator now backs
+# three precisely-defined predicates:
+#   selects  — true for an item carrying ONLY that marker (it ran those tests)
+#   targets  — true for SOME item carrying it (any combination of the other names) AND
+#              false for an item with no markers: deliberately aims at the tier
+#              (`browser_smoke and e2e` targets it; the incidental `not x` does not)
+#   excludes — false for EVERY item carrying it, over all combinations of the other
+#              names in the expression (`-m slow` does NOT exclude browser_smoke: a
+#              slow+browser_smoke test still runs)
+# Unparseable expressions are never credited as selecting, targeting, or excluding.
+
+_MARKEXPR_TOKEN_RE = re.compile(r"\s*(\(|\)|[A-Za-z_][\w.:-]*)")
+_MARKEXPR_MAX_NAMES = 12          # excludes() enumerates 2^n assignments; bound n
+_SHELLS = frozenset(("bash", "sh", "zsh"))
+
+
+def _statements(command: str) -> list[list[str]]:
+    """argv per shell statement, split on control operators OUTSIDE quotes (a regex
+    split would cut a quoted `bash -c "cd a && pytest …"` in half)."""
+    lex = shlex.shlex(command or "", posix=True, punctuation_chars=";&|")
+    lex.whitespace_split = True
+    stmts: list[list[str]] = [[]]
+    try:
+        for tok in lex:
+            if tok and set(tok) <= set(";&|"):
+                stmts.append([])
+            else:
+                stmts[-1].append(tok)
+    except ValueError:                                   # unbalanced quotes
+        return []
+    return [s for s in stmts if s]
+
+
+def _markexpr_tokens(expr: str) -> list[str] | None:
+    toks: list[str] = []
+    pos = 0
+    while pos < len(expr):
+        m = _MARKEXPR_TOKEN_RE.match(expr, pos)
+        if not m:
+            return None if expr[pos:].strip() else toks
+        toks.append(m.group(1))
+        pos = m.end()
+    return toks
+
+
+def _markexpr_eval(toks: list[str], true_names: set[str]) -> bool | None:
+    """pytest's -m grammar (or / and / not / parens / identifiers) evaluated for an
+    item whose markers are `true_names`. None on a malformed expression."""
+    i = 0
+
+    def peek():
+        return toks[i] if i < len(toks) else None
+
+    def take():
+        nonlocal i
+        i += 1
+        return toks[i - 1] if i <= len(toks) else None
+
+    def p_or():
+        v = p_and()
+        while peek() == "or":
+            take()
+            v = p_and() or v
+        return v
+
+    def p_and():
+        v = p_not()
+        while peek() == "and":
+            take()
+            v = p_not() and v
+        return v
+
+    def p_not():
+        if peek() == "not":
+            take()
+            return not p_not()
+        if peek() == "(":
+            take()
+            v = p_or()
+            if take() != ")":
+                raise ValueError("unbalanced")
+            return v
+        t = take()
+        if t is None or t in ("and", "or", "not", "(", ")"):
+            raise ValueError("unexpected token")
+        return t in true_names
+
+    if not toks:
+        return None
+    try:
+        v = p_or()
+    except ValueError:
+        return None
+    return v if i == len(toks) else None
+
+
+def _markexprs(command: str) -> list[str]:
+    """The effective pytest `-m` expression of each statement in `command` (pytest
+    honours the LAST -m), recursing into `bash -c "<inner>"`.
+
+    With a pytest token, only flags AFTER it are pytest's — everything before is the
+    interpreter or a wrapper (`python -m pytest`, `coverage run -m pytest`), so a
+    module flag is never read as a marker expression. Without one (wrapper runners:
+    `tox -e x -- -m …`, `hatch run …`, `make PYTEST_ARGS="… -m …"`), every `-m` is read
+    — recursing into embedded `VAR="<args>"` values — except an interpreter's own
+    module flag (`python -m <module>`)."""
+    out: list[str] = []
+    for argv in _statements(command):
+        if len(argv) >= 3 and Path(argv[0]).name in _SHELLS and argv[1] == "-c":
+            out.extend(_markexprs(argv[2]))
+            continue
+        if (expr := _last_markexpr(argv)) is not None:
+            out.append(expr)
+    return out
+
+
+def _is_interpreter(tok: str) -> bool:
+    """A Python interpreter token — not merely a path whose basename is `python`."""
+    p = Path(tok)
+    return (bool(re.fullmatch(r"python[\d.]*|pypy[\d.]*|py", p.name))
+            and ("/" not in tok or p.parent.name == "bin"))
+
+
+def _last_markexpr(argv: list[str]) -> str | None:
+    """One statement's effective `-m` expression — the rules are on `_markexprs`."""
+    start = next((j for j, a in enumerate(argv)
+                  if Path(a).name in ("pytest", "py.test")), None)
+    last = None
+    for j in range(0 if start is None else start + 1, len(argv)):
+        a = argv[j]
+        module_flag = start is None and j > 0 and _is_interpreter(argv[j - 1])
+        if a == "-m" and j + 1 < len(argv):
+            if not module_flag:                            # not `python -m <module>`
+                last = argv[j + 1]
+        elif a.startswith("-m") and len(a) > 2 and not a.startswith("--"):
+            if not module_flag:
+                last = a[2:]
+        elif start is None and " " in a and "-m" in a:     # embedded `VAR="<args>"`
+            inner = _statements(a.split("=", 1)[1] if "=" in a.split(" ", 1)[0] else a)
+            for sub in inner:
+                if (expr := _last_markexpr(sub)) is not None:
+                    last = expr
+    return last
+
+
+def command_selects_marker(command: str, marker: str) -> bool:
+    """True when some statement's -m expression runs an item carrying only `marker`."""
+    for expr in _markexprs(command):
+        toks = _markexpr_tokens(expr)
+        if toks is not None and _markexpr_eval(toks, {marker}) is True:
+            return True
+    return False
+
+
+def _assignments(toks: list[str], marker: str):
+    """Every marker-set an item carrying `marker` could have, over the other names in
+    the expression; None when there are too many names to enumerate."""
+    others = sorted({t for t in toks if t not in ("and", "or", "not", "(", ")")}
+                    - {marker})
+    if len(others) > _MARKEXPR_MAX_NAMES:
+        return None
+    return ({marker} | {o for o, b in zip(others, bits) if b}
+            for bits in itertools.product((False, True), repeat=len(others)))
+
+
+def command_targets_marker(command: str, marker: str) -> bool:
+    """True when some statement deliberately AIMS at `marker`'s tier: the marker is
+    RELEVANT (for some combination of the other names, adding it flips the item from
+    not-run to run) and an unmarked item does not run. `-m browser_smoke`,
+    `-m 'browser_smoke and e2e'` target it; `-m slow` (a slow+browser_smoke test runs,
+    but the marker changes nothing) and the incidental `-m 'not x'` do not."""
+    for expr in _markexprs(command):
+        toks = _markexpr_tokens(expr)
+        if not toks or _markexpr_eval(toks, set()) is not False:
+            continue
+        combos = _assignments(toks, marker)
+        if combos is not None and any(
+                _markexpr_eval(toks, n) is True and _markexpr_eval(toks, n - {marker}) is False
+                for n in combos):
+            return True
+    return False
+
+
+def _expr_excludes(toks: list[str], marker: str) -> bool:
+    combos = _assignments(toks, marker)
+    if combos is None:
+        return False                                      # too wide to prove — not excluded
+    return all(_markexpr_eval(toks, n) is False for n in combos)   # malformed → not excluded
+
+
+def command_excludes_markers(command: str, markers: tuple[str, ...]) -> bool:
+    """True when some statement's -m expression excludes EVERY marker in `markers` for
+    every item carrying it — the only shape that provably keeps the tier out."""
+    for expr in _markexprs(command):
+        toks = _markexpr_tokens(expr)
+        if toks and all(_expr_excludes(toks, mk) for mk in markers):
+            return True
+    return False
+
+
 # A behaviour/e2e/acceptance test DIRECTORY used as a broad target (not a specific
 # file), by CONVENTION rather than one project's layout — so this applies to any
 # customer (`tests/e2e`, `acceptance/`, `features/`, …), at a token boundary so
@@ -399,14 +620,10 @@ _DEFER_DIR_RE = re.compile(
 
 
 def _verify_excludes_markers(vc: str, markers: tuple[str, ...]) -> bool:
-    """True when a pytest `-m` expression EXCLUDES every deferred marker (a quoted
-    `not (...)` covering each). Scans all `-m` tokens so `python -m pytest … -m
-    'not browser_smoke'` is recognised (the module flag is not the marker flag)."""
-    for m in re.finditer(r"-m\s+(?:(['\"])(.+?)\1|(\S+))", vc):
-        expr = m.group(2) or m.group(3) or ""
-        if "not" in expr and all(mk in expr for mk in markers):
-            return True
-    return False
+    """True when a pytest `-m` expression EXCLUDES every deferred marker — via the one
+    evaluator (`python -m pytest … -m 'not browser_smoke'` is recognised; the module
+    flag is not the marker flag)."""
+    return command_excludes_markers(vc, markers)
 
 
 def _behavior_run_unscoped(vc: str,
@@ -416,12 +633,18 @@ def _behavior_run_unscoped(vc: str,
     delegating to the prusik gate. Such a command runs live-server/browser smokes that
     can't reliably pass at criterion-verify time (fb-cc918dfe40b8). Convention-general
     and config-driven — applies to any customer, not one project's path/marker. A
-    specific test FILE, a `not <markers>` scope, or any `prusik` invocation is fine."""
+    specific test FILE, a `not <markers>` scope, or any `prusik` invocation is fine —
+    and so is a run that deliberately TARGETS a deferred marker (`-m browser_smoke`):
+    that is the sprint-complete deferred-tier criterion the role templates prescribe
+    (fb-afbe9deead21), run after the server is restarted on integrated code."""
     if re.search(r"\bprusik\b", vc):                       # goes through the 6-phase gate
         return False
     if not _DEFER_DIR_RE.search(vc):                       # not a broad behaviour-dir run
         return False
-    return not _verify_excludes_markers(vc, defer_markers or DEFAULT_DEFER_MARKERS)
+    markers = defer_markers or DEFAULT_DEFER_MARKERS
+    if any(command_targets_marker(vc, mk) for mk in markers):
+        return False                                       # the deferred-tier criterion
+    return not _verify_excludes_markers(vc, markers)
 
 
 def validate_criteria_file(path, project_root: Path | None = None,

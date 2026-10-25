@@ -73,8 +73,16 @@ def run(command: list[str] | None, kind: str = "tests",
         from prusik import ledger
         root = ledger.project_root()
         if (root / ".sprint").exists():
+            # fb-afbe9deead21: WHAT ran, for WHICH sprint — so a proof is attributable
+            # (the deferred-tier gate credits only this feature's marker-selecting run).
+            from prusik import phases
+            try:
+                state = phases.current_sprint_state(root) or {}
+            except Exception:  # noqa: BLE001 — unreadable state must not drop the proof
+                state = {}
             ledger.append("prove_run", kind=kind, exit_code=exit_code,
-                          executed=executed, proven=proven)
+                          executed=executed, proven=proven, command=cmd_str,
+                          feature=state.get("feature"), phase=state.get("phase"))
             if proven and kind == "tests":
                 from prusik import suite_baseline
                 suite_baseline.update(root, executed)   # learn the full-suite size

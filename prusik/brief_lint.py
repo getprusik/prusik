@@ -36,13 +36,7 @@ def _defer_markers(root: Path) -> tuple[str, ...]:
     so the criterion-scope check is driven by each customer's own config, not a
     hardcoded marker."""
     from prusik import phases
-    cfg = phases.load_sprint_config(root) or {}
-    markers = cfg.get("reviewing_defer_markers")
-    if isinstance(markers, list) and markers:
-        out = tuple(str(m).strip() for m in markers if str(m).strip())
-        if out:
-            return out
-    return schema.DEFAULT_DEFER_MARKERS
+    return schema.defer_markers(phases.load_sprint_config(root) or {})
 
 
 # Patterns for things worth fuzzy-matching against project content.
@@ -329,13 +323,8 @@ def _is_browser_smoke_command(vc: str, markers: tuple[str, ...]) -> bool:
         return False
     if _BROWSER_TOOL_RE.search(vc):
         return True
-    for m in re.finditer(r"-m\s+(?:(['\"])(.+?)\1|(\S+))", vc):
-        expr = m.group(2) or m.group(3) or ""
-        if "not" in expr:
-            continue
-        if any(mk in expr for mk in markers):
-            return True
-    return False
+    # the one -m evaluator (schema) — a `not <marker>` skip never targets the tier
+    return any(schema.command_targets_marker(vc, mk) for mk in markers)
 
 
 def _ui_smoke_warning(brief_text: str, criteria_path: Path,
