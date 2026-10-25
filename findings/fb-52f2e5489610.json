@@ -1,0 +1,22 @@
+{
+  "id": "fb-52f2e5489610",
+  "created_at": "2026-10-25T22:39:19.199150+00:00",
+  "kind": "friction",
+  "severity": "low",
+  "title": "hook fast path still pays ~6ms importing argparse: prusik/__main__.py imports it at module level though the hook path never builds the parser",
+  "detail": "Post-release check of v0.223.0 on the global framework-Python CLI (2026-10-25, -X importtime from a throwaway project): prusik.__main__ cumulative 6.6ms of which argparse 5.8ms, imported at module top even though the exact-argv hook dispatch returns before any parser exists (_slug uses argparse.ArgumentTypeError only when the parser runs). Move  (and  if unused on the hot path) below the fast path / into main + _slug, and add argparse to the hook import guard in tests/test_hook_hot_path.py (assert it is NOT in sys.modules after a pre-tool hook). Same class as the v0.223.0 work; cheap.",
+  "feature": null,
+  "content_hash": "52f2e5489610",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [
+    {
+      "at": "2026-10-25T22:39:38.828492+00:00",
+      "role": "prusik-author",
+      "body": "Correction (shell quoting stripped two backticked phrases from the detail): the remedy reads \"Move the module-level `import argparse` (and `import re` if unused on the hot path) below the fast path / into main + _slug\"."
+    }
+  ],
+  "resolution": null,
+  "verify_history": [],
+  "status": "acknowledged"
+}
