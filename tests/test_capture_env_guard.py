@@ -35,8 +35,13 @@ def test_capture_passes_enriched_path_to_subprocess(tmp_path, monkeypatch):
     monkeypatch.setattr(ledger, "project_root", lambda: tmp_path)
     monkeypatch.setattr(gate, "_CAPTURE_PATH_CACHE", "/opt/toolchain/bin:/usr/bin")
     seen = {}
+    real_run = subprocess.run
 
     def fake_run(argv, **kw):
+        # Only the captured command's own call is faked + recorded; capture also shells
+        # out to git when fingerprinting the judged code (fb-3fbf1846ac92) — let those run.
+        if list(argv[:2]) != ["/bin/bash", "-c"]:
+            return real_run(argv, **kw)
         seen["path"] = (kw.get("env") or {}).get("PATH")
         return SimpleNamespace(returncode=0, stdout="3 passed", stderr="")
 

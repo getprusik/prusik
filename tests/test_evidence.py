@@ -183,20 +183,57 @@ def test_v0120_agent_written_evidence_rejected():
         shutil.rmtree(tmp)
 
 
+def _carry_marker(tmp):
+    (tmp / "reports" / "feat").mkdir(parents=True, exist_ok=True)
+    (tmp / "reports" / "feat" / "regression.txt").write_text(
+        "PASS (carried forward — built code substantively unchanged)\n")
+
+
+def _record_regression_pass():
+    return gate.record_verdict(argparse.Namespace(
+        role="regression-sentinel", feature="feat", artifact=None, verdict="PASS"))
+
+
 def test_v0120_carry_forward_coherence():
     """v0.11.0 #1 coherence: a carried paired verdict satisfies evidence
-    without re-capture (re-requiring it would defeat the dominant-cost cure)."""
+    without re-capture (re-requiring it would defeat the dominant-cost cure) —
+    when the carry is LEGITIMATE: a positive verdict at the CURRENT judged hash
+    (fb-3fbf1846ac92: the marker's text alone used to waive evidence)."""
     tmp = _mktmp_project()
     try:
-        (tmp / "reports" / "feat").mkdir(parents=True)
-        (tmp / "reports" / "feat" / "regression.txt").write_text(
-            "PASS (carried forward — built code substantively unchanged)\n")
+        (tmp / "app.py").write_text("x = 1\n")          # something judged
+        assert _record_regression_pass() == 0
+        _carry_marker(tmp)
         # No evidence.json on disk, yet the carried verdict satisfies it.
         missing = gate._unsatisfied_exit_artifacts(_rev_spec(), "feat")
         assert not any("execution-evidence" in m for m in missing), missing
         from prusik.ledger import read_all
         assert any(r.get("event") == "reviewer_execution_verified"
                    and r.get("carried") is True for r in read_all())
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_v0120_carry_marker_without_a_verdict_waives_nothing():
+    tmp = _mktmp_project()
+    try:
+        (tmp / "app.py").write_text("x = 1\n")
+        _carry_marker(tmp)                               # text only — no ledger verdict
+        missing = gate._unsatisfied_exit_artifacts(_rev_spec(), "feat")
+        assert any("execution-evidence" in m for m in missing), missing
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_v0120_carry_marker_at_a_stale_hash_waives_nothing():
+    tmp = _mktmp_project()
+    try:
+        (tmp / "app.py").write_text("x = 1\n")
+        assert _record_regression_pass() == 0
+        _carry_marker(tmp)
+        (tmp / "app.py").write_text("x = 2\n")          # code changed after the verdict
+        missing = gate._unsatisfied_exit_artifacts(_rev_spec(), "feat")
+        assert any("execution-evidence" in m for m in missing), missing
     finally:
         shutil.rmtree(tmp)
 

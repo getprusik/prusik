@@ -67,8 +67,13 @@ def _capture_cmd_str(cmd, tmp_path, monkeypatch):
     from prusik import gate, ledger
     monkeypatch.setattr(ledger, "project_root", lambda: tmp_path)
     seen = {}
+    real_run = subprocess.run
 
     def fake_run(argv, **kw):
+        # Only the captured command's own call is faked + recorded; capture also shells
+        # out to git when fingerprinting the judged code (fb-3fbf1846ac92) — let those run.
+        if list(argv[:2]) != ["/bin/bash", "-c"]:
+            return real_run(argv, **kw)
         seen["cmd_str"] = argv[2]            # ["/bin/bash", "-c", <cmd_str>]
         return SimpleNamespace(returncode=0, stdout="3 passed", stderr="")
 

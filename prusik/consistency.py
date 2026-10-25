@@ -164,8 +164,31 @@ def sprint_changed_files(project_root: Path) -> set[str]:
     return out
 
 
-# Orchestration the reviewer never tests — never staged into root by assembly.
-_ASSEMBLE_SKIP_PREFIXES = (".sprint/", "reports/", "design/", ".claude/", "briefs/")
+def git_files_under(root: Path) -> list[str] | None:
+    """Every file git considers project content UNDER `root` — tracked plus
+    untracked-but-not-ignored — as paths relative to `root`. Works for a project at its
+    repo's top-level AND for one in a subdirectory of a larger repo (`git ls-files` run at
+    `root` lists only that subtree, honouring every applicable .gitignore). `-z` keeps
+    non-ASCII names literal (without it git C-quotes them and the read silently fails).
+    None when `root` is not inside a git work tree.
+
+    The main-tree counterpart of `git_project_files` (which deliberately answers only
+    for a worktree ROOT, so a partial mirror falls back to its walk) — fb-3fbf1846ac92."""
+    try:
+        proc = _git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    except OSError:                                  # no git binary → not a git work tree
+        return None
+    if proc.returncode != 0:
+        return None
+    return sorted({p for p in proc.stdout.split("\0") if p.strip()})
+
+
+# Orchestration the reviewer never tests: never staged into root by assembly, never part
+# of a reviewer's judged-code fingerprint. ONE list — decisions/ (triage rewrites it) and
+# findings/ (`prusik feedback` writes it mid-sprint) are state, not code (fb-3fbf1846ac92).
+ORCHESTRATION_PREFIXES = (".sprint/", "reports/", "design/", ".claude/", "briefs/",
+                          "decisions/", "findings/")
+_ASSEMBLE_SKIP_PREFIXES = ORCHESTRATION_PREFIXES
 
 
 def _assemblable_worktree_files(project_root: Path):

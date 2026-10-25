@@ -1,0 +1,16 @@
+{
+  "id": "fb-00c98b8c70c6",
+  "created_at": "2026-10-25T22:48:58.325185+00:00",
+  "kind": "bug",
+  "severity": "med",
+  "title": "carry-forward can overwrite a freshly written reviewer FAIL report with a prior PASS when the code is unchanged and the FAIL wasn't recorded via record-verdict",
+  "detail": "Surfaced by brief-critic review of verdict-hash-main-tree (2026-10-25). gate._try_carry_forward fires at TWO exit-artifact sites: file missing, AND file present with a non-PASS verdict line (must_contain fails). If a reviewer writes reports/<f>/regression.txt = FAIL via the reviewer-artifact fallback (agent wrote the file, nobody called record-verdict), the latest ledger critic_verdict is still the earlier PASS bound to the same content hash, so carry-forward REWRITES the fresh FAIL as \"PASS (carried forward)\". A written FAIL is newer evidence than a recorded PASS. Suggest: carry-forward only fills a MISSING approval file (or one older than the latest verdict), never overwrites a present non-PASS verdict; or have the fallback path record the FAIL verdict so the ledger is current.",
+  "feature": null,
+  "content_hash": "00c98b8c70c6",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

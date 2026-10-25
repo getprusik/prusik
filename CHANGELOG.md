@@ -3,6 +3,39 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.224.0] — a reviewer verdict binds to the code it judged
+
+- **Main-tree builds no longer carry stale reviewer verdicts (fb-3fbf1846ac92, HIGH).**
+  Reviewer verdicts and `gate capture` evidence were fingerprinted over `worktrees/` only. In
+  a main-tree build (no builder worktrees — every engine self-build, and any adopter sprint
+  that skips worktrees) that was a fingerprint of nothing: a constant. So a stale PASS
+  survived any code change — `verdict-current` said carry it forward, evidence captured before
+  a fix read fresh, and the exit-artifact check could **rewrite a reviewer's fresh FAIL report
+  as "PASS (carried forward)"** (reproduced: a `FAIL / 2 regressions` report became
+  `PASS (carried forward … @ e3b0c44298fc1c14)`). Now, when no builder worktree holds judged
+  files, the fingerprint covers the project's own source: git's tracked +
+  untracked-not-ignored files under the project root (also for a project in a subdirectory of
+  a larger repo, and non-ASCII names), or for a non-git project a walk that never enters
+  VCS/virtualenv/derived dirs. Worktree builds fingerprint as before.
+- **A carried-forward marker counts only while it is current.** Rewinds leave `reports/` on
+  disk, and the evidence check waived re-capture for any report whose text said "carried
+  forward". Both the evidence waiver and the `PASS`/`APPROVED` verdict line now honour a
+  carry marker only while what it judged is unchanged — and only the engine's exact marker
+  shape counts (a fresh report whose prose says "(carried forward, not merge-blocking)" is
+  judged on its own verdict line, as before). Writer and reader share one marker definition.
+- **Nothing judged, nothing bound.** `record-verdict` refuses when a reviewer judged zero code
+  files — naming the likely cause (e.g. the project is gitignored by a parent repo) — and no
+  carry-forward is granted over an empty set.
+- **One orchestration list.** `decisions/` and `findings/` (state written mid-sprint by triage
+  and `prusik feedback`) join `.sprint/`, `reports/`, `design/`, `.claude/`, `briefs/` in a
+  single list shared by the fingerprint and worktree assembly, so writing a finding mid-review
+  no longer re-gates the reviewers.
+
+Old ledger verdicts bound to the empty fingerprint simply stop matching (a one-time,
+conservative re-gate).
+
+Closes fb-3fbf1846ac92 (moat-finding:fb-3fbf1846ac92).
+
 ## [0.223.0] — the per-tool-call hooks pay only for what they run
 
 - **Hooks are ~35% faster (platform plan P0, sprint 1).** Every tool call spawns

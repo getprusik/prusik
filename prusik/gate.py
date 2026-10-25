@@ -2022,24 +2022,52 @@ _DERIVED_DIRS = frozenset({
     "coverage", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
 })
 
+# Never descended into by the non-git main-tree walk (VCS metadata, virtualenvs, sprint
+# worktrees) — the fingerprint's cost stays bounded by the project's own source.
+_MAIN_TREE_PRUNE = frozenset({".git", ".hg", ".svn", ".venv", "venv", ".tox", ".nox",
+                              "worktrees"})
 
-def _worktree_substantive_hash(root: Path, extra: tuple[str, ...] = ()) -> str:
-    """Deterministic 16-hex hash of the built-code worktree file-set.
+# The carry-forward marker is the WHOLE verdict line `<token><_CARRY_TAG>…`, written by
+# `_approval_carried_forward` and recognised by `_is_carry_marker` from these SAME two
+# sources (the tag, and the gate tokens in _APPROVAL_SOURCE) — so a reworded marker or a
+# new approval gate can't silently slip past the stale-carry check (fb-3fbf1846ac92). A
+# fresh report whose prose says "(carried forward, not merge-blocking)" is not a marker.
+_CARRY_TAG = " (carried forward — "
+_CARRY_MARKER_RE = re.compile(
+    "^(?:" + "|".join(sorted({re.escape(tok) for _, _, tok in _APPROVAL_SOURCE.values()}))
+    + ")" + re.escape(_CARRY_TAG))
 
-    Code is hashed by raw bytes (whitespace IS significant in code, unlike
-    markdown sections). Fix-4 meta carve-outs are excluded so a rewind that
-    only churns reports/.sprint/etc. does not bust a valid reviewer PASS.
-    Each `extra` project file (e.g. CLAUDE.md) folds in via the
-    section-normalized substantive_hash (it is judged as a doc, not code).
-    """
-    import hashlib as _h
-    import os as _os
-    from prusik import schema
+
+def _is_carry_marker(text: str) -> bool:
+    for line in text.splitlines():
+        if line.strip():
+            return bool(_CARRY_MARKER_RE.match(line.strip()))
+    return False
+
+
+def _judged_skip_prefixes() -> tuple[str, ...]:
+    """Orchestration never part of a reviewer's judged code (one list: consistency's)."""
     from prusik import consistency as _consistency
-    parts: list[str] = []
+    return _consistency.ORCHESTRATION_PREFIXES + ("scripts/verify/",)
+
+
+def _judged_code_files(root: Path) -> list[tuple[str, bytes]]:
+    """The code a reviewer judged, as (relpath, bytes) — orchestration excluded.
+
+    WORKTREE mode (a builder worktree holds judged files): the worktree file-set, exactly
+    as before. MAIN-TREE mode (worktrees/ absent, empty, or contributing no judged file —
+    every engine self-build): the project's OWN source — git's tracked +
+    untracked-not-ignored files under the project root (also for a project inside a
+    larger repo), else a walk that never enters VCS/virtualenv/derived dirs. Before
+    fb-3fbf1846ac92 main-tree mode collected NOTHING, so every verdict and evidence
+    manifest bound to the hash of empty input and survived any code change.
+    """
+    import os as _os
+    from prusik import consistency as _consistency
+    skip = _judged_skip_prefixes()
+    collected: list[tuple[str, bytes]] = []
     wt = root / "worktrees"
     if wt.exists():
-        collected: list[tuple[str, bytes]] = []
         for teammate in sorted(wt.iterdir()):
             if not teammate.is_dir():
                 continue
@@ -2080,20 +2108,49 @@ def _worktree_substantive_hash(root: Path, extra: tuple[str, ...] = ()) -> str:
                 # whole-tree hash (field retro #3). Freshness is scoped to the CODE the
                 # reviewer judged; a reviewer that needs a specific doc folds it in
                 # explicitly via _REVIEWER_INPUTS.
-                if (rel.startswith(".sprint/") or rel.startswith("reports/")
-                        or rel.startswith("scripts/verify/")
-                        or rel.startswith("briefs/")
-                        or rel.startswith("design/")
-                        or rel.startswith(".claude/")):
+                if rel.startswith(skip):
                     continue
                 f = teammate / rel
                 try:
                     collected.append((f"{teammate.name}/{rel}", f.read_bytes()))
                 except OSError:
                     continue
-        for relpath, content in sorted(collected):
-            parts.append(relpath)
-            parts.append(_h.sha256(content).hexdigest())
+    if collected:
+        return collected
+    main_rels = _consistency.git_files_under(root)
+    if main_rels is None:                            # not a git project: walk it
+        main_rels = []
+        for dirpath, dirnames, filenames in _os.walk(root):
+            dirnames[:] = [d for d in dirnames
+                           if d not in _DERIVED_DIRS and d not in _MAIN_TREE_PRUNE]
+            for fn in filenames:
+                main_rels.append(str((Path(dirpath) / fn).relative_to(root)))
+    for rel in main_rels:
+        if rel.startswith(skip) or rel.startswith("worktrees/"):
+            continue
+        try:
+            collected.append((rel, (root / rel).read_bytes()))
+        except OSError:                              # deleted / a submodule gitlink
+            continue
+    return collected
+
+
+def _worktree_substantive_hash(root: Path, extra: tuple[str, ...] = (),
+                               files: list[tuple[str, bytes]] | None = None) -> str:
+    """Deterministic 16-hex hash of the judged code (`_judged_code_files`).
+
+    Code is hashed by raw bytes (whitespace IS significant in code, unlike
+    markdown sections). Fix-4 meta carve-outs are excluded so a rewind that
+    only churns reports/.sprint/etc. does not bust a valid reviewer PASS.
+    Each `extra` project file (e.g. CLAUDE.md) folds in via the
+    section-normalized substantive_hash (it is judged as a doc, not code).
+    """
+    import hashlib as _h
+    from prusik import schema
+    parts: list[str] = []
+    for relpath, content in sorted(_judged_code_files(root) if files is None else files):
+        parts.append(relpath)
+        parts.append(_h.sha256(content).hexdigest())
     for ex in extra:
         exp = root / ex
         if exp.exists():
@@ -2116,7 +2173,12 @@ def _judged_hash(role: str, feature: str, artifact: str | None,
     """Substantive hash of what `role` judged, or None if unjudgeable."""
     from prusik import schema
     if role in _REVIEWER_INPUTS:
-        return _worktree_substantive_hash(root, _REVIEWER_INPUTS[role])
+        # Nothing judged → nothing to bind (fb-3fbf1846ac92): a verdict over zero code
+        # files would match forever. Folded-in docs (`extra`) don't make it judgeable.
+        files = _judged_code_files(root)
+        if not files:
+            return None
+        return _worktree_substantive_hash(root, _REVIEWER_INPUTS[role], files)
     if not artifact:
         return None
     src = root / artifact
@@ -2137,6 +2199,31 @@ def _latest_verdict(role: str, feature: str, key: str) -> dict | None:
     return found
 
 
+def _empty_judged_cause(role: str, root: Path) -> str:
+    """Why a reviewer found nothing to judge — so an empty set is a named cause, never a
+    silently stuck sprint (fb-3fbf1846ac92)."""
+    if role not in _REVIEWER_INPUTS:
+        return ""
+    from prusik import consistency as _consistency
+    listed = _consistency.git_files_under(root)
+    skip = _judged_skip_prefixes()
+
+    def _source_on_disk() -> bool:
+        import os as _os
+        for dirpath, dirnames, filenames in _os.walk(root):
+            dirnames[:] = [d for d in dirnames
+                           if d not in _MAIN_TREE_PRUNE and d not in _DERIVED_DIRS]
+            for fn in filenames:
+                if not str((Path(dirpath) / fn).relative_to(root)).startswith(skip):
+                    return True
+        return False
+
+    if listed == [] and _source_on_disk():
+        return (f": git lists no files under {root} — is the project gitignored by a "
+                f"parent repo?")
+    return f": no source files found under {root}"
+
+
 def record_verdict(args) -> int:
     """Bind a verdict to the substantive hash of what it judged.
 
@@ -2148,7 +2235,8 @@ def record_verdict(args) -> int:
     h = _judged_hash(args.role, args.feature, args.artifact, root)
     if h is None:
         print(f"[prusik-gate] cannot record verdict — nothing to judge "
-              f"({args.role}, {args.artifact})", file=sys.stderr)
+              f"({args.role}, {args.artifact}){_empty_judged_cause(args.role, root)}",
+              file=sys.stderr)
         return 2
     ledger.append("critic_verdict", role=args.role, feature=args.feature,
                   artifact=key, verdict=args.verdict, content_hash=h)
@@ -2212,7 +2300,7 @@ def _approval_carried_forward(approval_rel: str, feature: str,
             or v.get("content_hash") != cur):
         return None
     src_desc = artifact if artifact else "built code (worktree)"
-    return (f"{token} (carried forward — {src_desc} substantively unchanged "
+    return (f"{token}{_CARRY_TAG}{src_desc} substantively unchanged "
             f"since {role} verdict @ {cur}; v0.11.0)")
 
 
@@ -2932,8 +3020,12 @@ def _evidence_unsatisfied(rel_path: str, feature: str | None,
     paired_txt = abs_path.parent / f"{phase}.txt"
 
     # Carry-forward coherence: a carried paired verdict at the current hash
-    # already passed evidence when first recorded (v0.11.0 #1).
-    if paired_txt.exists() and "carried forward" in paired_txt.read_text():
+    # already passed evidence when first recorded (v0.11.0 #1). The marker's TEXT
+    # proves nothing — rewinds leave reports/ on disk, so a marker from an earlier
+    # cycle must still be current (fb-3fbf1846ac92): same check that grants it.
+    if (feature and paired_txt.exists() and _is_carry_marker(paired_txt.read_text())
+            and _approval_carried_forward(str(paired_txt.relative_to(root)), feature,
+                                          root)):
         ledger.append("reviewer_execution_verified", feature=feature,
                        phase=phase, carried=True, ok=True)
         return None
@@ -3507,7 +3599,15 @@ def _unsatisfied_exit_artifacts(phase_spec: dict, feature: str | None) -> list[s
             if sec not in abs_path.read_text():
                 missing.append(f"{path} (missing section: {sec})")
         mc = artifact.get("must_contain")
-        if mc and not _verdict_line_ok(abs_path.read_text(), mc):
+        text = abs_path.read_text() if mc else ""
+        # A carried-forward marker is a claim about a hash: honoured only while what it
+        # judged is unchanged — a rewind leaves the old marker on disk (fb-3fbf1846ac92).
+        stale_carry = (mc and _is_carry_marker(text) and feature is not None
+                       and _approval_carried_forward(path, feature, root) is None)
+        if stale_carry:
+            missing.append(f"{path} (verdict line must be {mc!r} — its carried-forward "
+                           f"marker is stale: what it judged has changed)")
+        elif mc and not _verdict_line_ok(text, mc):
             if _try_carry_forward(path, feature, root):
                 continue
             missing.append(f"{path} (verdict line must be {mc!r})")
