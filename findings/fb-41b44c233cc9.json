@@ -1,0 +1,16 @@
+{
+  "id": "fb-41b44c233cc9",
+  "created_at": "2026-10-25T22:30:26.937925+00:00",
+  "kind": "friction",
+  "severity": "low",
+  "title": "sprint-config is parsed by two YAML loaders: hooks use CSafeLoader (v0.223.0), init/refresh/scan/brief_lint/schema/eval still yaml.safe_load",
+  "detail": "hook-hot-path (2026-10-25) switched phases.load_sprint_config to libyaml's CSafeLoader (identical results on 112 real YAML files + 13 edge probes). Other sprint-config readers stay on yaml.safe_load (refresh_merge uses ruamel). The two scanners differ only on rare malformed input, so a hook and doctor could disagree about the same malformed file. One fact, two parsers \u2014 the reviewer's advisory. Suggest: route every sprint-config read through phases.load_sprint_config (or one shared loader helper) and moat-test that no module calls yaml.safe_load on sprint-config.yaml directly.",
+  "feature": "hook-hot-path",
+  "content_hash": "41b44c233cc9",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
