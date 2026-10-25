@@ -27,7 +27,24 @@ def _slug(value: str) -> str:
     return value
 
 
+# Hook commands the host fires on EVERY tool call / turn / session. Declared once: drives
+# both the fast dispatch below and the `gate` subparser registration, so they can't drift.
+HOOK_COMMANDS = ("pre-tool", "post-tool", "stop", "session-start")
+_HOOK_HELP = {"pre-tool": "PreToolUse hook",
+              "post-tool": "PostToolUse hook — convergence-stall detector",
+              "stop": "Stop hook",
+              "session-start": "SessionStart hook"}
+
+
 def main():
+    # Hot path (platform plan P0): an exact `gate <hook>` argv dispatches before the
+    # ~108-subparser tree is built (~22ms per tool call). Hooks take no arguments; any
+    # other argv (`--help`, extras) falls through to the full parser unchanged.
+    argv = sys.argv[1:]
+    if len(argv) == 2 and argv[0] == "gate" and argv[1] in HOOK_COMMANDS:
+        from prusik import gate
+        return getattr(gate, argv[1].replace("-", "_"))()
+
     parser = argparse.ArgumentParser(prog="prusik", description="Prusik")
     parser.add_argument("--version", action="version",
                         version=f"prusik {__version__}")
@@ -72,10 +89,8 @@ def main():
 
     p_gate = sub.add_parser("gate", help="Hook-invoked and CLI gate commands")
     gsub = p_gate.add_subparsers(dest="gate_cmd", required=True)
-    gsub.add_parser("pre-tool", help="PreToolUse hook")
-    gsub.add_parser("post-tool", help="PostToolUse hook — convergence-stall detector")
-    gsub.add_parser("stop", help="Stop hook")
-    gsub.add_parser("session-start", help="SessionStart hook")
+    for hook in HOOK_COMMANDS:
+        gsub.add_parser(hook, help=_HOOK_HELP[hook])
     p_adv = gsub.add_parser("advance", help="Advance to next phase")
     p_adv.add_argument("phase")
     p_adv.add_argument("--feature", required=True, type=_slug)

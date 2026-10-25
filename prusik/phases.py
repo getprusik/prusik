@@ -21,8 +21,12 @@ def load_sprint_config(root: Path | None = None) -> dict | None:
     config_path = root / ".claude" / "sprint-config.yaml"
     if not config_path.exists():
         return None
+    # libyaml's C safe loader when available (~9x faster; runs on every hook call), else
+    # the pure-Python one. Same SafeConstructor semantics — parity pinned in
+    # tests/test_hook_hot_path.py. Looked up per call so a missing libyaml degrades cleanly.
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
     with open(config_path) as f:
-        return yaml.safe_load(f)
+        return yaml.load(f, Loader=loader)
 
 
 def current_sprint_state(root: Path | None = None) -> dict | None:

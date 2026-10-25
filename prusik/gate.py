@@ -15,7 +15,10 @@ import shlex
 import sys
 from pathlib import Path
 
-from prusik import consistency, discovery, gate_class, ledger, phases, schema
+# Only what the per-tool-call hooks run (platform plan P0). schema / consistency /
+# discovery are imported inside the functions that use them — re-adding them here costs
+# every adopter ~12ms per tool call (pinned: tests/test_hook_hot_path.py).
+from prusik import gate_class, ledger, phases
 
 
 def _read_stdin_json() -> dict:
@@ -749,6 +752,7 @@ def sprint_init(args) -> int:
     next-step guidance when an LLM step is needed (cartographer, brief-critic).
     Idempotent — re-run until it advances into scoping.
     """
+    from prusik import discovery
     feature = args.feature
     root = ledger.project_root()
     config = phases.load_sprint_config(root)
@@ -908,6 +912,7 @@ _PROTECTED_PHASES = frozenset({"solo_execute", "building", "reviewing", "integra
 
 
 def sprint_start(args) -> int:
+    from prusik import schema
     feature = args.feature
     root = ledger.project_root()
 
@@ -1111,6 +1116,7 @@ def prove_red(args) -> int:
     the sprint-complete gate then requires alongside GREEN. Run before implementing.
     """
     import subprocess
+    from prusik import schema
     feature = args.feature
     root = ledger.project_root()
     criteria_path = schema.criteria_path_for_brief(root / "briefs" / f"{feature}.md")
@@ -1212,6 +1218,7 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
       - Ledger event `success_criterion_verified` emitted per criterion.
     """
     import subprocess
+    from prusik import schema
 
     brief_path = root / "briefs" / f"{feature}.md"
     criteria_path = schema.criteria_path_for_brief(brief_path)
@@ -1741,6 +1748,7 @@ def ground_truth(args) -> int:
 
 
 def advance(args) -> int:
+    from prusik import consistency
     target_phase = args.phase
     feature = args.feature
     config = phases.load_sprint_config()
@@ -2026,6 +2034,7 @@ def _worktree_substantive_hash(root: Path, extra: tuple[str, ...] = ()) -> str:
     """
     import hashlib as _h
     import os as _os
+    from prusik import schema
     from prusik import consistency as _consistency
     parts: list[str] = []
     wt = root / "worktrees"
@@ -2105,6 +2114,7 @@ def _judged_key(role: str, feature: str, artifact: str | None) -> str:
 def _judged_hash(role: str, feature: str, artifact: str | None,
                  root: Path) -> str | None:
     """Substantive hash of what `role` judged, or None if unjudgeable."""
+    from prusik import schema
     if role in _REVIEWER_INPUTS:
         return _worktree_substantive_hash(root, _REVIEWER_INPUTS[role])
     if not artifact:
@@ -2447,6 +2457,7 @@ def capture(args) -> int:
                -- <verbatim test/lint command>
     """
     import subprocess
+    from prusik import schema
     root = ledger.project_root()
     cmd = list(args.command or [])
     if cmd and cmd[0] == "--":
@@ -2914,6 +2925,7 @@ def _evidence_unsatisfied(rel_path: str, feature: str | None,
     carry-forward: a verdict carried at the current hash was evidence-
     validated when first recorded — re-requiring it would defeat the
     dominant-cost cure, so a carried paired verdict satisfies."""
+    from prusik import schema
     name = Path(rel_path).name
     phase = name.split(".evidence.json")[0]
     abs_path = root / rel_path
@@ -3065,6 +3077,7 @@ def _evidence_unsatisfied(rel_path: str, feature: str | None,
 
 
 def brief(args) -> int:
+    from prusik import schema
     ok, errors = schema.validate_brief(args.path)
     if ok:
         print(f"[prusik-gate] brief valid: {args.path}")
@@ -3089,6 +3102,7 @@ def baseline(args) -> int:
 
 
 def scope(args) -> int:
+    from prusik import schema
     ok, errors = schema.validate_scope(args.path, ledger.project_root())
     if ok:
         print(f"[prusik-gate] scope valid: {args.path}")
@@ -3100,6 +3114,7 @@ def scope(args) -> int:
 
 
 def plan(args) -> int:
+    from prusik import schema
     root = ledger.project_root()
     ok, errors = schema.validate_plan(args.path, root)
     if ok:
@@ -3170,6 +3185,7 @@ def verify_reviewer(args) -> int:
     reviewing with unmet exit artifacts. Always exit 0 — informational,
     not blocking.
     """
+    from prusik import consistency
     feature = args.feature
     suspects = consistency.detect_reviewer_fabrication(
         ledger.project_root(), feature
@@ -3205,6 +3221,7 @@ def _feature_drift_terms(feature: str, root) -> list[str]:
     CategoryPicker / useCategories / categorization-types. Short/generic tokens are
     dropped: a MISSED match falls back to the global-% and age floors, but a SPURIOUS
     match would fail a sprint wrongly — so the bar errs toward precision."""
+    from prusik import schema
     tokens = set(re.split(r"[-_/]+", feature.lower()))
     brief = root / "briefs" / f"{feature}.md"
     if brief.exists():
@@ -3219,6 +3236,7 @@ def _feature_drift_terms(feature: str, root) -> list[str]:
 
 def _check_pre_sprint_gates(config: dict, feature: str, root) -> list[str]:
     """Returns a list of unmet gate messages; empty if all pass."""
+    from prusik import discovery
     gates = config.get("pre_sprint_gates", {}) or {}
     unmet: list[str] = []
     for gate_name, gate_spec in gates.items():
@@ -3439,6 +3457,7 @@ def _verdict_line_ok(text: str, token: str) -> bool:
 
 
 def _unsatisfied_exit_artifacts(phase_spec: dict, feature: str | None) -> list[str]:
+    from prusik import schema
     root = ledger.project_root()
     missing: list[str] = []
     # v0.11.0 #2: lane-aware exit artifacts. A phase may declare a

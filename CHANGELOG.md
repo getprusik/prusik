@@ -3,6 +3,27 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.223.0] — the per-tool-call hooks pay only for what they run
+
+- **Hooks are ~35% faster (platform plan P0, sprint 1).** Every tool call spawns
+  `prusik gate pre-tool` and `post-tool`. Profiling showed only ~27ms of the ~84ms median
+  was the interpreter — prusik owned the rest: building the full ~108-subparser CLI before
+  dispatching, importing modules the hooks never execute, and the pure-Python YAML loader.
+  Now an exact `prusik gate <hook>` dispatches before the parser is built (any other argv
+  falls through unchanged); `gate.py` imports `schema` / `consistency` / `discovery` only
+  inside the functions that use them; and the sprint config parses with libyaml's C safe
+  loader when available (identical results — verified on 112 real configs). Measured on the
+  same machine: median 84.5ms → 52–55ms; prusik-owned overhead ~57ms → ~25ms (≈0.9x a bare
+  interpreter). Zero behavior change: hook rc/stdout/stderr byte-identical across the fast
+  path, the old dispatch and the console script; the eval scorecard equals its pre-change
+  snapshot.
+- **The budget is a CI invariant.** `tests/test_hook_hot_path.py` pins it deterministically —
+  per-hook import allowlists measured across payload classes and phases (incl. `reviewing`
+  with an active fix round), every lazy import bound by a leading local import (a branch-local
+  import can't fail a deny branch open), YAML loader parity incl. malformed input and the
+  no-libyaml fallback — plus a coarse min-of-N wall-clock catch (prusik-owned ≤ 1.75x the
+  bare interpreter; it was 2.37x).
+
 ## [0.222.0] — the session banner names the feedback channel
 
 - **`prusik feedback` is named where the agent always looks (fb-392958c3076a).** An
