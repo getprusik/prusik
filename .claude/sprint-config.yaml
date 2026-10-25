@@ -16,9 +16,20 @@ phases:
   - name: scoping
     writable:
       - "design/{feature}/scope.md"
+      - "design/{feature}/trivial.md"
+      - "reports/{feature}/scope-approval.txt"
     exit_artifacts:
       - path: "design/{feature}/scope.md"
         validator: scope_schema
+      - path: "reports/{feature}/scope-approval.txt"
+        must_contain: "APPROVED"
+    # Synced with the shipped template (2026-10-25): the self-hosting config had
+    # drifted — no trivial.md, so `--trivial` sprints couldn't write their artifact.
+    trivial_exit_artifacts:
+      - path: "design/{feature}/trivial.md"
+        required_sections:
+          - "## Change"
+          - "## How verified"
 
   - name: triage
     writable:
