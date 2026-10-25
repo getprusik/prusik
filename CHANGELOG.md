@@ -3,6 +3,21 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.222.0] — the session banner names the feedback channel
+
+- **`prusik feedback` is named where the agent always looks (fb-392958c3076a).** An
+  adopter's in-session agent reached a concrete, prusik-directed design conclusion and
+  parked it in scratchpad + local memory, filing it only after two operator nudges. The
+  SessionStart banner — the one prusik surface the main agent always reads — pointed at
+  briefs and `/sprint-start` but never at the feedback channel. It now carries one line,
+  in every state, with a copyable invocation:
+  `prusik feedback "<one line>" --kind bug|friction|request --detail "<what happened>"`.
+  The advertised form is tested against the real CLI parser for each kind, so the banner
+  can't advertise a command that doesn't run. Existing banner lines (incl. the
+  template-skew banner) are unchanged and keep their order.
+
+Closes fb-392958c3076a (moat-finding:fb-392958c3076a).
+
 ## [0.221.0] — a deferred test tier must have a destination
 
 - **Sprint-complete now enforces where deferred tests run (fb-afbe9deead21, HIGH).**

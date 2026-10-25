@@ -719,6 +719,11 @@ def session_start(args=None) -> int:
         feature = state.get("feature")
         phase = state.get("phase")
         ctx = f"[prusik] Active sprint '{feature}' in phase '{phase}'. Run /sprint-status for details."
+    # fb-392958c3076a: name the feedback channel on the one prusik surface the agent always
+    # reads — a harness insight/bug/friction otherwise gets parked where prusik can't see it.
+    ctx += ("\n[prusik] Bug, friction, or idea about prusik itself? File it (rides to the "
+            "maintainers): `prusik feedback \"<one line>\" --kind bug|friction|request "
+            "--detail \"<what happened>\"`")
     # v0.86.0 — surface engine↔template skew at session start so a restart-needed
     # state is impossible to miss (CC can't be force-restarted; this makes it loud).
     try:
