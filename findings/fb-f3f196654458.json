@@ -10,7 +10,22 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": "CUR=$(prusik --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1); [ -n \"$CUR\" ] && [ \"$(printf '%s\\n%s\\n' '0.227.1' \"$CUR\" | sort -V | head -1)\" = '0.227.1' ] && echo \"1 passed: engine carries moat-proven fix fb-f3f196654458 (prusik $CUR >= 0.227.1)\"",
+    "fixed_in": "0.227.1",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-10-26T18:25:48.315135+00:00",
+      "exit": 0,
+      "executed_count": 1,
+      "verdict": true,
+      "why": "1 test(s) executed, exit 0",
+      "worktree_hash": "3e54d7e-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
