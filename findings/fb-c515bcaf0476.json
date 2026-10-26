@@ -1,0 +1,16 @@
+{
+  "id": "fb-c515bcaf0476",
+  "created_at": "2026-10-26T22:25:29.928275+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "pytest <file> fails collection: No module named 'tests'",
+  "detail": "Running a single test module by path, e.g. '.venv/bin/pytest tests/test_effort.py' or tests/test_phases.py, fails collection with ModuleNotFoundError: No module named 'tests', from 'from tests._common import ...'. Bare 'pytest' (1652 collected) and 'python -m pytest <file>' (which puts cwd on sys.path) both work. A normal invocation of the suite failing is a product defect. The likely fix is rootdir/pythonpath config in pyproject (pytest 'pythonpath = [\".\"]') or relative imports. Surfaced by the measured-token-usage conventions-enforcer.",
+  "feature": "measured-token-usage",
+  "content_hash": "c515bcaf0476",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

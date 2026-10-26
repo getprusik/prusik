@@ -1,0 +1,16 @@
+{
+  "id": "fb-6916f692908a",
+  "created_at": "2026-10-26T22:32:47.751487+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "full-suite advisory at reviewing\u2192integrating misnames the phase and ignores the reviewer's captured full run",
+  "detail": "gate._full_suite_gate is called both at building exit and at reviewing\u2192integrating (gate.py ~1914, ~1924), but its problem text hard-codes 'no green prusik prove --kind tests recorded this building phase', so leaving reviewing reports 'building'. It also counts only prove_run events since the last phase_advance into the current phase: the regression-sentinel's full-suite run via 'prusik gate capture' (reports/<f>/regression.evidence.json, tests=1659, same worktree hash) is execution evidence prusik itself captured, yet it is not credited, so the advisory fires on a sprint whose reviewing phase did run the full suite. Seen on measured-token-usage (2026-10-26): the advance printed the advisory with regression PASS and evidence tests=1659. Fix: name the phase actually being left, and credit captured execution evidence for the current tree hash (or record a prove_run from capture).",
+  "feature": "measured-token-usage",
+  "content_hash": "6916f692908a",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
