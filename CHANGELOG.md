@@ -3,6 +3,26 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.227.0] — A carried-forward verdict never overwrites a newer report
+
+- **A fresh reviewer FAIL is no longer replaced by "PASS (carried forward)" (fb-00c98b8c70c6).**
+  Carry-forward rewrote a present approval file whose verdict line wasn't the gate token
+  whenever the ledger's last positive verdict matched the current hash. That held even when
+  the file was written *after* that verdict, which is the case when the reviewer-artifact
+  fallback writes a FAIL report without recording it. Now a report newer than the recorded
+  verdict is never overwritten. The gate stays unmet and says to re-run the role. Applies to
+  all four carry-forward gates: scope-approval, plan-approval, regression and conventions.
+- **`prusik gate verdict-current` agrees with the exit gate.** Every verdict role runs it first
+  to decide whether to skip its dispatch. It now re-gates when the role's approval file (found
+  from the sprint config's exit artifacts) is newer evidence. The re-run the gate asks for
+  therefore actually happens, and there is no stall. Both read one shared carry decision.
+- Unchanged: a missing approval file, a carry marker, and a report older than the verdict all
+  still carry forward. Execution-evidence checks are untouched. Fail-closed edge: a report
+  whose mtime is bumped without new content (e.g. a checkout) reads as newer, so the role
+  re-runs once.
+
+Closes fb-00c98b8c70c6 (moat-finding:fb-00c98b8c70c6)
+
 ## [0.226.0] — Python module names follow the source root
 
 - **src-layout projects get real import reach (fb-63d1c3a15af1).** The dep-graph named every

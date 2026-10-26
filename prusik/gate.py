@@ -2269,9 +2269,60 @@ def verdict_current(args) -> int:
         print(f"[prusik-gate] re-gate needed: {key} changed since pass "
               f"({v.get('content_hash')} → {cur})")
         return 1
+    # The exit gate won't carry over a newer report, so Step 0 mustn't skip the re-run.
+    approval = _approval_path(args.role, args.feature, root)
+    if approval:
+        _, newer = _carryable_verdict(approval, args.feature, root)
+        if newer:
+            print(f"[prusik-gate] re-gate needed: {approval} — {newer}")
+            return 1
     print(f"[prusik-gate] verdict current: {args.role} {v.get('verdict')} {key} "
           f"@ {cur} — carry forward, skip re-dispatch")
     return 0
+
+
+def _report_is_newer(abs_path: Path, token: str, v: dict) -> bool:
+    """True iff the approval file holds a verdict other than `token` (not a carry marker)
+    written AFTER verdict `v` was recorded — newer evidence than the ledger (fb-00c98b8c70c6).
+    A role writes its report before recording, so only an unrecorded report (the reviewer-
+    artifact fallback) is ever newer. No ts → newer: fail closed, the role re-runs."""
+    if not abs_path.exists():
+        return False
+    text = abs_path.read_text()
+    if _verdict_line_ok(text, token) or _is_carry_marker(text):
+        return False
+    from datetime import datetime as _dt
+    try:
+        recorded = _dt.fromisoformat(v["ts"]).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return True
+    return abs_path.stat().st_mtime > recorded
+
+
+def _carryable_verdict(approval_rel: str, feature: str,
+                       root: Path) -> tuple[str | None, str | None]:
+    """The one carry decision, shared by the exit gate and verdict-current: (marker, None)
+    when `approval_rel`'s latest POSITIVE verdict at the current judged hash carries forward;
+    (None, reason) when a report newer than that verdict blocks it; (None, None) otherwise."""
+    mapping = _APPROVAL_SOURCE.get(Path(approval_rel).name)
+    if not mapping:
+        return None, None
+    role, src_tmpl, token = mapping
+    artifact = src_tmpl.format(feature=feature) if src_tmpl else None
+    cur = _judged_hash(role, feature, artifact, root)
+    if cur is None:
+        return None, None
+    v = _latest_verdict(role, feature, _judged_key(role, feature, artifact))
+    if (not v or v.get("verdict") not in _POSITIVE_VERDICTS
+            or v.get("content_hash") != cur):
+        return None, None
+    if _report_is_newer(root / approval_rel, token, v):
+        return None, (f"this report was written after the last recorded {token} "
+                      f"({role} @ {cur}), so it is newer evidence and is not overwritten "
+                      f"— re-run {role} so its verdict is recorded")
+    src_desc = artifact if artifact else "built code (worktree)"
+    return (f"{token}{_CARRY_TAG}{src_desc} substantively unchanged "
+            f"since {role} verdict @ {cur}; v0.11.0)"), None
 
 
 def _approval_carried_forward(approval_rel: str, feature: str,
@@ -2282,26 +2333,23 @@ def _approval_carried_forward(approval_rel: str, feature: str,
 
     Engine half of the cure: even if a rewind wiped the approval file, a
     still-valid hash-bound verdict in the ledger satisfies the gate without
-    re-dispatching the critic/reviewer.
+    re-dispatching the critic/reviewer. Never over a report newer than that verdict.
     """
-    from pathlib import Path as _P
-    base = _P(approval_rel).name
-    mapping = _APPROVAL_SOURCE.get(base)
-    if not mapping:
-        return None
-    role, src_tmpl, token = mapping
-    artifact = src_tmpl.format(feature=feature) if src_tmpl else None
-    key = _judged_key(role, feature, artifact)
-    cur = _judged_hash(role, feature, artifact, root)
-    if cur is None:
-        return None
-    v = _latest_verdict(role, feature, key)
-    if (not v or v.get("verdict") not in _POSITIVE_VERDICTS
-            or v.get("content_hash") != cur):
-        return None
-    src_desc = artifact if artifact else "built code (worktree)"
-    return (f"{token}{_CARRY_TAG}{src_desc} substantively unchanged "
-            f"since {role} verdict @ {cur}; v0.11.0)")
+    return _carryable_verdict(approval_rel, feature, root)[0]
+
+
+def _approval_path(role: str, feature: str, root: Path) -> str | None:
+    """`role`'s approval file, as the sprint config's exit artifacts name it (None when no
+    config names one) — so verdict-current reads the same file the exit gate checks."""
+    config = phases.load_sprint_config(root) or {}
+    for spec in config.get("phases") or []:
+        for art in (spec.get("exit_artifacts") or []) + (spec.get("trivial_exit_artifacts")
+                                                          or []):
+            rel = phases.resolve_path(art.get("path", ""), feature=feature)
+            mapping = _APPROVAL_SOURCE.get(Path(rel).name)
+            if mapping and mapping[0] == role:
+                return rel
+    return None
 
 
 # ── v0.12.0 — reviewer execution-evidence (Candidate F) ──────────────────
@@ -3495,11 +3543,15 @@ def _try_carry_forward(path: str, feature: str | None, root: Path) -> bool:
     marker = _approval_carried_forward(path, feature, root)
     if not marker:
         return False
+    _write_carry_marker(path, marker, feature, root)
+    return True
+
+
+def _write_carry_marker(path: str, marker: str, feature: str, root: Path) -> None:
     abs_path = root / path
     abs_path.parent.mkdir(parents=True, exist_ok=True)
     abs_path.write_text(marker + "\n")
     ledger.append("verdict_carried_forward", feature=feature, approval=path)
-    return True
 
 
 def _cross_artifact_remedy_footer(feature: str | None) -> str:
@@ -3608,9 +3660,13 @@ def _unsatisfied_exit_artifacts(phase_spec: dict, feature: str | None) -> list[s
             missing.append(f"{path} (verdict line must be {mc!r} — its carried-forward "
                            f"marker is stale: what it judged has changed)")
         elif mc and not _verdict_line_ok(text, mc):
-            if _try_carry_forward(path, feature, root):
+            marker, newer = (_carryable_verdict(path, feature, root) if feature
+                             else (None, None))
+            if marker and feature:
+                _write_carry_marker(path, marker, feature, root)
                 continue
-            missing.append(f"{path} (verdict line must be {mc!r})")
+            missing.append(f"{path} (verdict line must be {mc!r}"
+                           f"{f' — {newer}' if newer else ''})")
     return missing
 
 
