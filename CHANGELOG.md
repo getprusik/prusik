@@ -3,6 +3,33 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.226.0] — Python module names follow the source root
+
+- **src-layout projects get real import reach (fb-63d1c3a15af1).** The dep-graph named every
+  Python module by its path from the project root, but a src-layout project imports `pkg.mod`
+  from `src/pkg/mod.py` — so its from-import edges never matched, and plan-time import reach
+  predicted **no** at-risk tests at all on a src-layout design partner. Now a top-level `src/`
+  with no `__init__.py` is the Python source root (unless the project imports `src.*`
+  absolutely — then nothing changes), decided once per graph and recorded in its stats. Module
+  names, relative-import resolution and from-import candidates all use that one naming. On the
+  design partner: +41 edges, 0 removed, and a change to its core domain module now predicts 93
+  importing files (was 0).
+- **A changed package `__init__.py` has import reach (fb-35f64503cc75).** It was queried as
+  `pkg.__init__` and matched nothing; `pkg/__init__[.py]` now means the package itself — every
+  `import pkg` / `pkg.sub` importer (package init runs on any submodule import).
+- **Strictly additive.** `blast_radius` keeps every query it made before and adds the mapped name
+  only for real Python module paths — verified over 2,084 queries on three repos: no hit lost,
+  and every non-Python path (e.g. a TypeScript `src/config.ts`) answers exactly as before.
+  Projects whose `src/` is a package, or that import `src.*`, keep their graphs unchanged.
+- A dep-graph cached by an earlier version (no source-root decision) is rebuilt once on the next
+  query, never misread.
+
+Expect larger, real predictions: a plan touching a package `__init__.py` now flags the package's
+importers (the engine's own `prusik/__init__.py`: ~140 tests).
+
+Closes fb-63d1c3a15af1 (moat-finding:fb-63d1c3a15af1), fb-35f64503cc75
+(moat-finding:fb-35f64503cc75).
+
 ## [0.225.0] — the Python dep-graph sees `from pkg import module`
 
 - **Blast radius and at-risk-test prediction find from-import importers (fb-27ad79ae220b,
