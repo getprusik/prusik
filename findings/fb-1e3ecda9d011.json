@@ -1,0 +1,16 @@
+{
+  "id": "fb-1e3ecda9d011",
+  "created_at": "2026-10-26T22:43:26.871123+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "pre-sprint briefing cost (brief + brief-critic) is never attributed to the sprint",
+  "detail": "usage.measure attributes tokens to the ledger phase windows, which begin at sprint_started. The brief and brief-critic work happens before that and leaves no feature-tagged ledger event: no critic_verdict for the brief-critic, and the brief file itself isn't logged. So briefing is invisible to sprint-complete's actual.tokens and to effort. Measured on this session's real transcript (2026-10-26): pre-sprint usage was 6.7M before measured-token-usage (45.9M in-sprint, brief-critic 1.6M of it) and 10.4M before hermetic-test-ledger (20.9M in-sprint). That is up to 15-33% on top of the recorded cost, though the window also mixes unrelated ad-hoc work, which is exactly why it can't be attributed now. Fix: record a feature-tagged event when briefing starts (e.g. brief-lint or the first brief-critic dispatch via record-verdict), and add a 'briefing' window from it to sprint_started.",
+  "feature": null,
+  "content_hash": "1e3ecda9d011",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
