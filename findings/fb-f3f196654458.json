@@ -1,0 +1,16 @@
+{
+  "id": "fb-f3f196654458",
+  "created_at": "2026-10-26T06:53:12.183794+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "test suite writes synthetic prove_run events into the real project ledger (cwd not isolated)",
+  "detail": "Every full-suite run appends ~12 fake prove_run events (e.g. command printf '7 passed in 0.1s', 'Files: 523') to the engine's real .sprint/ledger.jsonl, tagged with the active sprint's feature/phase. tests/test_prove.py and tests/test_criteria_kind_inference.py call prove.run without a temp project: conftest pops CLAUDE_PROJECT_DIR but leaves cwd at the repo root, so ledger.project_root() walks up to the engine's .sprint/. Visible effect: sprint advance's full-suite ADVISORY reads the last prove_run and reports 'the proven run executed 7 test(s)' right after a real 1596-test prove. Fix at the source: the suite must never resolve a real project root (hermetic cwd per test), plus a guard that fails the session if the repo ledger changes.",
+  "feature": "carry-forward-fresh-fail",
+  "content_hash": "f3f196654458",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
