@@ -50,6 +50,44 @@ os.environ["TMPDIR"] = _HERMETIC
 tempfile.tempdir = _HERMETIC  # override the cached default so mkdtemp() uses it
 atexit.register(lambda: shutil.rmtree(_HERMETIC, ignore_errors=True))
 
+# --- Hermetic project root (fb-f3f196654458) -----------------------------
+# Dropping CLAUDE_PROJECT_DIR wasn't enough: cwd stayed at the repo root, so
+# `ledger.project_root()` walked up to the engine's own .sprint/ and every run
+# appended ~29 synthetic events to the REAL ledger (~60% of it by 2026-10-26).
+# The process leaves the repo now, before collection; each test then starts in
+# its own empty dir under this base — a sibling of HOME (never under it, so a
+# test-created HOME/.claude can't become the root) and apart from tmp_path (so
+# a leaked event never lands where a test looks).
+_REPO = Path(__file__).resolve().parent.parent
+_CWD_BASE = os.path.realpath(
+    tempfile.mkdtemp(prefix="prusik-pytest-cwd-", dir=os.path.dirname(_HERMETIC)))
+if Path(_CWD_BASE).is_relative_to(_REPO):
+    raise pytest.UsageError(f"hermetic cwd base {_CWD_BASE} is inside the repo {_REPO}")
+os.chdir(_CWD_BASE)
+atexit.register(lambda: shutil.rmtree(_CWD_BASE, ignore_errors=True))
+
+# The detector: a ledger path inside the repo — this checkout or the canonical
+# root a builder worktree resolves to — fails the test, naming the leak. Every
+# `append` (whatever its import style) and `read_all` resolve through
+# `ledger.ledger_path`; code that builds the path itself is outside this net.
+from prusik import ledger as _ledger  # noqa: E402
+
+_FORBIDDEN_LEDGER_ROOTS = tuple({_REPO, _ledger._canonical_worktree_root(_REPO).resolve()})
+_ledger_path = _ledger.ledger_path
+
+
+def _guarded_ledger_path(root=None):
+    path = _ledger_path(root)
+    for forbidden in _FORBIDDEN_LEDGER_ROOTS:
+        if path.resolve().is_relative_to(forbidden.resolve()):
+            pytest.fail(f"test resolved the real project ledger {path} — give it its own "
+                        f"project (tmp_path + CLAUDE_PROJECT_DIR); see fb-f3f196654458",
+                        pytrace=True)
+    return path
+
+
+_ledger.ledger_path = _guarded_ledger_path
+
 # --- Environment-integrity gate ------------------------------------------
 # Two env-drift classes bit the suite on 2026-07-25:
 #   (1) a declared dev dep (types-PyYAML) missing from the interpreter — the
@@ -148,6 +186,7 @@ def _restore_global_state(tmp_path_factory):
         cwd = str(tmp_path_factory.getbasetemp())
         os.chdir(cwd)
     env_snapshot = {k: os.environ.get(k) for k in _TRACKED_ENV}
+    os.chdir(tempfile.mkdtemp(dir=_CWD_BASE))  # fresh, empty — see _CWD_BASE
     try:
         yield
     finally:

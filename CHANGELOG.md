@@ -3,6 +3,24 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.227.1] — The test suite never touches the real project ledger
+
+- **Engine test infrastructure only. No runtime change (fb-f3f196654458).** conftest dropped
+  `CLAUDE_PROJECT_DIR` but left cwd at the repo root, so `ledger.project_root()` walked up to the
+  engine's own `.sprint/`. Every full run appended 29 synthetic events (fake `prove_run`s, tiny
+  dep-graphs, tmp briefs) to the engine's real ledger, and the advance-time full-suite advisory
+  read one as "the proven run executed 7 test(s)". Now:
+  - The process leaves the repo before collection, and each test starts in its own empty cwd.
+  - Resolving a ledger path inside the repo fails the test immediately.
+  - An end-to-end test runs the original offenders from a fake repo's cwd and requires its
+    ledger byte-identical.
+- `test_eval_scorecard` now scores the shipped template config in a project of its own. It had
+  been reading the engine's self-hosting config through the leaked cwd.
+- The engine's own ledger was purged of 2,648 test events: 387 real events kept, backup kept.
+  The ledger stays local; HQ never collected the engine ledger.
+
+Closes fb-f3f196654458 (moat-finding:fb-f3f196654458)
+
 ## [0.227.0] — A carried-forward verdict never overwrites a newer report
 
 - **A fresh reviewer FAIL is no longer replaced by "PASS (carried forward)" (fb-00c98b8c70c6).**

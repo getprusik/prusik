@@ -11,8 +11,22 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from prusik import eval as kit_eval
 from prusik import injection
+from tests._common import _copy_sprint_config
+
+
+@pytest.fixture(autouse=True)
+def _shipped_project(tmp_path, monkeypatch):
+    """Score the SHIPPED template config, in a project of its own. These tests used to read
+    whatever config the repo cwd resolved to (fb-f3f196654458) — and with none, the floor is
+    False regardless, so the floor-drop tests would pass vacuously."""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    _copy_sprint_config(proj)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
 
 
 def test_scorecard_floor_met_on_shipped_surface():
