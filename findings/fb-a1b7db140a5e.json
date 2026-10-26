@@ -1,0 +1,16 @@
+{
+  "id": "fb-a1b7db140a5e",
+  "created_at": "2026-10-26T15:35:16.601906+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "per-phase budget_tokens watchdog is inert: no ledger event ever carries a tokens field",
+  "detail": "watchdog._estimate_phase_tokens sums 'tokens' on ledger events since the phase began, and sprint-complete records actual.tokens only from an optional --tokens arg. In the engine's own ledger 0 events carry tokens and 0 of 14 sprint_complete events have actual.tokens. So every budget_tokens in sprint-config is a silent no-op (no-silent-fallbacks violation), and predicted-vs-actual cost is never measured. The data exists: Claude Code passes transcript_path in hook stdin, and the session JSONL carries message.usage plus model on every assistant turn (1430 turns in this session), with subagent transcripts beside it. Pattern seen in ECC's cost-tracker hook (MIT), which hit the same bug: its rows were zero-filled for 52 days until it read the transcript. Suggest: the Stop/phase hooks read real usage from transcript_path (main + subagents), attribute it to sprint/phase/role/model, and fail loud when a budget is configured but usage is unreadable. This is also the measurement P4 model-tier policy needs.",
+  "feature": null,
+  "content_hash": "a1b7db140a5e",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
