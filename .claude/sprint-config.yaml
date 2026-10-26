@@ -50,7 +50,6 @@ phases:
           - "## Risks"
       - path: "reports/{feature}/plan-approval.txt"
         must_contain: "APPROVED"
-    budget_tokens: 150000
 
   - name: solo_execute
     writable:
@@ -60,7 +59,6 @@ phases:
     deny_commands:
       - "git push"
       - "git merge"
-    budget_tokens: 400000
 
   - name: building
     writable:
@@ -70,7 +68,6 @@ phases:
     deny_commands:
       - "git push"
       - "git merge"
-    budget_tokens: 1000000
 
   - name: reviewing
     writable:

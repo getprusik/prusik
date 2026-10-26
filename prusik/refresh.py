@@ -211,6 +211,7 @@ def run(force: bool = False, no_auto_adopt: bool = False,
     unchanged: list[str] = []
     merged: list[tuple[str, dict]] = []  # v0.5.8: (path, summary) for surgical merges
     merge_failed: list[tuple[str, str]] = []  # v0.14.0: hard fail-closed (path, reason)
+    unretirable: list[str] = []  # fb-a1b7db140a5e: retired budgets a layout can't drop
 
     # Walk every template file
     template_src_roots = [
@@ -363,6 +364,12 @@ def run(force: bool = False, no_auto_adopt: bool = False,
                     merged_text, summary = (
                         refresh_merge.merge_sprint_config_yaml(
                             src.read_text(), dest.read_text()))
+                    # fb-a1b7db140a5e: retire the shipped guessed budgets — on the merged
+                    # text, before the loss check, the unchanged comparison and the hash,
+                    # so a retirement-only delta is written + named, not "unchanged".
+                    merged_text, summary["retired_budgets"], _unret = (
+                        refresh_merge.retire_budget_defaults(merged_text))
+                    unretirable.extend(_unret)
                     ok_merge = True
                 except Exception as _e:  # unparseable / unrecognized shape
                     ok_merge = False
@@ -446,9 +453,17 @@ def run(force: bool = False, no_auto_adopt: bool = False,
                 bits.append(f"+{n} {pk}")
             if top_adds:
                 bits.append(f"+top-level: {top_adds}")
+            for rb in summary.get("retired_budgets") or []:
+                bits.append(f"-{rb} (retired default; tokens are now measured)")
             print(f"    ⊕ {path}  ({', '.join(bits) if bits else 'no-op'})")
         print("  (pass --no-merge-additions to skip surgical merge instead)")
     print(f"  unchanged:{len(unchanged)}")
+    # Printed whether or not the file changed: an unretired guessed default is now a LIVE
+    # budget, so it must never pass silently.
+    for rb in unretirable:
+        print(f"  ! {rb} is a retired shipped default this file's layout can't remove "
+              f"safely — delete it by hand (budgets are now enforced against measured "
+              f"usage)")
     if skipped_modified:
         print(f"  skipped:  {len(skipped_modified)} (user-modified; pass --force to overwrite)")
         for p in skipped_modified:

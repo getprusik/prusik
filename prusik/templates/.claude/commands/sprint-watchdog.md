@@ -12,4 +12,4 @@ prusik watchdog --poll 15
 
 Or schedule it out-of-band via Claude Code `/schedule` or OS cron so the loop stays closed without a human in the chair.
 
-Incidents land under `.sprint/incidents/` with a timestamp + kind (stale_heartbeat, phase_stalled, budget_exceeded). Each incident also appears as a `watchdog_incident` event in the ledger.
+Incidents land under `.sprint/incidents/` with a timestamp + kind (stale_heartbeat, phase_stalled, budget_exceeded, budget_unmeasurable). Each incident also appears as a `watchdog_incident` event in the ledger. Budgets compare a phase's `budget_tokens` against usage measured from the session transcripts; `budget_unmeasurable` means usage couldn't be read, and its `reason` says why.

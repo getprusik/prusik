@@ -3,6 +3,54 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.228.0] — Token usage is measured from the session transcripts
+
+- **Phase budgets work, and the cost of a sprint is measured (fb-a1b7db140a5e).** The watchdog's
+  `budget_tokens` check summed a `tokens` field no ledger event carried. `actual.tokens` came
+  only from an agent-passed `--tokens`, which no sprint ever set. So every budget was a silent
+  no-op, and no sprint's cost was ever recorded. Now:
+  - **Registration.** The SessionStart and Stop hooks record each session's transcript in
+    `.sprint/sessions.json`. They touch nothing else, and the Stop import set and timing are
+    pinned.
+  - **Reading usage.** Usage is read from Claude Code's own transcripts, the main one plus its
+    subagents.
+    - Rows are deduplicated by message id across every session, keeping the per-field maximum.
+      Claude Code writes partial counters per content block, and resumed sessions copy rows.
+    - A malformed or truncated row is counted, never fatal.
+    - `tokens` is input + output + cache writes + cache reads.
+  - **Attribution.** Usage is attributed to the feature's ledger phase windows (rewinds and the
+    open phase included), by role and by model. A general-purpose agent's role is taken from
+    its description. Usage is also broken down by session, so a concurrent session's share is
+    visible.
+- **`sprint-complete` records the measured value.** `actual.tokens` is the measured total, and
+  `actual.usage` holds the breakdown.
+  - When usage can't be measured, it records `tokens_unmeasured: <reason>` and prints
+    UNMEASURED. It never blocks completion.
+  - `--tokens` is still accepted but ignored, because it is an agent claim.
+- **`gate advance`** prints the measured usage of the phase just left, against its budget when
+  one is set.
+- **The watchdog enforces budgets.** It files `budget_exceeded` with the by-role, by-model and
+  by-session breakdown. When a budget can't be measured, it files `budget_unmeasurable` with
+  the reason. Each incident is filed once per phase until it is resolved.
+- **The shipped default budgets are retired.** They were guesses of 150k–1M. Measured phases
+  run 0.5M–94M tokens (medians 1.6M–22M across three projects), so the defaults were 10–100×
+  low under any definition.
+  - The template and the fastapi-postgres preset no longer set them.
+  - `prusik refresh` deletes exactly the `budget_tokens` lines that still equal a retired
+    default, and names each one. Every other byte of the file is kept.
+  - Any other value is yours and is now a live budget.
+  - A layout refresh can't edit safely (flow style, a merge key) is named for you to delete by
+    hand.
+  - To set a budget, run `prusik effort`, which now shows tokens per feature and per phase, and
+    set `budget_tokens` on a phase from those numbers.
+- **Known limits.**
+  - A session that ended before this upgrade and never ran a later hook is invisible, so the
+    first sprint after the upgrade can read as unmeasured.
+  - `watchdog.check(root)` with an explicit root other than the project root reports
+    `budget_unmeasurable` rather than comparing two projects (fb-5b83acbaab4a).
+
+Closes fb-a1b7db140a5e (moat-finding:fb-a1b7db140a5e)
+
 ## [0.227.1] — The test suite never touches the real project ledger
 
 - **Engine test infrastructure only. No runtime change (fb-f3f196654458).** conftest dropped

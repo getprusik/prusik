@@ -88,3 +88,22 @@ def test_gate_allows_when_writable(monkeypatch):
     monkeypatch.setattr(ledger, "append", lambda *a, **k: None)
     ev = pa.ToolEvent(tool="Write", file_targets=("src/x.py",))
     assert gate._gate_tool_event(ev, {}, "building", "feat", object()) == 0   # no deny
+
+
+def test_usage_operations_are_part_of_the_adapter_contract():
+    # fb-a1b7db140a5e: reading a session's usage is host I/O, so every runtime adapter must
+    # implement it; a partial adapter can't be instantiated.
+    assert {"session_ref", "read_usage", "last_write"} <= pa.PlatformAdapter.__abstractmethods__
+
+    class Partial(pa.PlatformAdapter):
+        def read_payload(self):
+            return {}
+
+        def parse_event(self, payload):
+            return None
+
+        def deny(self, reason):
+            return 0
+
+    with pytest.raises(TypeError):
+        Partial()

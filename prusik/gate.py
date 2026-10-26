@@ -22,11 +22,27 @@ from prusik import gate_class, ledger, phases
 
 
 def _read_stdin_json() -> dict:
+    # OSError: stdin unreadable (closed, or captured under a test runner); ValueError covers
+    # JSONDecodeError. A hook payload that can't be read is an empty one, never a crash.
     try:
         raw = sys.stdin.read()
-        return json.loads(raw) if raw.strip() else {}
-    except json.JSONDecodeError:
+        data = json.loads(raw) if raw.strip() else {}
+    except (OSError, ValueError):
         return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _register_session(payload: dict) -> None:
+    """Record this hook's session transcript so token usage can be measured from it
+    (fb-a1b7db140a5e). The adapter turns the native payload into a neutral SessionRef;
+    `usage.register` touches only the registry and never raises."""
+    from prusik import usage
+    from prusik.platform_adapter import get_adapter
+    try:
+        ref = get_adapter().session_ref(payload)
+    except Exception:  # noqa: BLE001 — a hook must never fail on bookkeeping
+        return
+    usage.register(ref)
 
 
 def pre_tool(args=None) -> int:
@@ -441,12 +457,15 @@ def _strip_heredocs(cmd: str) -> str:
 
 def stop(args=None) -> int:
     payload = _read_stdin_json()
-    if payload.get("stop_hook_active"):
-        return 0  # avoid infinite loop
-
     config = phases.load_sprint_config()
     if not config:
         return 0
+    # Before every other early return: a continued turn or a paused sprint is still a live
+    # session whose transcript holds the phase's usage.
+    _register_session(payload)
+    if payload.get("stop_hook_active"):
+        return 0  # avoid infinite loop
+
     state = phases.current_sprint_state()
     if not state:
         return 0
@@ -715,6 +734,7 @@ def session_start(args=None) -> int:
     config = phases.load_sprint_config()
     if not config:
         return 0
+    _register_session(_read_stdin_json())
     state = phases.current_sprint_state()
     if not state:
         ctx = "[prusik] No active sprint. Write briefs/<feature>.md and use /sprint-start."
@@ -1533,8 +1553,24 @@ def sprint_complete(args) -> int:
     actual = {
         "mode": predicted.get("mode"),  # will be overwritten by --escalated
         "duration_min": args.duration_min,
-        "tokens": args.tokens,
+        "tokens": None,
     }
+    # fb-a1b7db140a5e: tokens are MEASURED from the session transcripts. A `--tokens` value is
+    # an agent claim and is never recorded as the actual (accepted so unrefreshed templates
+    # keep working). Unmeasured is loud and recorded, never a silent null; it doesn't block
+    # completion — telemetry isn't a correctness gate.
+    from prusik import usage
+    if args.tokens is not None:
+        print("[prusik-gate] --tokens ignored: token usage is measured from the session "
+              "transcripts.", file=sys.stderr)
+    measured = usage.measure(feature)
+    if measured.measured:
+        actual["tokens"] = measured.tokens
+        actual["usage"] = measured.breakdown()
+        print(f"[prusik-gate] tokens measured: {measured.tokens:,}", file=sys.stderr)
+    else:
+        actual["tokens_unmeasured"] = measured.reason
+        print(f"[prusik-gate] tokens UNMEASURED: {measured.reason}", file=sys.stderr)
 
     # v0.3.11: if the operator didn't pass --duration-min, fall back to
     # ledger-derived wall-clock (sprint_started timestamp to now). Digest
@@ -1944,7 +1980,23 @@ def advance(args) -> int:
         ledger.append("phase_advance", from_phase=current, to_phase=target_phase,
                       feature=feature)
         print(f"[prusik-gate] Advanced: {current} → {target_phase}")
+    if current:
+        print(_phase_usage_line(feature, current,
+                                phases.get_phase_spec(config, current) or {}))
     return 0
+
+
+def _phase_usage_line(feature: str, phase: str, phase_spec: dict) -> str:
+    """One advisory line: the measured usage of the phase just left (every visit), against
+    its budget when one is set (fb-a1b7db140a5e). Never blocks the advance."""
+    from prusik import effort, usage
+    u = usage.measure(feature, phase=phase)        # total: never raises
+    if not u.measured:
+        return f"[prusik-gate] {phase} token usage UNMEASURED: {u.reason}"
+    budget = phase_spec.get("budget_tokens")
+    tail = (f" / budget {effort.fmt_tokens(budget)}"
+            + (" — EXCEEDED" if u.tokens > budget else "")) if budget else ""
+    return f"[prusik-gate] {phase} used {effort.fmt_tokens(u.tokens)} tokens{tail}"
 
 
 def mark_fallback(args) -> int:

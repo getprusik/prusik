@@ -44,6 +44,11 @@ _PRE_TOOL = {"prusik", "prusik.__main__", "prusik.gate", "prusik.ledger", "prusi
              "prusik.evidence", "prusik.fix_round"}
 _POST_TOOL = {"prusik", "prusik.__main__", "prusik.gate", "prusik.ledger", "prusik.phases",
               "prusik.gate_class", "prusik.evidence"}
+# Stop runs once per turn (measured 2026-10-26 per phase): exit-artifact checks pull pause /
+# schema / consistency; session registration (fb-a1b7db140a5e) adds usage + platform_adapter.
+_STOP = {"prusik", "prusik.__main__", "prusik.gate", "prusik.ledger", "prusik.phases",
+         "prusik.gate_class", "prusik.evidence", "prusik.pause", "prusik.schema",
+         "prusik.consistency", "prusik.usage", "prusik.platform_adapter"}
 
 
 # ---- fast dispatch: exact argv only, single source of hook names ------------------------
@@ -180,6 +185,20 @@ def test_post_tool_imports_only_its_allowlist(tmp_path, phase, payload):
     assert not _third_party(mods, _baseline(root))
 
 
+_STOP_PAYLOAD = {"session_id": "p", "hook_event_name": "Stop",
+                 "transcript_path": "/nonexistent/p.jsonl"}
+
+
+@pytest.mark.parametrize("phase", [None, "solo_execute", "reviewing", "integrating"])
+def test_stop_imports_only_its_allowlist(tmp_path, phase):
+    root = _project(tmp_path, phase)
+    mods = _modules(root, "stop", _STOP_PAYLOAD)
+    prusik_mods = {m for m in mods if m == "prusik" or m.startswith("prusik.")}
+    assert prusik_mods <= _STOP, sorted(prusik_mods - _STOP)
+    assert "prusik.usage" in prusik_mods                     # registration actually ran
+    assert not _third_party(mods, _baseline(root))
+
+
 # ---- lazy imports can't fail open -------------------------------------------------------
 
 def _gate_tree() -> ast.Module:
@@ -285,6 +304,16 @@ def test_pre_tool_owned_overhead_stays_within_coarse_budget(tmp_path):
     payload = json.dumps(_pre("Read", {"file_path": "README.md"}))
     hook = [sys.executable, "-c", "import sys; from prusik.__main__ import main; "
             "sys.argv=['prusik','gate','pre-tool']; sys.exit(main())"]
+    bare = _min_ms([sys.executable, "-c", "pass"], root, "")
+    owned = _min_ms(hook, root, payload) - bare
+    assert owned <= 1.75 * bare, f"prusik-owned {owned:.1f}ms > 1.75 x bare {bare:.1f}ms"
+
+
+def test_stop_owned_overhead_stays_within_coarse_budget(tmp_path):
+    root = _project(tmp_path, None)
+    payload = json.dumps(_STOP_PAYLOAD)
+    hook = [sys.executable, "-c", "import sys; from prusik.__main__ import main; "
+            "sys.argv=['prusik','gate','stop']; sys.exit(main())"]
     bare = _min_ms([sys.executable, "-c", "pass"], root, "")
     owned = _min_ms(hook, root, payload) - bare
     assert owned <= 1.75 * bare, f"prusik-owned {owned:.1f}ms > 1.75 x bare {bare:.1f}ms"

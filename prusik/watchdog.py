@@ -77,12 +77,11 @@ def check(root: Path | None = None) -> int:
     phase_spec = phases.get_phase_spec(config, phase) or {}
     budget = phase_spec.get("budget_tokens")
     if budget:
-        tokens_used = _estimate_phase_tokens(root, phase, feature)
-        if tokens_used and tokens_used > budget:
-            p = _write_incident("budget_exceeded", {
-                "phase": phase, "feature": feature,
-                "tokens_used": tokens_used, "budget": budget,
-            }, root)
+        kind, payload = _budget_check(root, feature, phase, budget)
+        # Deduped like criteria_already_met: an open incident for this feature + phase
+        # stands until the operator resolves (removes) it — no re-filing every poll.
+        if kind and not _incident_open(root, kind, feature=feature, phase=phase):
+            p = _write_incident(kind, {"phase": phase, "feature": feature, **payload}, root)
             incidents.append(str(p.relative_to(root)))
 
     from prusik import push_guard
@@ -100,12 +99,7 @@ def check(root: Path | None = None) -> int:
     from prusik import ground_truth
     gp = ground_truth.base_probe(feature, root, phase)
     if gp:
-        inc_dir = root / ".sprint" / "incidents"
-        already = any(
-            json.loads(f.read_text()).get("feature") == feature
-            for f in inc_dir.glob("*-criteria_already_met.json")
-        ) if inc_dir.is_dir() else False
-        if not already:
+        if not _incident_open(root, "criteria_already_met", feature=feature):
             p = _write_incident("criteria_already_met",
                                 {**gp, "phase": phase, "feature": feature},
                                 root)
@@ -120,23 +114,45 @@ def check(root: Path | None = None) -> int:
     return 0 if not incidents else 1
 
 
-def _estimate_phase_tokens(root: Path, phase: str | None, feature: str | None) -> int | None:
-    """Sum any 'tokens' field on ledger events since the current phase began."""
-    from prusik.ledger import read_all
-    records = read_all()
-    phase_start_ts = None
-    for r in records:
-        if r.get("event") == "phase_advance" and r.get("to_phase") == phase:
-            phase_start_ts = r["ts"]
-    if phase_start_ts is None:
-        return None
-    total = 0
-    for r in records:
-        if r["ts"] < phase_start_ts:
+def _incident_open(root: Path, kind: str, **match) -> bool:
+    """Is an incident of `kind` whose fields equal `match` still on disk (unresolved)?"""
+    inc_dir = root / ".sprint" / "incidents"
+    if not inc_dir.is_dir():
+        return False
+    for f in inc_dir.glob(f"*-{kind}.json"):
+        try:
+            rec = json.loads(f.read_text())
+        except (OSError, ValueError):
             continue
-        if "tokens" in r:
-            total += int(r["tokens"])
-    return total or None
+        if all(rec.get(k) == v for k, v in match.items()):
+            return True
+    return False
+
+
+def _budget_check(root: Path, feature: str | None, phase: str | None,
+                  budget: int) -> tuple[str | None, dict]:
+    """Measured phase usage against its budget (fb-a1b7db140a5e): (incident kind, payload),
+    or (None, {}) when within budget. A budget that can't be measured is LOUD — never a
+    silent pass."""
+    from prusik import ledger, usage
+    # usage reads the ledger + session registry of project_root(); an explicit foreign root
+    # would compare one project's budget against another's usage (fb-5b83acbaab4a). Paths
+    # are compared resolved; a linked-worktree root counts as foreign (loud, never wrong),
+    # since canonicalizing it is ledger's private concern (DEV-005).
+    if Path(root).resolve() != ledger.project_root().resolve():
+        return "budget_unmeasurable", {
+            "budget": budget,
+            "reason": f"watchdog root {root} is not this process's project root "
+                      f"{ledger.project_root()}; usage is read from the project root "
+                      f"(fb-5b83acbaab4a)"}
+    u = usage.measure(str(feature), phase=phase)
+    if not u.measured:
+        return "budget_unmeasurable", {"budget": budget, "reason": u.reason}
+    if u.tokens > budget:
+        return "budget_exceeded", {"tokens_used": u.tokens, "budget": budget,
+                                   "by_role": u.by_role, "by_model": u.by_model,
+                                   "by_session": u.by_session}
+    return None, {}
 
 
 def poll(interval_min: float = 15.0, root: Path | None = None) -> int:

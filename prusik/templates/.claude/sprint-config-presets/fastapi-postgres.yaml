@@ -48,7 +48,6 @@ phases:
           - "## Risks"
       - path: "reports/{feature}/plan-approval.txt"
         must_contain: "APPROVED"
-    budget_tokens: 150000
 
   - name: solo_execute
     writable:
@@ -57,7 +56,6 @@ phases:
     deny_commands:
       - "git push"
       - "git merge"
-    budget_tokens: 1000000
 
   - name: building
     writable:
@@ -66,7 +64,6 @@ phases:
     deny_commands:
       - "git push"
       - "git merge"
-    budget_tokens: 1000000
 
   - name: reviewing
     writable:
@@ -80,7 +77,6 @@ phases:
         must_contain: "PASS"
       - path: "reports/{feature}/conventions.evidence.json"
         validator: execution_evidence
-    budget_tokens: 300000
 
   - name: integrating
     writable:

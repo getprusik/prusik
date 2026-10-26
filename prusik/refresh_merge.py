@@ -432,3 +432,58 @@ def merge_sprint_config_yaml(template_text: str, project_text: str
         buf = _io.StringIO()
         y.dump(proj, buf)
     return buf.getvalue(), summary
+
+
+def retire_budget_defaults(text: str) -> tuple[str, list[str], list[str]]:
+    """Remove each phase's `budget_tokens` whose value is one of that phase's retired
+    shipped defaults (usage.RETIRED_BUDGET_DEFAULTS, fb-a1b7db140a5e). Returns
+    (text, retired, unretirable) — both lists of "<phase>.budget_tokens=<value>".
+
+    Textual, not a YAML dump: a round-trip dump re-indents sequences and drops the blank line
+    after a removed key, rewriting the user's whole file. Each key line is located with
+    ruamel's line info and exactly those lines are deleted; every other byte is kept. Only a
+    standalone `budget_tokens: <value>` line in a block-style phase is removable — a
+    flow-style phase, a phase whose first key it is (the line carries the list dash) or a
+    value inherited through a merge key is `unretirable`: left in place and named, never a
+    failed refresh. The result is re-parsed and must equal the input minus exactly the
+    removed keys, else this raises (refresh then fails closed, never writes). Separate from
+    the additive merge, so a merge-only caller (doctor) never retires anything."""
+    import re as _re
+    from prusik.usage import RETIRED_BUDGET_DEFAULTS
+    doc = _yaml_rt().load(text)
+    if not isinstance(doc, dict) or not isinstance(doc.get("phases"), list):
+        return text, [], []
+    lines = text.splitlines(keepends=True)
+    drop: dict[int, str] = {}
+    unretirable: list[str] = []
+    for ph in doc["phases"]:
+        if not isinstance(ph, dict) or "budget_tokens" not in ph:
+            continue
+        name, value = str(ph.get("name")), ph["budget_tokens"]
+        if not (isinstance(value, int) and value in RETIRED_BUDGET_DEFAULTS.get(name, ())):
+            continue
+        label = f"{name}.budget_tokens={value}"
+        rt: Any = ph                          # ruamel CommentedMap: carries line info
+        try:
+            line_no = rt.lc.key("budget_tokens")[0]
+        except (KeyError, AttributeError, TypeError):
+            line_no = None                    # inherited via a merge key: no own line
+        standalone = (line_no is not None and line_no < len(lines) and _re.match(
+            rf"^\s*budget_tokens:\s*{value}\s*(#.*)?$", lines[line_no].rstrip("\r\n")))
+        if standalone:
+            drop[line_no] = label
+        else:
+            unretirable.append(label)
+    if not drop:
+        return text, [], sorted(unretirable)
+    out = "".join(line for i, line in enumerate(lines) if i not in drop)
+
+    import yaml as _y
+    before, after = _y.safe_load(text), _y.safe_load(out)
+    removed = {d.split(".", 1)[0] for d in drop.values()}
+    for ph in before.get("phases") or []:
+        if isinstance(ph, dict) and ph.get("name") in removed:
+            ph.pop("budget_tokens", None)
+    if before != after:
+        raise ValueError("budget retirement would change more than the retired keys")
+    return out, sorted(drop.values()), sorted(unretirable)

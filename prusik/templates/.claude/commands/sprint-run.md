@@ -263,9 +263,9 @@ Invoke `pr-composer`:
 
 ## Step 8 — close out
 
-Capture approximate token count and wall-clock duration for the sprint (from the ledger / your awareness). Then:
+Capture the wall-clock duration for the sprint (from the ledger / your awareness). Token usage is measured by prusik from the session transcripts, so don't estimate it. Then:
 
-    prusik gate sprint-complete --feature $ARGUMENTS --duration-min <N> --tokens <M>
+    prusik gate sprint-complete --feature $ARGUMENTS --duration-min <N>
 
 Finally:
 

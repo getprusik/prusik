@@ -316,7 +316,9 @@ def main():
     p_done = gsub.add_parser("sprint-complete", help="Close a sprint; record actuals")
     p_done.add_argument("--feature", required=True, type=_slug)
     p_done.add_argument("--duration-min", type=int, default=None)
-    p_done.add_argument("--tokens", type=int, default=None)
+    p_done.add_argument("--tokens", type=int, default=None,
+                        help="Ignored: token usage is measured from the session transcripts "
+                             "(accepted so unrefreshed templates keep working)")
     p_done.add_argument("--escalated", action="store_true",
                         help="Set if the sprint escalated solo→team mid-flight")
 

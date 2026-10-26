@@ -121,7 +121,12 @@ always_writable:
 # Phase FSM.
 # Each phase declares writable patterns (enforced by the PreToolUse hook),
 # exit artifacts (enforced by the Stop hook and /sprint-advance), and an
-# optional token budget.
+# optional token budget. Token usage is MEASURED from the session transcripts
+# (input + output + cache writes + cache reads), attributed per phase. Real
+# phases run in the millions, so no default is shipped: run `prusik effort`
+# after a few sprints and set `budget_tokens: <N>` on a phase from those
+# numbers. `prusik watchdog` then files budget_exceeded, or
+# budget_unmeasurable when usage can't be read.
 phases:
   - name: scoping
     writable:
@@ -165,7 +170,6 @@ phases:
           - "## Risks"
       - path: "reports/{feature}/plan-approval.txt"
         must_contain: "APPROVED"
-    budget_tokens: 150000
 
   - name: solo_execute
     writable:
@@ -173,7 +177,6 @@ phases:
     deny_commands:
       - "git push"
       - "git merge"
-    budget_tokens: 400000
 
   - name: building
     writable:
@@ -181,7 +184,6 @@ phases:
     deny_commands:
       - "git push"
       - "git merge"
-    budget_tokens: 1000000
 
   - name: reviewing
     writable:
@@ -202,7 +204,6 @@ phases:
         must_contain: "PASS"
       - path: "reports/{feature}/conventions.evidence.json"
         validator: execution_evidence
-    budget_tokens: 300000
 
   - name: integrating
     writable:

@@ -897,7 +897,10 @@ def test_sprint_complete_records_predicted_actual():
         events = [r for r in read_all() if r["event"] == "sprint_complete"]
         assert events
         assert events[-1]["actual"]["duration_min"] == 47
-        assert events[-1]["actual"]["tokens"] == 123000
+        # fb-a1b7db140a5e: --tokens is an agent claim, never the recorded actual; with no
+        # session registered here, the measurement is recorded as unmeasured with its reason.
+        assert events[-1]["actual"]["tokens"] is None
+        assert events[-1]["actual"]["tokens_unmeasured"]
         assert events[-1]["predicted"]["mode"] == "solo"
     finally:
         shutil.rmtree(tmp)
