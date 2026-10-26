@@ -3,6 +3,32 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.225.0] — the Python dep-graph sees `from pkg import module`
+
+- **Blast radius and at-risk-test prediction find from-import importers (fb-27ad79ae220b,
+  HIGH).** The Python extractor recorded `from pkg import module` as an edge to `pkg` alone and
+  skipped relative imports entirely — so `blast_radius`, and the plan-time at-risk-test
+  prediction whose honesty IS the graph's recall, missed every importer written in the most
+  common Python idiom. On the engine itself `ledger.py` had 18 attributable importers out of 75.
+  Now one rule covers absolute and relative imports: the resolved base is always recorded, and
+  each imported name adds `base.name` **only when it is a real project module or package**
+  (including PEP 420 namespace dirs) — so attributes and externals (`typing.Any`) never become
+  graph nodes. Relative imports resolve against the importing file's package exactly as Python
+  does (verified against `importlib.util.resolve_name` over 84 cases); root-level and
+  above-root relative imports are dropped, never recorded as bare names. Strictly additive on
+  real repos (engine: +483 edges, 0 removed) and no slower (one directory walk).
+- **Expect larger, real predictions.** A change to a widely imported module now flags many more
+  importing tests (e.g. a `gate.py` change: 3 → ~38) in the plan's at-risk set, in
+  `blast-verify`, and in the fix-round fan-out lane — those were real importers the gates were
+  missing.
+- `discovery.build_graph` returns the graph in memory (`dep_graph` persists it), and
+  `blast_radius` accepts an optional in-memory `graph=`.
+
+Known limit, filed: src-layout projects (`src/pkg/…` imported as `pkg…`) don't benefit yet
+(fb-63d1c3a15af1).
+
+Closes fb-27ad79ae220b (moat-finding:fb-27ad79ae220b).
+
 ## [0.224.0] — a reviewer verdict binds to the code it judged
 
 - **Main-tree builds no longer carry stale reviewer verdicts (fb-3fbf1846ac92, HIGH).**

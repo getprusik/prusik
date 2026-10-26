@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from prusik.discovery_plugins import build_for, supported_suffixes
+from prusik.discovery_plugins.python import CANDIDATE, CANDIDATE_SEP
 from prusik.ledger import project_root, append
 
 IGNORE_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".sprint",
@@ -64,16 +65,66 @@ def inventory(root: Path | None = None) -> int:
     return 0
 
 
-def dep_graph(root: Path | None = None) -> int:
-    root = root or project_root()
+def _python_module_set(rels: list[str]) -> set[str]:
+    """Dotted names of every module/package in the project: each `.py` file (`__init__.py` →
+    its package) plus every ancestor directory of one — regular AND PEP 420 namespace packages
+    (this repo's own `tests/` has no `__init__.py`, yet `from tests.x import …` is everywhere)."""
+    mods: set[str] = set()
+    for rel in rels:
+        if not rel.endswith(".py"):
+            continue
+        parts = rel[:-3].split("/")
+        if parts[-1] == "__init__":
+            parts = parts[:-1]
+        if parts:
+            mods.add(".".join(parts))
+        dirs = rel.split("/")[:-1]
+        mods.update(".".join(dirs[:i]) for i in range(1, len(dirs) + 1))
+    return mods
+
+
+def _resolve_python_relative(spec: str, rel: str) -> str | None:
+    """`..pkg` in `a/b/c.py` → `a.pkg`. The file's package is its directory (a module's parent,
+    an `__init__.py`'s own). A root-level file has no package, and a climb past the top-level
+    package is an error in Python — both dropped, never recorded as a bare name."""
+    level = len(spec) - len(spec.lstrip("."))
+    pkg = rel.split("/")[:-1]
+    keep = len(pkg) - (level - 1)
+    if keep < 1:
+        return None
+    mod = spec[level:]
+    return ".".join(pkg[:keep] + ([mod] if mod else []))
+
+
+def _resolve_python_deps(deps: list[str], rel: str, modules: set[str]) -> list[str]:
+    """Turn the plugin's marked specs into clean dotted module names (fb-27ad79ae220b)."""
+    out: set[str] = set()
+    for d in deps:
+        if d.startswith(CANDIDATE):
+            base, name = d[len(CANDIDATE):].split(CANDIDATE_SEP, 1)
+            resolved = _resolve_python_relative(base, rel) if base.startswith(".") else base
+            if resolved and f"{resolved}.{name}" in modules:
+                out.add(f"{resolved}.{name}")
+        elif d.startswith("."):
+            resolved = _resolve_python_relative(d, rel)
+            if resolved:
+                out.add(resolved)
+        else:
+            out.add(d)
+    return sorted(out)
+
+
+def build_graph(root: Path) -> dict:
+    """The import graph, in memory (`dep_graph` persists it). One walk, materialized, feeds
+    both the per-file extraction and the Python module set."""
     from prusik.ts_resolve import TsResolver, external_form
     ts = TsResolver(root)   # workspace + per-package tsconfig, loaded once
     forward: dict[str, list[str]] = {}
     reverse: dict[str, list[str]] = defaultdict(list)
     by_lang: dict[str, int] = defaultdict(int)
-    total = 0
-    for src in _iter_source_files(root):
-        total += 1
+    sources = list(_iter_source_files(root))
+    py_modules = _python_module_set([str(s.relative_to(root)) for s in sources])
+    for src in sources:
         result = build_for(src)
         if result is None:
             continue
@@ -85,14 +136,22 @@ def dep_graph(root: Path | None = None) -> int:
             # so the TS module graph actually connects (workspace pkgs, tsconfig
             # paths, relative). Unresolvable/external → kept as an external node.
             deps = sorted({ts.resolve(rel, d) or external_form(d) for d in deps})
+        elif lang == "python":
+            deps = _resolve_python_deps(deps, rel, py_modules)
         forward[rel] = deps
         for d in deps:
             reverse[d].append(rel)
-    graph = {
+    return {
         "forward": forward,
         "reverse": {k: sorted(set(v)) for k, v in reverse.items()},
-        "stats": {"total_files": total, "by_language": dict(by_lang)},
+        "stats": {"total_files": len(sources), "by_language": dict(by_lang)},
     }
+
+
+def dep_graph(root: Path | None = None) -> int:
+    root = root or project_root()
+    graph = build_graph(root)
+    total, by_lang = graph["stats"]["total_files"], graph["stats"]["by_language"]
     out = root / ".sprint" / "dep-graph.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(graph, indent=2))
@@ -102,13 +161,16 @@ def dep_graph(root: Path | None = None) -> int:
     return 0
 
 
-def blast_radius(module_prefix: str, root: Path | None = None) -> list[str]:
-    """Given a module/directory prefix, return files that import from it."""
+def blast_radius(module_prefix: str, root: Path | None = None,
+                 graph: dict | None = None) -> list[str]:
+    """Given a module/directory prefix, return files that import from it. `graph` lets a
+    caller query an in-memory graph (`build_graph`) without touching dep-graph.json."""
     root = root or project_root()
-    graph_path = root / ".sprint" / "dep-graph.json"
-    if not graph_path.exists():
-        dep_graph(root)
-    graph = json.loads(graph_path.read_text())
+    if graph is None:
+        graph_path = root / ".sprint" / "dep-graph.json"
+        if not graph_path.exists():
+            dep_graph(root)
+        graph = json.loads(graph_path.read_text())
     hits: set[str] = set()
     prefix_dot = module_prefix.replace("/", ".").rstrip(".")
     prefix_slash = module_prefix.rstrip("/")
