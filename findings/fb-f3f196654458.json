@@ -24,7 +24,7 @@
       "executed_count": 1,
       "verdict": true,
       "why": "1 test(s) executed, exit 0",
-      "worktree_hash": "3e54d7e-dirty"
+      "worktree_hash": "1f0812c-dirty"
     }
   ],
   "status": "verified-closed"

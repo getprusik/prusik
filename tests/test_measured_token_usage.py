@@ -34,7 +34,7 @@ _TEMPLATE_CFG = _REPO / "prusik" / "templates" / ".claude" / "sprint-config.yaml
 _PRESET = (_REPO / "prusik" / "templates" / ".claude" / "sprint-config-presets"
            / "fastapi-postgres.yaml")
 
-# The phases block of the template as shipped through v0.227.1 (9e6132a, lines 125-219),
+# The phases block of the template as shipped through v0.227.1 (tag v0.227.1, lines 125-219),
 # verbatim: indented sequences, blank phase separators, inline comments — the layout every
 # untouched adopter config has, so retirement must delete ONLY the budget_tokens lines.
 _SHIPPED_PHASES = r"""phases:

@@ -24,7 +24,7 @@
       "executed_count": 0,
       "verdict": false,
       "why": "command exited 1 (non-zero) \u2014 not clean",
-      "worktree_hash": "802b318-dirty"
+      "worktree_hash": "0022de6-dirty"
     },
     {
       "at": "2026-10-26T06:54:15.135176+00:00",
@@ -32,7 +32,7 @@
       "executed_count": 0,
       "verdict": false,
       "why": "command exited 1 (non-zero) \u2014 not clean",
-      "worktree_hash": "802b318-dirty"
+      "worktree_hash": "0022de6-dirty"
     },
     {
       "at": "2026-10-26T07:03:57.852940+00:00",
@@ -40,7 +40,7 @@
       "executed_count": 1,
       "verdict": true,
       "why": "1 test(s) executed, exit 0",
-      "worktree_hash": "2d56081-dirty"
+      "worktree_hash": "760ae50-dirty"
     }
   ],
   "status": "verified-closed"
