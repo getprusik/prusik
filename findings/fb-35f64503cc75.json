@@ -1,0 +1,16 @@
+{
+  "id": "fb-35f64503cc75",
+  "created_at": "2026-10-26T00:03:14.425977+00:00",
+  "kind": "bug",
+  "severity": "med",
+  "title": "blast_plan import reach is zero for a changed package __init__.py (queried as pkg.__init__, matches no edge)",
+  "detail": "Surfaced by brief-critic review of python-from-import-edges (2026-10-25). blast_plan._import_reach strips the file extension to build the module prefix, so a changed pkg/__init__.py is queried as \"pkg.__init__\" \u2014 no import edge is ever named that, so importers of the package (import pkg / from pkg import x) are never flagged at-risk. Fix: map a trailing \"/__init__\" to the package itself (\"pkg\") before blast_radius, with a test that a change to pkg/__init__.py flags an `import pkg` test.",
+  "feature": null,
+  "content_hash": "35f64503cc75",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

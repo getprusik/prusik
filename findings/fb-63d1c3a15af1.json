@@ -1,0 +1,16 @@
+{
+  "id": "fb-63d1c3a15af1",
+  "created_at": "2026-10-26T00:15:58.345796+00:00",
+  "kind": "bug",
+  "severity": "med",
+  "title": "src-layout Python projects get almost no from-import edges: module names are root-relative (src.pkg.mod) while code imports pkg.mod",
+  "detail": "Regression-sentinel review of python-from-import-edges (2026-10-25): on the engine the fix adds 483 import edges, but on a src-layout adopter (package under src/) it adds +1 \u2014 `from pkg import mod` candidates are checked against root-relative module names (src.pkg.mod) and never match, while relative imports resolve to src.* names (mixed naming). HEAD recorded neither, so not a regression, but the adopter that would gain most from the Python recall fix gains nothing. blast_radius/plan import reach for such projects stay blind to from-imports. Fix: detect source roots (src/ with packages, or pyproject [tool.setuptools] package-dir / packages.find where) and map module names relative to the source root for both the module set and the query prefix; moat-test with a src-layout fixture.",
+  "feature": "python-from-import-edges",
+  "content_hash": "63d1c3a15af1",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

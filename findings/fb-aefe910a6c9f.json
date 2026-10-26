@@ -1,0 +1,16 @@
+{
+  "id": "fb-aefe910a6c9f",
+  "created_at": "2026-10-26T00:04:45.315266+00:00",
+  "kind": "bug",
+  "severity": "med",
+  "title": "discovery._iter_source_files skips EVERY file when the project itself lives under a dir named build/vendor/target/dist (IGNORE_DIRS checked against absolute path parts)",
+  "detail": "Spotted 2026-10-25 while scoping python-from-import-edges: prusik/discovery.py _iter_source_files tests `any(part in IGNORE_DIRS for part in p.parts)` on the ABSOLUTE path, so a project at e.g. ~/work/build/myapp or /opt/vendor/svc yields zero source files \u2014 empty inventory, empty dep-graph, map-freshness and blast radius silently blind. Fix: test p.relative_to(root).parts; moat-test with a project rooted under a dir named build/.",
+  "feature": "python-from-import-edges",
+  "content_hash": "aefe910a6c9f",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
