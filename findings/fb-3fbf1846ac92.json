@@ -10,7 +10,86 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": "CUR=$(prusik --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1); [ -n \"$CUR\" ] && [ \"$(printf '%s\\n%s\\n' '0.224.0' \"$CUR\" | sort -V | head -1)\" = '0.224.0' ] && echo \"1 passed: engine carries moat-proven fix fb-3fbf1846ac92 (prusik $CUR >= 0.224.0)\"",
+    "fixed_in": "0.224.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-10-25T23:19:43.348707+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "01c4bce-dirty"
+    },
+    {
+      "at": "2026-10-25T23:19:43.652007+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "01c4bce-dirty"
+    },
+    {
+      "at": "2026-10-26T00:12:10.737407+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "52b29aa-dirty"
+    },
+    {
+      "at": "2026-10-26T00:12:11.126973+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "52b29aa-dirty"
+    },
+    {
+      "at": "2026-10-26T00:13:22.831713+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "52b29aa-dirty"
+    },
+    {
+      "at": "2026-10-26T00:13:23.053071+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "52b29aa-dirty"
+    },
+    {
+      "at": "2026-10-26T00:17:10.555491+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "52b29aa-dirty"
+    },
+    {
+      "at": "2026-10-26T00:17:10.938455+00:00",
+      "exit": 1,
+      "executed_count": 0,
+      "verdict": false,
+      "why": "command exited 1 (non-zero) \u2014 not clean",
+      "worktree_hash": "52b29aa-dirty"
+    },
+    {
+      "at": "2026-10-26T00:40:05.339823+00:00",
+      "exit": 0,
+      "executed_count": 1,
+      "verdict": true,
+      "why": "1 test(s) executed, exit 0",
+      "worktree_hash": "dcbc1b8-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
