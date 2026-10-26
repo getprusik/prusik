@@ -1,0 +1,16 @@
+{
+  "id": "fb-5b83acbaab4a",
+  "created_at": "2026-10-26T16:16:37.502235+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "ledger events from a call with an explicit project root land in the cwd's project, not that root",
+  "detail": "ledger.append always resolves ledger_path() via project_root() (CLAUDE_PROJECT_DIR or a cwd walk). Callers that operate on an explicit root, e.g. discovery.dep_graph(root) / fingerprint_map, and issues, log their event into whatever project the cwd resolves to, not into root/.sprint/ledger.jsonl. Surfaced by the brief-critic of hermetic-test-ledger (fb-f3f196654458): several test leaks into the engine's real ledger were this path (dep_graph(tmp_path) run from the repo cwd). Fix: thread the root through append (append(event, root=...)) for root-scoped operations.",
+  "feature": null,
+  "content_hash": "5b83acbaab4a",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
