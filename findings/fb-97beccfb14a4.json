@@ -1,0 +1,16 @@
+{
+  "id": "fb-97beccfb14a4",
+  "created_at": "2026-10-27T02:03:06.868681+00:00",
+  "kind": "bug",
+  "severity": "high",
+  "title": "gate capture stamps worktree_hash AFTER the run, so a mid-run worktree change mislabels stale evidence as current",
+  "detail": "gate.py capture: subprocess.run(cmd) executes first; wt_hash = _worktree_substantive_hash(...) is computed after it returns (~gate.py:2746) and written into the evidence entry. usage-rollup reviewing: regression-sentinel's full-suite capture was running when fix round 1 changed worktrees/backend-builder/prusik/{serve,gate,effort}.py at 20:59:28; the capture finished 20:59:58 and recorded worktree_hash 2de9e7280a648940 = the POST-fix hash for a run that executed PRE-fix code. verdict-current then said 'verdict current ... carry forward, skip re-dispatch'. Fix: hash before the run and after; record the pre-run hash, and refuse/flag the capture when they differ.",
+  "feature": "usage-rollup",
+  "content_hash": "97beccfb14a4",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

@@ -1,0 +1,16 @@
+{
+  "id": "fb-a609748e159f",
+  "created_at": "2026-10-27T01:25:55.388234+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "pre-tool writable gate misses in-place file edits by sed -i / perl -i",
+  "detail": "During usage-rollup planning, the Edit tool on design/usage-rollup/scope.md was correctly blocked (not writable in planning), but a Bash 'sed -i \"\" s/.../.../ design/usage-rollup/scope.md' in the same turn modified the file: _bash_redirect_targets only parses shell redirects, not in-place editors (sed -i, perl -i, etc.). Repro: active sprint in planning; Bash: sed -i '' 's/a/b/' design/<f>/scope.md -> allowed, file changed. Expected: denied like the Edit.",
+  "feature": "usage-rollup",
+  "content_hash": "a609748e159f",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
