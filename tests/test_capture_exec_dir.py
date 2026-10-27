@@ -29,6 +29,9 @@ def _repo_with_worktree(tmp_path: Path) -> tuple[Path, Path]:
     _git(root, "config", "user.name", "t")
     (root / ".sprint").mkdir()
     (root / "src.py").write_text("x = 1\n")
+    # the run marker is a gitignored artifact: a capture that writes judged code is
+    # refused as a mid-run tree change (fb-97beccfb14a4)
+    (root / ".gitignore").write_text("RAN_HERE.txt\n")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "init")
     solo = root / "worktrees" / "solo"

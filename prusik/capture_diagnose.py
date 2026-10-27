@@ -38,6 +38,9 @@ class CaptureResult:
     value: int         # parsed execution primitive (passed+failed / files checked)
     output: str        # combined stdout+stderr
     command: str       # the reconstructed shell line
+    # judged-tree paths whose content differed between the snapshots taken before and
+    # after the run (fb-97beccfb14a4); empty when the tree held still
+    changed_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -144,12 +147,42 @@ def _stale_bundler_cache(r: CaptureResult) -> NonEvidence | None:
     )
 
 
-# The registered non-evidence modes, in match order. Order matters only when two could
-# match the same result; today they're disjoint. APPEND new detectors here.
+_SHOWN_PATHS = 5
+
+
+def _worktree_changed_mid_run(r: CaptureResult) -> NonEvidence | None:
+    # The judged tree changed while the command ran, so its output describes neither the
+    # tree before nor the one after — stamping either hash on it mislabels it
+    # (fb-97beccfb14a4: a fix landed mid-way through a full-suite capture, the entry carried
+    # the post-fix hash, and verdict-current carried the pre-fix PASS). Exit-code-agnostic:
+    # a red over a mixed tree is no more evidence than a green.
+    if not r.changed_paths:
+        return None
+    paths = sorted(r.changed_paths)
+    shown = ", ".join(paths[:_SHOWN_PATHS])
+    more = len(paths) - _SHOWN_PATHS
+    if more > 0:
+        shown += f" (+{more} more)"
+    return NonEvidence(
+        "worktree_changed_mid_run",
+        f"the judged code changed while this {r.kind} run was in progress ({shown}), so "
+        f"its output describes neither the tree before nor after and no entry was "
+        f"recorded. If another agent edited code during the run, re-capture once the tree "
+        f"is settled. If the command itself writes these files (a --fix/format/codegen "
+        f"step, or a test artifact that is not gitignored), run that step outside capture "
+        f"or gitignore the artifact, then re-capture.",
+        1,
+    )
+
+
+# The registered non-evidence modes, in match order. Modes can overlap (a mid-run tree
+# change can coincide with any other); the FIRST match is the one reported, so a mode whose
+# remedy must come first sits earlier. APPEND new detectors here.
 _DETECTORS = (
     _command_not_found,
     _cache_replay,
     _stale_bundler_cache,
+    _worktree_changed_mid_run,
 )
 
 # Stable names of every registered mode — the completeness test pins this to _DETECTORS
@@ -159,6 +192,7 @@ KNOWN_MODES = (
     "command_not_found",
     "cache_replay",
     "stale_bundler_cache",
+    "worktree_changed_mid_run",
 )
 
 

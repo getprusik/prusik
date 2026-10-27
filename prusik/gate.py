@@ -2364,6 +2364,26 @@ def _worktree_substantive_hash(root: Path, extra: tuple[str, ...] = (),
     return _h.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
+def _judged_snapshot(root: Path, extra: tuple[str, ...] = ()) -> tuple[str, dict[str, str]]:
+    """One read of the judged tree: `_worktree_substantive_hash` over it, plus a per-path
+    digest (each code file's sha256, each folded-in `extra` doc's substantive_hash) so two
+    snapshots name the paths that differ (fb-97beccfb14a4)."""
+    import hashlib as _h
+    from prusik import schema
+    files = _judged_code_files(root)
+    digests = {rel: _h.sha256(content).hexdigest() for rel, content in files}
+    for ex in extra:
+        if (root / ex).exists():
+            digests[ex] = schema.substantive_hash(root / ex)
+    return _worktree_substantive_hash(root, extra, files), digests
+
+
+def _changed_paths(before: dict[str, str], after: dict[str, str]) -> tuple[str, ...]:
+    """Paths added, removed or rewritten between two `_judged_snapshot` digests."""
+    return tuple(sorted(p for p in before.keys() | after.keys()
+                        if before.get(p) != after.get(p)))
+
+
 def _judged_key(role: str, feature: str, artifact: str | None) -> str:
     """Stable ledger key for what `role` judged. Reviewers judge the
     worktree (one synthetic key, so record/lookup always agree); critics
@@ -2853,6 +2873,11 @@ def capture(args) -> int:
     exec_dir = _resolve_exec_dir(root)
     if (wt_warn := _wrong_tree_warning(exec_dir, root, cmd_str)):
         print(wt_warn, file=sys.stderr)
+    # Snapshot the judged tree BEFORE the run and again after: the evidence is stamped with
+    # the tree it ran against, and a change mid-run is refused below (fb-97beccfb14a4).
+    role = _PHASE_ROLE.get(args.phase, "")
+    extra = _REVIEWER_INPUTS.get(role, ())
+    wt_hash, pre_digests = _judged_snapshot(root, extra)
     try:
         proc = subprocess.run(["/bin/bash", "-c", cmd_str], cwd=str(exec_dir), env=cap_env,
                                capture_output=True, text=True,
@@ -2881,8 +2906,10 @@ def capture(args) -> int:
     # evidence-capture finding cluster (exit-127 fb-53f161606abc, cache-replay an adopter
     # fb-b587d8d9b71c, …).
     from prusik import capture_diagnose
+    changed = _changed_paths(pre_digests, _judged_snapshot(root, extra)[1])
     verdict = capture_diagnose.diagnose(capture_diagnose.CaptureResult(
-        kind=kind, exit_code=exit_code, value=value, output=combined, command=cmd_str))
+        kind=kind, exit_code=exit_code, value=value, output=combined, command=cmd_str,
+        changed_paths=changed))
     if verdict is not None:
         print(f"[prusik-gate] capture: {verdict.remedy}", file=sys.stderr)
         ledger.append("capture_non_evidence", feature=args.feature,
@@ -2895,8 +2922,6 @@ def capture(args) -> int:
         from prusik import suite_baseline
         suite_baseline.update(root, value)
     out_sha = hashlib.sha256(combined.encode("utf-8")).hexdigest()[:16]
-    role = _PHASE_ROLE.get(args.phase, "")
-    wt_hash = _worktree_substantive_hash(root, _REVIEWER_INPUTS.get(role, ()))
 
     try:
         exec_rel = str(exec_dir.resolve().relative_to(root.resolve())) or "."

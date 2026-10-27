@@ -3,6 +3,24 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.230.0] — A capture whose tree changed mid-run is never recorded
+
+- **Evidence is stamped with the tree it ran against (fb-97beccfb14a4).** `prusik gate capture`
+  hashed the judged tree only after the command returned, so an edit landing mid-run was
+  stamped onto output from the code before it. In the usage-rollup sprint, a fix landed during
+  the regression-sentinel's full-suite capture; the entry carried the post-fix hash, and
+  `verdict-current` carried the pre-fix PASS forward. `capture` now snapshots the judged tree
+  before and after the run and stamps the pre-run hash. The hash and the judged file set are
+  unchanged, so every existing comparison keeps its meaning.
+- **A mid-run change is non-evidence, through the registry.** A new `capture_diagnose`
+  detector, `worktree_changed_mid_run`, refuses the capture whatever its exit code: it exits
+  1, records no entry, and logs `capture_non_evidence`. Prior evidence stays untouched, with
+  or without `--reset`. The message names up to 5 changed paths and both fixes: re-capture
+  once the tree is settled, or, when the command itself writes those files (a
+  `--fix`/format/codegen step, or a test artifact that is not gitignored), run that step
+  outside capture or gitignore the artifact. Writes to gitignored files never trigger it.
+  `CaptureResult` gains `changed_paths`, defaulting to `()`.
+
 ## [0.229.0] — Token usage rolls up per product, briefing included
 
 - **One rollup of a product's measured usage.** `usage.rollup(records)` is a pure function over
