@@ -40,7 +40,7 @@ from prusik import effort, ledger, schema
 _UPFRONT_CRITICS = {"brief-critic", "scope-critic", "plan-critic"}
 _LATE_CRITICS = {"regression-sentinel", "conventions-enforcer"}
 _APPROVED = {"approved", "pass", "ok", "accept", "accepted"}
-_PHASE_ORDER = ["scoping", "triage", "planning", "solo_execute",
+_PHASE_ORDER = ["briefing", "scoping", "triage", "planning", "solo_execute",
                 "building", "reviewing", "integrating"]
 
 

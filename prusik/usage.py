@@ -104,12 +104,19 @@ def register(ref: SessionRef | None) -> None:
         pass
 
 
-def known_roles(root: Path) -> set[str]:
-    """Roles a subagent's description may name: the packaged prusik agents (present wherever
-    prusik runs) plus any the project ships in .claude/agents."""
-    from prusik import roles
+def packaged_roles() -> frozenset[str]:
+    """The packaged prusik roles (stems of `prusik/templates/.claude/agents/*.md`), present
+    wherever prusik runs. The single source for `known_roles` and the export's role
+    anonymization allowlist."""
     pkg = Path(__file__).parent / "templates" / ".claude" / "agents"
-    return {p.stem for p in pkg.glob("*.md")} | roles.shipped_agents(root)
+    return frozenset(p.stem for p in pkg.glob("*.md"))
+
+
+def known_roles(root: Path) -> set[str]:
+    """Roles a subagent's description may name: the packaged prusik agents plus any the
+    project ships in .claude/agents."""
+    from prusik import roles
+    return set(packaged_roles()) | roles.shipped_agents(root)
 
 
 @dataclass
@@ -227,3 +234,74 @@ def _measure(feature: str, phase: str | None, now: datetime | None) -> Usage:
                             (u.by_model, row["model"]), (u.by_session, row["session"])):
             bucket[key] = bucket.get(key, 0) + n
     return u
+
+
+# ---- rollup: one product's measured usage, from the ledger alone -------------------------
+
+_BY_KEYS = ("by_phase", "by_role", "by_model")   # never by_session: local plumbing
+
+
+def _int_dict(value: object) -> dict[str, int]:
+    """A snapshot's by_* attribution: non-dict reads as {}, non-int values are skipped
+    (bool too — it is an int subclass but never a token count)."""
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): v for k, v in value.items()
+            if isinstance(v, int) and not isinstance(v, bool)}
+
+
+def rollup(records: list[dict]) -> dict:
+    """The ONE rollup of a product's measured token usage, over the ledger's `sprint_complete`
+    events — pure: no transcript, file or clock is read, so it works long after the host has
+    cleaned the transcripts up. It is the only reader of a snapshot's by_phase (`prusik
+    effort` and the HQ export both take it from here).
+
+    A sprint is measured when `actual.tokens` is an int and `actual.usage` is a snapshot;
+    unmeasured with its own reason when `actual.tokens_unmeasured` is set; otherwise
+    unmeasured as `pre-measurement` (completed before v0.228.0)."""
+    import statistics
+    done = sorted((r for r in records
+                   if isinstance(r, dict) and r.get("event") == "sprint_complete"),
+                  key=lambda r: str(r.get("ts") or ""))
+    out: dict = {"sprints": 0, "measured": 0, "unmeasured": 0, "unmeasured_reasons": {},
+                 "tokens": 0, "median_tokens": None,
+                 "by_phase": {}, "by_role": {}, "by_model": {},
+                 "by_month": {}, "per_sprint": []}
+    measured_tokens: list[int] = []
+    for r in done:
+        actual = r.get("actual")
+        if not isinstance(actual, dict):
+            actual = {}
+        tokens, snap = actual.get("tokens"), actual.get("usage")
+        ts = str(r.get("ts") or "")
+        is_measured = (isinstance(tokens, int) and not isinstance(tokens, bool)
+                       and isinstance(snap, dict))
+        out["sprints"] += 1
+        month = out["by_month"].setdefault(ts[:7], {"sprints": 0, "measured": 0, "tokens": 0})
+        month["sprints"] += 1
+        entry: dict = {"feature": r.get("feature"), "ts": ts, "measured": is_measured,
+                       "reason": None, "tokens": None,
+                       "by_phase": {}, "by_role": {}, "by_model": {}}
+        if is_measured and isinstance(tokens, int) and isinstance(snap, dict):
+            out["measured"] += 1
+            out["tokens"] += tokens
+            month["measured"] += 1
+            month["tokens"] += tokens
+            measured_tokens.append(tokens)
+            entry["tokens"] = tokens
+            for key in _BY_KEYS:
+                attributed = _int_dict(snap.get(key))
+                entry[key] = attributed
+                agg = out[key]
+                for k, n in attributed.items():
+                    agg[k] = agg.get(k, 0) + n
+        else:
+            reason = actual.get("tokens_unmeasured") or "pre-measurement"
+            reason = str(reason)
+            out["unmeasured"] += 1
+            out["unmeasured_reasons"][reason] = out["unmeasured_reasons"].get(reason, 0) + 1
+            entry["reason"] = reason
+        out["per_sprint"].append(entry)
+    if measured_tokens:
+        out["median_tokens"] = statistics.median(measured_tokens)
+    return out

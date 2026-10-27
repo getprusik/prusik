@@ -86,9 +86,152 @@ def pre_tool(args=None) -> int:
 
     state = phases.current_sprint_state()
     if not state:
+        # No active sprint: the lease above is the only deny on this path, so the write is
+        # allowed — a first brief write here opens its briefing window (fb-1e3ecda9d011).
+        _record_briefing_for_event(event, None)
         return 0  # no active sprint
 
-    return _gate_tool_event(event, config, state["phase"], state.get("feature"), adapter)
+    reason = _gate_decision(event, config, state["phase"], state.get("feature"))
+    if reason is not None:
+        return adapter.deny(reason)
+    # Only a write the gate ALLOWED is recorded: a denied write never happened. Keyed on the
+    # policy decision, not the exit code (a host's deny can exit 0).
+    _record_briefing_for_event(event, state.get("feature"))
+    return 0
+
+
+# ---- briefing window (fb-1e3ecda9d011) ---------------------------------------------------
+# A brief's first write opens a `briefing` span on the effort timeline, so the briefing work
+# before `sprint_started` (brief + brief-critic) is attributed to the sprint it briefs. The
+# event is SYSTEM-recorded here (and by `prusik serve` through the same recorder), never
+# claimed. Runs on every tool call: a cheap "briefs" substring guard comes before any path or
+# marker work, and only already-loaded modules (os, json, ledger, phases) are used.
+
+def _briefing_marker_path() -> Path:
+    """`.sprint/briefing.json` beside the ledger — the same root resolution `ledger.append`
+    uses, so the event and the marker can never land in different `.sprint/` dirs."""
+    return ledger.ledger_path().parent / "briefing.json"
+
+
+def _read_briefing_marker() -> dict:
+    """The `{slug: iso ts}` marker; a missing, corrupt or non-dict marker reads as {}."""
+    try:
+        data = json.loads(_briefing_marker_path().read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_briefing_marker(marker: dict) -> None:
+    """Atomic replace (temp file + os.replace), so a reader never sees a half-written marker."""
+    path = _briefing_marker_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(marker, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp, path)
+
+
+def briefing_failed(source: str, exc: BaseException) -> None:
+    """Every caught briefing-recorder fault leaves a ledger event — never a silent
+    degradation. The ONE definition of the `briefing_record_failed` event shape; `source`
+    names the entry that faulted (file_targets, bash_redirect, recorder, clear, serve)."""
+    try:
+        ledger.append("briefing_record_failed", source=source,
+                      error_type=type(exc).__name__, error=str(exc)[:500])
+    except Exception:  # noqa: BLE001 — an unwritable ledger fails every sprint write alike
+        pass
+
+
+def _brief_slug(target: str, real_root: str) -> str | None:
+    """The slug a write target briefs, or None. Only `briefs/<name>` exactly (two parts)
+    inside the project root matches: `<slug>.criteria.yaml` or `<slug>.md`."""
+    t = str(target)
+    if os.path.isabs(t):
+        rel = os.path.relpath(os.path.realpath(t), real_root)
+    else:
+        rel = os.path.normpath(t)
+    rel = rel.replace("\\", "/")
+    if rel == ".." or rel.startswith("../"):
+        return None                                  # outside the project
+    parts = rel.split("/")
+    if len(parts) != 2 or parts[0] != "briefs":
+        return None
+    name = parts[1]
+    if name.endswith(".criteria.yaml"):
+        slug = name[:-len(".criteria.yaml")]
+    elif name.endswith(".md"):
+        slug = name[:-3]
+    else:
+        return None
+    if not slug or slug.startswith("."):
+        return None
+    return slug
+
+
+def record_briefing(targets: list[str], active_feature: str | None) -> list[str]:
+    """The ONE briefing recorder (the PreToolUse hook and `prusik serve` both call it).
+    Appends `briefing_started` (feature=slug) for each newly briefed slug and upserts the
+    `.sprint/briefing.json` dedup marker. Returns the slugs recorded. Never raises: a fault
+    goes to `briefing_failed("recorder", exc)` and returns []. Callers record their own
+    faults outside this call through the same public `briefing_failed`."""
+    try:
+        cand = [t for t in targets if "briefs" in str(t)]
+        if not cand:
+            return []                                # the hot-path cost: no path, no marker
+        real_root = os.path.realpath(ledger.project_root())
+        slugs: list[str] = []
+        for t in cand:
+            slug = _brief_slug(t, real_root)
+            if slug and slug != active_feature and slug not in slugs:
+                slugs.append(slug)
+        if not slugs:
+            return []
+        marker = _read_briefing_marker()
+        fresh = [s for s in slugs if s not in marker]
+        if not fresh:
+            return []
+        from datetime import datetime, timezone      # already loaded by ledger
+        for slug in fresh:
+            ledger.append("briefing_started", feature=slug)
+            marker[slug] = datetime.now(timezone.utc).isoformat()
+        _write_briefing_marker(marker)
+        return fresh
+    except Exception as exc:  # noqa: BLE001 — a hook must never fail, nor fail silently
+        briefing_failed("recorder", exc)
+        return []
+
+
+def _record_briefing_for_event(event, active_feature: str | None) -> None:
+    """The hook's only entry point to the recorder. Each target source is computed in its
+    own guarded step, so a fault in one never disables the other, and each fault leaves a
+    `briefing_record_failed` event. Never raises."""
+    try:
+        targets = list(event.file_targets)
+    except Exception as exc:  # noqa: BLE001
+        briefing_failed("file_targets", exc)
+        targets = []
+    command = getattr(event, "command", None)
+    # The "briefs" substring guard comes first: a redirect into briefs/ names it, so every
+    # other Bash call skips the redirect scan entirely.
+    if command and "briefs" in command:
+        try:
+            targets += list(_bash_redirect_targets(_strip_heredocs(command)))
+        except Exception as exc:  # noqa: BLE001
+            briefing_failed("bash_redirect", exc)
+    if targets:
+        record_briefing(targets, active_feature)
+
+
+def clear_briefing(slug: str) -> None:
+    """Remove `slug` from the marker (sprint_start, after its `sprint_started` append), so a
+    later re-brief of the same slug opens a fresh window. Never raises."""
+    try:
+        marker = _read_briefing_marker()
+        if slug in marker:
+            del marker[slug]
+            _write_briefing_marker(marker)
+    except Exception as exc:  # noqa: BLE001
+        briefing_failed("clear", exc)
 
 
 # fb-0b9d0a6d1ce6 — what counts as "mutating the SHARED tree" (vs a worktree,
@@ -156,9 +299,18 @@ def _mutates_shared_tree(event) -> bool:
 
 
 def _gate_tool_event(event, config: dict, phase: str, feature, adapter) -> int:
-    """Host-agnostic gate policy over a neutral ToolEvent. Returns the adapter's deny exit
-    code if the event is blocked, else 0. Identical decisions/ledger records/messages as
-    before the v0.22 adapter seam — only the I/O (event parsing + deny) is now adapter-owned."""
+    """Host-agnostic gate policy over a neutral ToolEvent, expressed through the adapter:
+    the adapter's deny exit code if the event is blocked, else 0. The policy itself is
+    `_gate_decision`; only the expression (deny) is adapter-owned."""
+    reason = _gate_decision(event, config, phase, feature)
+    return adapter.deny(reason) if reason is not None else 0
+
+
+def _gate_decision(event, config: dict, phase: str, feature) -> str | None:
+    """The gate's POLICY over a neutral ToolEvent: the deny message if the event is blocked
+    (its `gate_blocked` ledger record already appended), else None. Separate from the
+    adapter's expression of a deny — a host may express a deny with exit 0 (Claude Code:
+    JSON on stdout), so "allowed" is this None, never an exit code."""
     for target in event.file_targets:
         ok, reason = phases.is_path_writable(target, config, phase, feature)
         if not ok:
@@ -171,8 +323,8 @@ def _gate_tool_event(event, config: dict, phase: str, feature, adapter) -> int:
                           phase=phase, feature=feature,
                           gate_class=gate_class.WRITABLE_SCOPE, reason=reason,
                           redirect_rel=rel)
-            return adapter.deny(_writable_scope_deny_msg(
-                "write", target, reason, config, phase, feature))
+            return _writable_scope_deny_msg(
+                "write", target, reason, config, phase, feature)
 
     if event.command is not None:
         cmd = event.command
@@ -190,8 +342,8 @@ def _gate_tool_event(event, config: dict, phase: str, feature, adapter) -> int:
                               phase=phase, feature=feature,
                               gate_class=gate_class.WRITABLE_SCOPE,
                               reason=f"bash redirect to unwriteable path: {target} ({reason})")
-                return adapter.deny(_writable_scope_deny_msg(
-                    "bash redirect", target, reason, config, phase, feature))
+                return _writable_scope_deny_msg(
+                    "bash redirect", target, reason, config, phase, feature)
 
         # Preferred: deny_commands — token-based match. Immune to prose
         # inside heredocs or strings because we check command-position only.
@@ -201,7 +353,7 @@ def _gate_tool_event(event, config: dict, phase: str, feature, adapter) -> int:
                               phase=phase, feature=feature,
                               gate_class=gate_class.DENY_COMMAND,
                               reason=f"deny command: {denied}")
-                return adapter.deny(f"[prusik-gate] phase '{phase}' blocks command: {denied!r}")
+                return f"[prusik-gate] phase '{phase}' blocks command: {denied!r}"
 
         # Legacy: deny_bash — raw regex. Kept for back-compat with configs
         # authored before v0.3.5.
@@ -211,9 +363,9 @@ def _gate_tool_event(event, config: dict, phase: str, feature, adapter) -> int:
                               phase=phase, feature=feature,
                               gate_class=gate_class.DENY_COMMAND,
                               reason=f"deny pattern: {pattern}")
-                return adapter.deny(f"[prusik-gate] phase '{phase}' blocks bash pattern /{pattern}/")
+                return f"[prusik-gate] phase '{phase}' blocks bash pattern /{pattern}/"
 
-    return 0
+    return None
 
 
 # v0.8.9: When a deny fires on a path the agent COULD have written to had
@@ -1070,6 +1222,7 @@ def sprint_start(args) -> int:
     _mc.snapshot(root)
     ledger.append("sprint_started", feature=feature, cleaned_worktrees=cleaned,
                   lane=state.get("lane", "standard"))
+    clear_briefing(feature)   # fb-1e3ecda9d011: a later re-brief opens a fresh window
 
     # Charter freshness — ADVISORY, never blocks (a stale vision is a smell, not a
     # defect; blocking a sprint because the human hasn't revisited the north-star

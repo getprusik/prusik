@@ -765,8 +765,8 @@ def test_effort_reports_tokens_per_feature_and_phase(proj, capsys):
     _ledger(proj, ev)
     records = ledger.read_all()
     assert effort.summarize_features(records)["feat"]["tokens"] == 3_000_000
-    assert effort.summarize_phase_tokens(records) == {"solo_execute": 2_000_000,
-                                                      "reviewing": 1_000_000}
+    assert usage.rollup(records)["by_phase"] == {"solo_execute": 2_000_000,
+                                                 "reviewing": 1_000_000}
     effort.run()
     out = capsys.readouterr().out
     assert "3.0M" in out and "2.0M" in out

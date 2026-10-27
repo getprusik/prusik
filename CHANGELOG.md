@@ -3,6 +3,60 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.229.0] — Token usage rolls up per product, briefing included
+
+- **One rollup of a product's measured usage.** `usage.rollup(records)` is a pure function over
+  the ledger's `sprint_complete` events. It reads no transcript, so it outlives the host's
+  transcript cleanup. It returns:
+  - `sprints`, `measured` and `unmeasured` counts, and `unmeasured_reasons`. A sprint completed
+    before v0.228.0 counts as `pre-measurement`;
+  - `tokens` and `median_tokens` (`None` with no measured sprint);
+  - `by_phase`, `by_role` and `by_model`, summed over measured sprints;
+  - `by_month` and `per_sprint` (in ts order).
+  It never carries `by_session`, and a non-int snapshot value is skipped, never fatal.
+- **`prusik effort` reads the rollup.** `effort.summarize_phase_tokens` is deleted.
+  `tokens_by_phase` (text and `--json`) comes from `rollup(records)["by_phase"]`, and
+  `usage.py` is the only reader of a snapshot's `by_phase`.
+- **The export carries usage.** `prusik report --export` gains a top-level `usage` block in
+  the rollup's shape. It is anonymized by default: each per-sprint entry drops `feature`, and
+  `by_role` keeps only the packaged prusik roles, `main` and `subagent`, summing every other
+  role (a project's own agent, a host agent type) into `other`. `--full` keeps it
+  verbatim. `usage.packaged_roles()` is the one source of the packaged-role set.
+  `EXPORT_SCHEMA_VERSION` stays `1.0`; no key is removed or renamed.
+- **Briefing is attributed to the sprint it briefs (fb-1e3ecda9d011).** The work before
+  `sprint_started` (the brief and the brief-critic) was never counted, measured at 15–33% on
+  top of the recorded cost. Now:
+  - the first write to `briefs/<slug>.md` or `briefs/<slug>.criteria.yaml` records a
+    `briefing_started` ledger event. It is system-recorded through one recorder,
+    `gate.record_briefing`, with two sources: the PreToolUse hook (Write/Edit/notebook targets
+    and Bash redirect targets, and only for a write the gate allowed) and `prusik serve`'s
+    brief form;
+  - the active sprint's own brief opens no window. `.sprint/briefing.json` dedups by slug, and
+    `sprint_start` clears the slug's entry so a later re-brief opens a fresh window;
+  - the hook never raises or blocks a tool call. Every recorder fault appends
+    `briefing_record_failed` with its source, so a degraded recorder is never silent. The
+    pre-tool import set is unchanged, and a non-brief call pays only a substring check;
+  - effort's timeline turns the latest `briefing_started` into a `briefing` span that the
+    feature's `sprint_started` closes. It starts no earlier than the latest closed span of any
+    feature, so it never overlaps a completed sprint and no token is counted twice. A
+    `briefing_started` with no `sprint_started` yields nothing, and a re-started sprint with no
+    new brief opens none;
+  - so `sprint-complete`'s measured `actual.tokens` includes briefing, shown as
+    `by_phase["briefing"]` (the brief-critic under `by_role["brief-critic"]`). A feature's
+    wall-clock still starts at `sprint_started`. The showcase dossier lists `briefing` first.
+- **Known limits.**
+  - Exploration before the first brief write has no feature identity yet, so it is not
+    attributed.
+  - The briefing window starts `measure`'s coverage at `briefing_started`, not
+    `sprint_started`. A registered session last seen inside that window whose transcript the
+    host has since cleaned up now makes the sprint `measured=False` (`transcript unreadable`).
+    This is loud, recorded as `tokens_unmeasured`, never a silent undercount.
+  - `metrics.events` and the export `timeseries` now include `briefing_started` and, on a
+    recorder fault, `briefing_record_failed` (additive, no key changed). `metrics.phases`,
+    overhead and bounce can now show a `briefing` phase.
+
+Closes fb-1e3ecda9d011 (moat-finding:fb-1e3ecda9d011)
+
 ## [0.228.0] — Token usage is measured from the session transcripts
 
 - **Phase budgets work, and the cost of a sprint is measured (fb-a1b7db140a5e).** The watchdog's

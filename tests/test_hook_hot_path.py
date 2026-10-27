@@ -156,6 +156,10 @@ _PRE_CASES = [
     ("reviewing", False, _pre("Edit", {"file_path": "src/app.py"})),
     ("reviewing", True, _pre("Edit", {"file_path": "worktrees/solo/a.py"})),     # active fix round
     ("reviewing", True, _pre("Bash", {"command": "echo hi > out.txt"})),
+    # fb-1e3ecda9d011: a brief write runs the briefing recorder — no new module import
+    (None, False, _pre("Edit", {"file_path": "briefs/new-thing.md"})),
+    ("building", False, _pre("Edit", {"file_path": "briefs/other-thing.md"})),
+    (None, False, _pre("Bash", {"command": "echo x > briefs/new-thing.md"})),
 ]
 
 

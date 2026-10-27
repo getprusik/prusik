@@ -155,6 +155,32 @@ def _ticket_states(root: Path) -> list[dict[str, Any]]:
         return []
 
 
+def _usage_block(records: list[dict], full_detail: bool) -> dict[str, Any]:
+    """The export's `usage` block: `usage.rollup` verbatim for `full_detail`, else anonymized —
+    each per-sprint entry drops `feature`, and `by_role` (top level and per sprint) keeps only
+    packaged prusik roles, `main` and `subagent`, summing every other key (a project's own
+    agent name, a host agentType fallthrough) into `other`. `by_model` keys are host model
+    ids and are kept."""
+    from prusik import usage
+    rolled = usage.rollup(records)
+    if full_detail:
+        return rolled
+    keep = usage.packaged_roles() | {"main", "subagent"}
+
+    def roles(by_role: dict[str, int]) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for k, n in by_role.items():
+            key = k if k in keep else "other"
+            out[key] = out.get(key, 0) + n
+        return out
+
+    rolled["by_role"] = roles(rolled["by_role"])
+    rolled["per_sprint"] = [
+        {**{k: v for k, v in e.items() if k != "feature"}, "by_role": roles(e["by_role"])}
+        for e in rolled["per_sprint"]]
+    return rolled
+
+
 def export_payload(records: list[dict], product: str, root: Path,
                    full_detail: bool = False) -> dict[str, Any]:
     """Build the portable artifact. Anonymized by default (an adopter's opt-in
@@ -216,6 +242,9 @@ def export_payload(records: list[dict], product: str, root: Path,
         # identity; designed with live-cc, fb-c91c2be85603).
         "tickets": _ticket_states(root),
         "timeseries": timeseries(records),   # A1 — per-month activity for trends
+        # Measured token usage per product (fb-1e3ecda9d011) — the rollup's shape;
+        # anonymized by default (no feature names, no project-chosen role names).
+        "usage": _usage_block(records, full_detail),
     }
 
 

@@ -16,7 +16,9 @@ import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-from prusik import schema
+# gate at module level (gate does not import serve: no cycle), so the recorder and its fault
+# event are always importable inside do_POST — there is no "gate unimportable" branch.
+from prusik import gate, phases, schema
 from prusik.ledger import project_root, append
 
 
@@ -171,6 +173,9 @@ class _Handler(BaseHTTPRequestHandler):
             return self._reply({"ok": False, "errors": [f"brief already exists: {brief_path}"]})
         content = _render_brief(form, self.brief_schema)
         brief_path.write_text(content)
+        # The write bypasses the PreToolUse hook, so record the briefing window here through
+        # the same recorder (fb-1e3ecda9d011). Before validation: the write happened either way.
+        _record_briefing(brief_path)
         ok, errors = schema.validate_brief(brief_path)
         if not ok:
             # Leave file so author can hand-edit; still report errors.
@@ -186,6 +191,18 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+
+def _record_briefing(brief_path: Path) -> None:
+    """Open the brief's briefing window via `gate.record_briefing`. The whole call, the
+    active-sprint lookup included (a corrupt .sprint/state.json raises there), is guarded, so
+    a fault never raises out of do_POST and always leaves a `briefing_record_failed` event
+    through `gate.briefing_failed` (source "serve") — gate owns the event's shape."""
+    try:
+        feature = (phases.current_sprint_state() or {}).get("feature")
+        gate.record_briefing([str(brief_path)], feature)
+    except Exception as exc:  # noqa: BLE001 — a brief POST must never fail on bookkeeping
+        gate.briefing_failed("serve", exc)
 
 
 def serve(port: int = 8765, root: Path | None = None) -> int:
