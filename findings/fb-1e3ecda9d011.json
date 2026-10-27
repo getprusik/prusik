@@ -10,7 +10,22 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": "uv run python -m pytest tests/test_usage_rollup.py -q",
+    "fixed_in": "0.229.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-10-27T02:10:42.056285+00:00",
+      "exit": 0,
+      "executed_count": 49,
+      "verdict": true,
+      "why": "49 test(s) executed, exit 0",
+      "worktree_hash": "f4c1c0f-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
