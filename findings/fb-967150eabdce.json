@@ -1,0 +1,16 @@
+{
+  "id": "fb-967150eabdce",
+  "created_at": "2026-10-28T02:34:38.620132+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "conventions-enforcer spec FAILs files outside plan.md Modules touched, contradicting v0.10.0 derived-modules convention",
+  "detail": "prusik/templates/.claude/agents/conventions-enforcer.md Step 0 'Worktree completeness' tells the reviewer to FAIL any changed file not in plan.md ## Modules touched. Since v0.10.0 Fix 1 the list is derived: schema._NON_SUBSTANTIVE_SECTIONS holds '## Modules touched' and gate.py (~2033) compares the actual diff against scope and records drift as a non-blocking modules_reconciled event. Surfaced in model-tier-policy round 4: a reviewer FAILed a legitimately discovered prusik/schema.py fix, costing a full review round. The spec should key completeness to the same scope-vs-diff reconciliation the gate uses.",
+  "feature": "model-tier-policy",
+  "content_hash": "967150eabdce",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
