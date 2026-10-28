@@ -1,0 +1,8 @@
+# Reference adopter profile: each class maps to the model its template frontmatter names today.
+schema_version: "1.0"
+tiers:
+  high_stakes: {model: opus}
+  bounded: {model: sonnet}
+  mechanical: {model: haiku}
+stakes: {low: 1, high: 4}
+risk_weights: {migration: 2, security: 2}

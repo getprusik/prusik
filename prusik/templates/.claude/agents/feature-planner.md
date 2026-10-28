@@ -22,6 +22,7 @@ You convert a scoped problem into an actionable plan that builders can execute a
 - `## Risks` — at least 1 bullet; what might go wrong and how you'll notice
 - `## Out of scope` — adjacent things you're deliberately not doing
 - `## Proposed roles` — which builder roles should own which modules (e.g., "backend-builder → api/checkout/", "test-writer → tests/checkout/")
+- Optional `## Model tiers`: include it only when you deliberately re-tier a role for this feature, one `- <role>: <class> — <reason>` per role. Classes are high_stakes, bounded and mechanical. An invalid item fails `prusik tier resolve` with rc 2 at the next spawn, which is plan-critic's, while plan.md is still writable.
 
 **Discipline:**
 - The plan is a contract. If a builder can't tell from the plan which files to edit, the plan is too vague.

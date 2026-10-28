@@ -3,6 +3,92 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.231.0] — Model tiers: the engine decides the class, the adopter's profile names the model
+
+- **Tier routing is engine policy (fb-4328a6e686ea).** Roles ran on whatever model the
+  orchestrator spawned them with, and adopters who wanted cheaper routing hand-rolled it per
+  project. New `prusik/model_tier.py`:
+  - each packaged role has an engine-owned base class (`high_stakes`, `bounded` or
+    `mechanical`), equal to its template frontmatter today, so a profile mapping the classes
+    back to opus/sonnet/haiku reproduces today's routing exactly;
+  - triage's existing signals score the sprint's stakes: size (S 0, M 1, L 2, XL 3), priority
+    (P0 2, P1 1), team mode +1, and the profile's `risk_weights` matched in the scope's Domains
+    and Risks. The lane comes from `sprint_started.lane`: the trivial lane, which never runs
+    triage, scores from the brief instead (size 0, no team);
+  - high stakes lifts a bounded role to high_stakes, low stakes drops a high_stakes role to
+    bounded, and mechanical never moves. Pre-scope roles and pr-composer are fixed;
+  - a team plan may re-tier a role with an optional `## Model tiers` section
+    (`- <role>: <class> — <reason>`), shown as `source: override`.
+- **The adopter's profile names the model, and fails closed.** Tiering is off until
+  `.claude/sprint-config.yaml` sets `model_tiering: {enabled: true}`. Once it's on,
+  `.claude/model-profile.yaml` must map all three classes to a model ref the host accepts at
+  spawn, and set `stakes: {low, high}` and `risk_weights`. A missing, partial or invalid profile,
+  an unknown role, or a standard-lane stakes-sensitive role resolved before triage is rc 2 with
+  every problem named, never a default. Claude Code's Agent tool takes aliases only, so a
+  pinned model id in a profile is rejected with that explanation; pin an id through the host's
+  own alias settings.
+- **`prusik tier resolve <feature> [--role R | --json]`.** `--role` prints exactly `model=<ref>`
+  or `model=off` for the orchestrator, and it is the only call that records a `tier_resolved`
+  ledger event, so a prediction is on record only where a spawn used it. The sprint-run,
+  sprint-start and brief-new templates gain one rule at every spawn: run it with the feature
+  slug (never `$ARGUMENTS`, which can carry `--trivial`), pass `model=<ref>`, and STOP on
+  rc ≠ 0. A read failure and a record failure are named apart.
+- **`prusik tier report [--json]`, advisory and read-only.** Per completed sprint with a
+  prediction, per role: the predicted class and model, the measured models, and two flags:
+  `not_applied` (tokens ran on a model the ref does not match) and `bounced_below_top` (a
+  role below high_stakes whose authored scope.md/plan.md was REJECTED, or whose phase was
+  rewound into; reviewer PASS/FAIL is never a bounce). Its flags never fail it. A record it
+  cannot use is listed under `skipped` with the reason, and an input it cannot read at all is
+  rc 2, never reported as `off` or as an empty history.
+- **Actuals carry role × model.** `usage.measure` adds `by_role_model` to the sprint-complete
+  snapshot. `usage.role_models(record)` is its only reader: absent reads as `{}`, and
+  malformed raises with the defect named. `rollup` and the HQ export do not carry it.
+- **Host knowledge stays in the adapter.** `PlatformAdapter` gains `spawn_model_refs()`,
+  `pinned_model_note(ref)` and `model_matches(ref, observed)`. `agents_doctor` takes its
+  frontmatter check from them, so it now also accepts `fable` and pinned or Bedrock ids, and
+  still accepts everything it accepted before. A suite guard finds no model or provider
+  name in `prusik/**/*.py` outside `platform_adapter.py` (adopter identity stays with the
+  repo-wide pre-commit boundary check), and two fixture profiles
+  (opus-topped and sonnet-topped) route the same signals to different models with no engine
+  branch on adopter identity.
+- **`schema.parse_sections` ignores headings inside code fences.** Found by this release's
+  dogfood: a plan that showed the `## Model tiers` grammar in a fenced example had the rest
+  of its prose read as overrides. A `## ` line inside a fence is now body text. Fences follow
+  CommonMark: at most 3 spaces of indent, 3 or more backticks or tildes, a backtick fence's
+  info string may not contain a backtick, and a fence closes only on the same character at
+  least as long with no info string. Fence lines stay in the body, and an unclosed fence runs
+  to the end. Of the repo's 79 markdown artifacts, only this release's plan parses
+  differently.
+- **The engine dogfoods it.** This repo enables tiering with its own `.claude/model-profile.yaml`
+  (low 2, high 6; hook 1, ledger 1, migration 2, security 2). `prusik tier resolve
+  model-tier-policy` at integrating:
+
+```
+model tiers: model-tier-policy (lane standard, stakes high, score 6)
+  size L: +2
+  priority P1: +1
+  team mode: +1
+  risk 'hook': +1
+  risk 'ledger': +1
+  score 6 >= high 6 -> high
+role                  class        model   source
+backend-builder       high_stakes  opus    stakes
+brief-critic          mechanical   haiku   fixed
+cartographer          high_stakes  opus    fixed
+conventions-enforcer  high_stakes  opus    stakes
+conventions-scribe    bounded      sonnet  fixed
+feature-planner       high_stakes  opus    stakes
+frontend-builder      high_stakes  opus    stakes
+integrator            high_stakes  opus    stakes
+plan-critic           high_stakes  opus    stakes
+pr-composer           mechanical   haiku   fixed
+product-fit-critic    high_stakes  opus    fixed
+regression-sentinel   high_stakes  opus    stakes
+scope-critic          high_stakes  opus    fixed
+scoping               bounded      sonnet  fixed
+test-writer           high_stakes  opus    stakes
+```
+
 ## [0.230.0] — A capture whose tree changed mid-run is never recorded
 
 - **Evidence is stamped with the tree it ran against (fb-97beccfb14a4).** `prusik gate capture`

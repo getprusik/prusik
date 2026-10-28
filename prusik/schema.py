@@ -25,20 +25,53 @@ def load_schema(name: str) -> dict:
         return yaml.safe_load(f)
 
 
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def _fence_open(line: str) -> tuple[str, int] | None:
+    """(char, length) when `line` opens a CommonMark code fence: at most 3 spaces of indent,
+    then 3+ backticks or tildes; a backtick fence's info string may not contain a backtick
+    (so a line that starts with an inline ```code``` span is prose, not a fence)."""
+    m = _FENCE.match(line)
+    if m is None:
+        return None
+    run, info = m.group(1), m.group(2)
+    if run[0] == "`" and "`" in info:
+        return None
+    return run[0], len(run)
+
+
+def _fence_closes(line: str, fence: tuple[str, int]) -> bool:
+    """A closing fence: at most 3 spaces of indent, the opening character repeated at least
+    as many times, and nothing but whitespace after (```python inside a fence is content)."""
+    m = _FENCE.match(line)
+    return (m is not None and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1]
+            and not m.group(2).strip())
+
+
 def parse_sections(text: str) -> dict[str, str]:
-    """Parse markdown into {heading: body}. Uses '## ' as section delimiter."""
+    """Parse markdown into {heading: body}. Uses '## ' as section delimiter. A '## ' line
+    inside a fenced code block is body text, not a heading: an artifact that shows a section
+    in an example must not open that section. Fences follow CommonMark (see `_fence_open`),
+    so prose that merely mentions backticks never swallows the headings after it. Fence
+    lines stay in the body; an unclosed fence runs to the end, as in CommonMark."""
     sections: dict[str, str] = {}
     current: str | None = None
     body: list[str] = []
+    fence: tuple[str, int] | None = None
     for line in text.splitlines():
-        if line.startswith("## "):
+        if fence is None and line.startswith("## "):
             if current is not None:
                 sections[current] = "\n".join(body).strip()
             current = line.strip()
             body = []
-        else:
-            if current is not None:
-                body.append(line)
+            continue
+        if fence is None:
+            fence = _fence_open(line)
+        elif _fence_closes(line, fence):
+            fence = None
+        if current is not None:
+            body.append(line)
     if current is not None:
         sections[current] = "\n".join(body).strip()
     return sections

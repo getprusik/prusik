@@ -50,6 +50,7 @@ Run the full sprint for feature `$ARGUMENTS` end-to-end. This is the "just ship 
 - Real agents, no substitutes. If a prusik role doesn't resolve via Agent(subagent_type=...), STOP — do not fall back to `general-purpose`.
 - Quality first, then efficiency.
 - Never edit prusik source during a sprint.
+- **Model tier, every spawn:** before each `Agent(...)` call for a prusik role, run `prusik tier resolve <feature-slug> --role <role>`. `<feature-slug>` is the first word of $ARGUMENTS only, never `$ARGUMENTS` itself: `/sprint-start foo --trivial` must give `prusik tier resolve foo --role ...`. On `model=<ref>`, pass `model=<ref>` to that Agent call. On `model=off`, pass no model. On rc ≠ 0, STOP and show the output; do not spawn untiered.
 - No force flags, no destructive ops, no git push/commit unless the user explicitly asks.
 
 ---

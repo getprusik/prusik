@@ -1,0 +1,8 @@
+# A second adopter's profile: no top model, different weights and thresholds.
+schema_version: "1.0"
+tiers:
+  high_stakes: {model: sonnet}
+  bounded: {model: haiku}
+  mechanical: {model: haiku}
+stakes: {low: 2, high: 6}
+risk_weights: {hook: 1}

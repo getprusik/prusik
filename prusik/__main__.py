@@ -493,6 +493,21 @@ def main():
     p_effort.add_argument("--json", action="store_true",
                           help="Emit machine-readable JSON instead of text")
 
+    # tier — model-tier routing policy (prusik/model_tier.py, imported only when dispatched).
+    p_tier = sub.add_parser("tier", help="Model-tier routing: resolve a role's model; "
+                                         "report predicted vs measured routing")
+    tsub = p_tier.add_subparsers(dest="tier_cmd", required=True)
+    p_tres = tsub.add_parser("resolve", help="Resolve role -> tier class -> model for a "
+                                             "feature; --role records the spawn-time prediction")
+    p_tres.add_argument("feature")
+    g = p_tres.add_mutually_exclusive_group()
+    g.add_argument("--role", default=None,
+                   help="Print exactly one line, model=<ref> or model=off, for the orchestrator")
+    g.add_argument("--json", action="store_true", help="Emit the resolution as JSON")
+    p_trep = tsub.add_parser("report", help="Read-only: predicted tiers vs measured models "
+                                            "and bounces per completed sprint (advisory, rc 0)")
+    p_trep.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+
     # overhead — the COST lens (fb-e7fe8177cc8c): what the harness itself
     # costs, so a slow gate gets named and tuned instead of the whole harness
     # disabled on feel. Read-only; pairs with `catches` (value side).
@@ -1087,6 +1102,12 @@ def main():
     if args.cmd == "effort":
         from prusik import effort
         return effort.run(json_output=args.json)
+    if args.cmd == "tier":
+        from prusik import model_tier
+        if args.tier_cmd == "resolve":
+            return model_tier.run_resolve(args.feature, args.role, args.json)
+        if args.tier_cmd == "report":
+            return model_tier.run_report(args.json)
     if args.cmd == "overhead":
         from prusik import overhead
         return overhead.run(json_output=args.json,

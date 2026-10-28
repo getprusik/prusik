@@ -134,13 +134,15 @@ class Usage:
     by_role: dict[str, int] = field(default_factory=dict)
     by_model: dict[str, int] = field(default_factory=dict)
     by_session: dict[str, int] = field(default_factory=dict)
+    by_role_model: dict[str, dict[str, int]] = field(default_factory=dict)   # {role: {model: n}}
     malformed_lines: int = 0
 
     def breakdown(self) -> dict:
         return {"input": self.input, "output": self.output, "cache_write": self.cache_write,
                 "cache_read": self.cache_read, "by_phase": self.by_phase,
                 "by_role": self.by_role, "by_model": self.by_model,
-                "by_session": self.by_session, "malformed_lines": self.malformed_lines}
+                "by_session": self.by_session, "by_role_model": self.by_role_model,
+                "malformed_lines": self.malformed_lines}
 
 
 def measure(feature: str, phase: str | None = None, now: datetime | None = None) -> Usage:
@@ -233,6 +235,8 @@ def _measure(feature: str, phase: str | None, now: datetime | None) -> Usage:
         for bucket, key in ((u.by_phase, ph), (u.by_role, row["role"]),
                             (u.by_model, row["model"]), (u.by_session, row["session"])):
             bucket[key] = bucket.get(key, 0) + n
+        inner = u.by_role_model.setdefault(row["role"], {})
+        inner[row["model"]] = inner.get(row["model"], 0) + n
     return u
 
 
@@ -248,6 +252,30 @@ def _int_dict(value: object) -> dict[str, int]:
         return {}
     return {str(k): v for k, v in value.items()
             if isinstance(v, int) and not isinstance(v, bool)}
+
+
+def role_models(record: dict) -> dict[str, dict[str, int]]:
+    """The role x model token split of a `sprint_complete` record's usage snapshot -- the
+    only reader of `by_role_model` (rollup and the export never carry it). {} when it is
+    absent (unmeasured, or recorded before by_role_model existed). Present but malformed at
+    any level raises ValueError naming what is wrong: the caller decides how to surface it,
+    it is never read as "nothing observed"."""
+    actual = record.get("actual") if isinstance(record, dict) else None
+    snap = actual.get("usage") if isinstance(actual, dict) else None
+    raw = snap.get("by_role_model") if isinstance(snap, dict) else None
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"by_role_model is {type(raw).__name__}, not a mapping")
+    out: dict[str, dict[str, int]] = {}
+    for role, models in raw.items():
+        if not isinstance(models, dict):
+            raise ValueError(f"by_role_model[{role!r}] is {type(models).__name__}, not a mapping")
+        bad = [m for m, n in models.items() if not isinstance(n, int) or isinstance(n, bool)]
+        if bad:
+            raise ValueError(f"by_role_model[{role!r}] has non-int counts for {bad}")
+        out[str(role)] = {str(m): n for m, n in models.items()}
+    return out
 
 
 def rollup(records: list[dict]) -> dict:

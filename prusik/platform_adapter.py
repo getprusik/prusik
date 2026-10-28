@@ -28,6 +28,7 @@ from __future__ import annotations
 import abc
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -115,6 +116,20 @@ class PlatformAdapter(abc.ABC):
         """Newest mtime across a session's transcript files (None when the main one is
         missing). Transcripts are append-only, so this bounds which records a session can
         hold without reading it."""
+
+    @abc.abstractmethod
+    def spawn_model_refs(self) -> frozenset[str]:
+        """Model refs the host's subagent spawn call accepts."""
+
+    @abc.abstractmethod
+    def pinned_model_note(self, ref: str) -> str | None:
+        """None when `ref` is not a pinned/dated/provider model id. Otherwise the note
+        explaining how to pin it through the host instead of the spawn call. It
+        classifies the ref and carries the message in one return value."""
+
+    @abc.abstractmethod
+    def model_matches(self, ref: str, observed_model: str) -> bool:
+        """Whether a measured transcript model id is the model `ref` routes to."""
 
 
 class ClaudeCodeAdapter(PlatformAdapter):
@@ -259,6 +274,29 @@ class ClaudeCodeAdapter(PlatformAdapter):
         if named:
             return max(named, key=len)              # the most specific name wins
         return agent_type or "subagent"
+
+
+    # Model routing. The spawn refs are the Agent tool's `model` enum, verified on Claude Code
+    # 2026-10-27 against the live tool schema (opus, sonnet, haiku, fable).
+    _SPAWN_REFS = frozenset({"opus", "sonnet", "haiku", "fable"})
+    _ID_SPLIT = re.compile(r"[-.@:_/]")
+
+    def spawn_model_refs(self) -> frozenset[str]:
+        return self._SPAWN_REFS
+
+    def pinned_model_note(self, ref: str) -> str | None:
+        low = ref.lower()
+        if not (low.startswith("claude-") or "anthropic.claude-" in low):
+            return None
+        return (f"'{ref}' is a pinned model id, and the spawn call accepts aliases only "
+                f"({', '.join(sorted(self._SPAWN_REFS))}). Keep the alias in the profile and "
+                "pin the dated or Bedrock id through Claude Code's alias env settings "
+                "(ANTHROPIC_DEFAULT_OPUS_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL, "
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL).")
+
+    def model_matches(self, ref: str, observed_model: str) -> bool:
+        tokens = set(self._ID_SPLIT.split(observed_model.lower()))
+        return ref.lower() in tokens and "claude" in tokens
 
 
 _ADAPTERS = {ClaudeCodeAdapter.name: ClaudeCodeAdapter}

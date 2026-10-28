@@ -104,6 +104,12 @@ pre_sprint_gates:
     must_contain: "PASS"
     hint: "invoke brief-critic role first; it produces reports/{feature}/brief-critique.txt"
 
+# Model tiers (v0.231.0): prusik resolves each role's tier class from triage signals and
+# .claude/model-profile.yaml maps the class to a model. Before each role spawn the orchestrator
+# runs `prusik tier resolve <feature-slug> --role <role>` and passes model=<ref>; rc != 0 = STOP.
+model_tiering:
+  enabled: true
+
 triage:
   heuristics:
     auto_solo_if:

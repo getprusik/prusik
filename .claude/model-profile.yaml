@@ -1,0 +1,13 @@
+# The prusik engine's own model profile (this repo as an adopter). prusik/model_tier.py owns
+# the policy (role classes, stakes points); this file owns what is ours to choose: which model
+# each tier class runs on, our risk vocabulary, and where stakes turn low/high.
+# Worked: a trivial P1 sprint whose brief names hook + ledger scores 1+1+1 = 3 -> normal, so
+# the regression-sentinel and conventions-enforcer stay bounded (sonnet); a P0 brief naming
+# hook, ledger and migration scores 2+1+1+2 = 6 -> high and lifts bounded roles to opus.
+schema_version: "1.0"
+tiers:
+  high_stakes: {model: opus}
+  bounded: {model: sonnet}
+  mechanical: {model: haiku}
+stakes: {low: 2, high: 6}
+risk_weights: {hook: 1, ledger: 1, migration: 2, security: 2}

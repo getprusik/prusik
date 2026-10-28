@@ -36,3 +36,8 @@ required_fields:
     section: "## Proposed roles"
     type: list
     min_items: 1
+
+optional_fields:
+  model_tiers:
+    section: "## Model tiers"
+    type: list

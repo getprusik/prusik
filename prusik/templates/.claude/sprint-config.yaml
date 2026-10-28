@@ -329,6 +329,11 @@ triage:
       - type: migration
     else: solo
 
+# Model-tier routing (off by default). The engine picks a tier class per role; the project's
+# .claude/model-profile.yaml maps classes to models. Tiering is on only with an explicit true.
+# model_tiering:
+#   enabled: true   # opt-in; needs .claude/model-profile.yaml (see CHANGELOG)
+
 # Permission tiers (reference only — enforcement lives in settings.json
 # matcher rules and the writable/deny_bash declarations above).
 permissions:

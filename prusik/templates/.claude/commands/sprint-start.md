@@ -14,6 +14,8 @@ Start a sprint for feature `$ARGUMENTS`.
 
 1. Verify `briefs/$ARGUMENTS.md` exists. If not, tell the user to run `/brief-new $ARGUMENTS` first.
 
+**Model tier, every spawn:** before each `Agent(...)` call for a prusik role, run `prusik tier resolve <feature-slug> --role <role>`. `<feature-slug>` is the first word of $ARGUMENTS only, never `$ARGUMENTS` itself: `/sprint-start foo --trivial` must give `prusik tier resolve foo --role ...`. On `model=<ref>`, pass `model=<ref>` to that Agent call. On `model=off`, pass no model. On rc ≠ 0, STOP and show the output; do not spawn untiered. (This applies to every role spawn in steps 2-6.)
+
 2. **Pre-sprint gate: brief-critique.** If `.claude/sprint-config.yaml` has `pre_sprint_gates.brief_critique.enabled: true` (the default), and `reports/$ARGUMENTS/brief-critique.txt` does not yet exist, invoke the `brief-critic` agent (via the Agent tool with `subagent_type=brief-critic`). Its job: read `briefs/$ARGUMENTS.md` and produce `reports/$ARGUMENTS/brief-critique.txt` whose first line is `PASS` or `FAIL`.
 
    **Reviewer artifact fallback (v0.5.0+):** after invoking brief-critic, check that `reports/$ARGUMENTS/brief-critique.txt` exists. If the agent returned a verdict in its text response but did NOT Write the file (recurring CC behavior — see the v0.4.5 `prusik refresh` restart note for why this happens):

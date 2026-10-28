@@ -110,11 +110,13 @@ def _check_agent(path: Path, text: str) -> list[str]:
     model_m = re.search(r"^model:\s*(.+?)\s*$", fm, re.MULTILINE)
     if model_m:
         model = model_m.group(1).strip().lower()
-        known = {"opus", "sonnet", "haiku", "inherit"}
-        if model not in known and not model.startswith("claude-"):
+        from prusik.platform_adapter import get_adapter
+        adapter = get_adapter()
+        known = adapter.spawn_model_refs() | {"inherit"}
+        if model not in known and adapter.pinned_model_note(model) is None:
             problems.append(
                 f"model: '{model}' is unusual - expected one of {sorted(known)} "
-                "or a specific `claude-*` model id"
+                "or a pinned model id"
             )
 
     # v0.5.2: role-vs-tools mismatch. If the role body declares an Output
