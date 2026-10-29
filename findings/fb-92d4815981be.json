@@ -1,0 +1,16 @@
+{
+  "id": "fb-92d4815981be",
+  "created_at": "2026-10-29T06:31:20.213110+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "pre-commit boundary hook silently skips inside a git worktree: --show-toplevel is the worktree, so ../prusik-hq is never found",
+  "detail": "scripts pre-commit hook resolves REPO=$(git rev-parse --show-toplevel); in worktrees/<role> that is the worktree, so $REPO/../prusik-hq/hq/products.local.json does not exist and the hook prints 'boundary gate SKIPPED' and allows the commit (rc 0). Every sprint commit made in a worktree skips the open-core boundary gate. Fix: resolve the main checkout via $(git rev-parse --path-format=absolute --git-common-dir)/.. before probing for the sibling HQ.",
+  "feature": "full-suite-credits-capture",
+  "content_hash": "92d4815981be",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

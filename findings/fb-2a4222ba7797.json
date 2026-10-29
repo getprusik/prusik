@@ -1,0 +1,16 @@
+{
+  "id": "fb-2a4222ba7797",
+  "created_at": "2026-10-29T06:22:31.406641+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "discovery/scan/verify_loop prune skip-dirs by ABSOLUTE path parts: a project under any build/dist/target/vendor/worktrees ancestor discovers nothing",
+  "detail": "discovery._iter_source_files (IGNORE_DIRS), scan's walker (_SKIP_DIR_NAMES) and verify_loop's test search test 'part in SKIP for part in p.parts' on the absolute path, so an ancestor of the project root named worktrees/build/dist/target/vendor prunes EVERY file: the dep-graph is empty, blast radius is empty, scan says 'no scannable files', and nothing errors. Seen running the engine suite inside worktrees/solo: test_scan (4) and test_python_from_import_edges oracle (0 importers) fail. Fix: test the parts relative to the walk root.",
+  "feature": "full-suite-credits-capture",
+  "content_hash": "2a4222ba7797",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
