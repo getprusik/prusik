@@ -33,7 +33,9 @@ def _iter_source_files(root: Path):
             continue
         if p.suffix not in suffixes:
             continue
-        if any(part in IGNORE_DIRS for part in p.parts):
+        # parts BELOW root only: an ancestor named like a skip-dir (a project under
+        # ~/build/ or worktrees/<role>/) must not prune everything (fb-2a4222ba7797)
+        if any(part in IGNORE_DIRS for part in p.relative_to(root).parts):
             continue
         yield p
 

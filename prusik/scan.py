@@ -85,9 +85,11 @@ def _collect_files(root: Path, file_limit: int,
     for d in root.rglob("*"):
         if not d.is_file():
             continue
-        # Prune by ancestor-dir name
-        if any(part in _SKIP_DIR_NAMES for part in d.parts):
-            for part in d.parts:
+        # Prune by ancestor-dir name BELOW root — an ancestor of root itself named
+        # like a skip-dir must not prune the whole project (fb-2a4222ba7797)
+        rel_parts = d.relative_to(root).parts
+        if any(part in _SKIP_DIR_NAMES for part in rel_parts):
+            for part in rel_parts:
                 if part in _SKIP_DIR_NAMES:
                     skipped.add(part)
             continue

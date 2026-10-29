@@ -3,6 +3,31 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.232.0] — The full-suite check names the phase it guards and credits the sentinel's captured run
+
+- **The advisory names the phase being left (fb-6916f692908a).** `_full_suite_gate` guards
+  both building exit and reviewing→integrating, but its text said "this building phase" for
+  both. The advisory, the BLOCKED text and the `advance_blocked` reason now name the phase
+  actually being left.
+- **A green `prusik gate capture` of the full suite counts as proof.** The check credited only
+  `prove_run`, so the regression-sentinel's full-suite capture, which is evidence prusik
+  recorded itself, was ignored, and the advisory fired on reviewing phases that had run green
+  (tests=1659, 1874). Both proof kinds now feed one candidate rule, read from the ledger:
+  - a proven `prove_run`, or a `reviewer_execution_verified` tests event with `ok` true for
+    this feature;
+  - recorded after the latest entry into the phase;
+  - full-sized per the learned baseline.
+
+  A red, other-feature, pre-rewind, subset or non-tests capture is not credited. The remedy
+  names both paths. Block semantics (`require_full_suite_at_build`, shared test-infra) are
+  unchanged.
+- **Skip-dirs are pruned relative to the walk root (fb-2a4222ba7797).** discovery's source
+  walk, scan's file walk and verify_loop's test search matched skip-dir names
+  (`build`, `dist`, `target`, `vendor`, `worktrees`, ...) against the absolute path. So a
+  project whose root had an ancestor with one of those names pruned every file: an empty
+  dep-graph, an empty blast radius, "no scannable files", and no error. Only the parts below
+  the walk root are tested now. Found running the engine's own suite inside `worktrees/solo`.
+
 ## [0.231.0] — Model tiers: the engine decides the class, the adopter's profile names the model
 
 - **Tier routing is engine policy (fb-4328a6e686ea).** Roles ran on whatever model the

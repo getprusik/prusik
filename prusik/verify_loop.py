@@ -153,7 +153,7 @@ def _find_test_in_suite(test_name: str, root: Path) -> list[str]:
     for p in root.rglob("*"):
         if not p.is_file():
             continue
-        if any(part in skip for part in p.parts):
+        if any(part in skip for part in p.relative_to(root).parts):  # fb-2a4222ba7797
             continue
         if p.suffix not in (".py", ".js", ".jsx", ".ts", ".tsx"):
             continue

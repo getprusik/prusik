@@ -1846,12 +1846,34 @@ def _check_convergence_stall(feature: str, current: str | None,
     return 2
 
 
+_FULL_SUITE_REMEDY = ("`prusik prove --kind tests -- <full test command>`, or a green "
+                      "full-suite `prusik gate capture --kind tests`")
+
+
+def _green_tests_count(r: dict, feature: str) -> int | None:
+    """The executed-test count when ledger record `r` is green tests proof for
+    `feature`'s full-suite check, else None. Two proof kinds, one rule: a proven
+    `prove_run`, or a capture prusik itself recorded (`reviewer_execution_verified`,
+    ok = exit 0 and tests > 0) for THIS feature (fb-6916f692908a)."""
+    if r.get("kind") != "tests":
+        return None
+    if r.get("event") == "prove_run" and r.get("proven"):
+        return int(r.get("executed", 0) or 0)
+    if (r.get("event") == "reviewer_execution_verified" and r.get("ok") is True
+            and r.get("feature") == feature):
+        return int(r.get("nonempty", 0) or 0)
+    return None
+
+
 def _full_suite_gate(current: str, target_phase: str, feature: str) -> int | None:
-    """Full-suite proof check at building exit (field finding #14 v1+v2). Returns 2 to
-    BLOCK (only when `require_full_suite_at_build` is set in sprint-config), else
-    None to proceed (printing an advisory if the full suite wasn't proven). The
-    learned test-count baseline distinguishes a real full-suite proof from a
-    subset of just-the-new-tests."""
+    """Full-suite proof check on leaving `current` (building exit, field finding #14
+    v1+v2, and reviewing→integrating, fb-90cfcfa8b918). Returns 2 to BLOCK (only when
+    `require_full_suite_at_build` is set in sprint-config, or shared test-infra was
+    touched), else None to proceed (printing an advisory if the full suite wasn't
+    proven). Proof is a proven `prove_run` OR a green `prusik gate capture` of this
+    feature (`reviewer_execution_verified`, fb-6916f692908a) recorded this phase. The
+    learned test-count baseline distinguishes a real full-suite proof from a subset
+    of just-the-new-tests."""
     try:
         from prusik import phases as _phases
         from prusik import suite_baseline
@@ -1873,14 +1895,13 @@ def _full_suite_gate(current: str, target_phase: str, feature: str) -> int | Non
         entered = max((r.get("ts", "") for r in records
                        if r.get("event") == "phase_advance"
                        and r.get("to_phase") == current), default="")
-        green = [int(r.get("executed", 0) or 0) for r in records
-                 if r.get("event") == "prove_run" and r.get("kind") == "tests"
-                 and r.get("proven") and r.get("ts", "") >= entered]
+        green = [n for r in records if r.get("ts", "") >= entered
+                 and (n := _green_tests_count(r, feature)) is not None]
         best = max(green) if green else None
         baseline = suite_baseline.load(root)
         if best is None:
-            problem = ("no green `prusik prove --kind tests` recorded this "
-                       "building phase")
+            problem = (f"no green full-suite tests run (`prusik prove` or "
+                       f"`prusik gate capture`) recorded this {current} phase")
         elif not suite_baseline.looks_full(best, baseline):
             problem = (f"the proven run executed {best} test(s) but the full suite "
                        f"is ~{baseline} — looks like a subset, not the full suite")
@@ -1905,8 +1926,7 @@ def _full_suite_gate(current: str, target_phase: str, feature: str) -> int | Non
         print(f"[prusik-gate] BLOCKED leaving '{current}': {problem}. Advancing must "
               f"run on FULL-suite evidence, not a subset — a touched-set green is "
               f"false confidence (fb-90cfcfa8b918). Run the FULL suite green "
-              f"(`prusik prove --kind tests -- <full test command>`) before advancing."
-              f"{trigger}", file=sys.stderr)
+              f"({_FULL_SUITE_REMEDY}) before advancing.{trigger}", file=sys.stderr)
         ledger.append("advance_blocked", from_phase=current, to_phase=target_phase,
                       feature=feature, gate_class=gate_class.FULL_SUITE_NOT_PROVEN,
                       reason=f"full-suite not proven: {problem}"
@@ -1914,7 +1934,8 @@ def _full_suite_gate(current: str, target_phase: str, feature: str) -> int | Non
         return 2
     print(f"[prusik-gate] full-suite ADVISORY — {problem}. A structural change can "
           f"break existing tests outside the touched set; a touched-set green hides "
-          f"them. Prove the FULL suite green before advancing. (Set "
+          f"them. Prove the FULL suite green ({_FULL_SUITE_REMEDY}) before "
+          f"advancing. (Set "
           f"require_full_suite_at_build in sprint-config to hard-block.)")
     return None
 
