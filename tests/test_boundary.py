@@ -16,15 +16,26 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
 _SCRIPT = _REPO / "scripts" / "boundary_check.py"
-_REGISTRY = _REPO / "hq" / "products.local.json"
+
+
+def _bc():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("boundary_check", _SCRIPT)
+    bc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bc)
+    return bc
 
 
 def test_public_surface_has_no_adopter_identity():
-    if not _REGISTRY.is_file():
-        pytest.skip(f"no private registry at {_REGISTRY} — boundary check needs it "
-                    "to know which adopter names to scan for (enforced by pre-commit "
-                    "on the maintainer machine)")
-    proc = subprocess.run([sys.executable, str(_SCRIPT), "--json"],
+    # Same discovery as the pre-commit hook (fb-92d4815981be): the sibling prusik-hq of
+    # the MAIN checkout, so this runs on the maintainer machine from main or a worktree.
+    registry = _bc().discover_registry(_REPO)
+    if registry is None:
+        pytest.skip("no private registry discovered — boundary check needs it to know "
+                    "which adopter names to scan for (enforced by pre-commit on the "
+                    "maintainer machine)")
+    proc = subprocess.run([sys.executable, str(_SCRIPT), "--json",
+                           "--registry", str(registry)],
                           cwd=str(_REPO), capture_output=True, text=True)
     # rc 0 clean · 1 leak · 2 registry missing/malformed
     assert proc.returncode == 0, (

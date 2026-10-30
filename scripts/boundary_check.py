@@ -31,6 +31,7 @@ This is a maintainer/pre-commit tool and is intentionally NOT part of the
 shipped `prusik` package (adopters have no reason to audit our boundary).
 
 Exit codes:  0 clean · 1 leak found · 2 registry missing/malformed (strict)
+             --locate-registry: 0 path printed · 3 none found
 """
 from __future__ import annotations
 
@@ -38,11 +39,14 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_REGISTRY = REPO_ROOT / "hq" / "products.local.json"
+REGISTRY_ENV = "PRUSIK_HQ_REGISTRY"
+_REGISTRY_REL = Path("hq") / "products.local.json"
+_HQ_REPO = "prusik-hq"
 
 # Files/dirs that ship publicly (PyPI sdist/wheel + the public repo). Anything
 # NOT listed here is private-by-default and is not scanned — that is where full
@@ -84,6 +88,41 @@ _SKIP_SUFFIXES = {".pyc", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
 _SKIP_DIRS = {"__pycache__", ".git", ".mypy_cache", ".pytest_cache", ".ruff_cache"}
 
 
+def _main_checkout(root: Path) -> Path | None:
+    """The main working tree that owns `root`'s repository: the parent of git's COMMON
+    dir, identical from the main tree and from any linked worktree. `--show-toplevel`
+    is the worktree itself, which is how the sibling-HQ probe missed in every sprint
+    worktree (fb-92d4815981be). None outside a git repo."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--path-format=absolute",
+             "--git-common-dir"], capture_output=True, text=True)
+    except OSError:
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    return Path(proc.stdout.strip()).parent
+
+
+def discover_registry(root: Path = REPO_ROOT) -> Path | None:
+    """The private adopter registry for the tree at `root` — the ONE candidate list the
+    hook, the CLI default and the test suite share. Order:
+      1. $PRUSIK_HQ_REGISTRY — authoritative when set: returned even if missing, so the
+         strict scan fails closed instead of discovery quietly probing elsewhere;
+      2. <main checkout>/../prusik-hq/hq/products.local.json — the maintainer layout;
+      3. <root>/hq/products.local.json — a registry inside the scanned tree.
+    None when nothing exists (a public/adopter clone: the hook skips)."""
+    env = os.environ.get(REGISTRY_ENV, "").strip()
+    if env:
+        return Path(env)
+    candidates = []
+    main = _main_checkout(root)
+    if main is not None:
+        candidates.append(main.parent / _HQ_REPO / _REGISTRY_REL)
+    candidates.append(root / _REGISTRY_REL)
+    return next((c for c in candidates if c.is_file()), None)
+
+
 def load_denylist(registry_path: Path) -> list[str]:
     """Build the identity denylist from the private registry: each product's
     `label` plus any `aliases`. Entries with `boundary_ignore: true` (for a
@@ -92,8 +131,9 @@ def load_denylist(registry_path: Path) -> list[str]:
     if not registry_path.is_file():
         raise FileNotFoundError(
             f"no adopter registry at {registry_path}. This gate is driven by the "
-            f"private registry (hq/products.local.json); run it from the monorepo, "
-            f"or pass --registry. Fail-closed by design — it will not pass blind.")
+            f"private registry (hq/products.local.json); clone {_HQ_REPO} alongside "
+            f"this repo, set {REGISTRY_ENV}, or pass --registry. Fail-closed by "
+            f"design — it will not pass blind.")
     data = json.loads(registry_path.read_text())
     products = data.get("products") if isinstance(data, dict) else None
     if not isinstance(products, list) or not products:
@@ -202,8 +242,10 @@ def scan(root: Path, denylist: list[str]) -> list[dict]:
     return violations
 
 
-def run(registry_path: Path = DEFAULT_REGISTRY, json_output: bool = False,
+def run(registry_path: Path | None = None, json_output: bool = False,
         strict: bool = True, root: Path = REPO_ROOT) -> int:
+    if registry_path is None:
+        registry_path = discover_registry(root) or root / _REGISTRY_REL
     try:
         denylist = load_denylist(registry_path)
     except (FileNotFoundError, ValueError) as e:
@@ -239,9 +281,13 @@ def run(registry_path: Path = DEFAULT_REGISTRY, json_output: bool = False,
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY,
-                    help="path to the private adopter registry "
-                         "(default: hq/products.local.json)")
+    ap.add_argument("--registry", type=Path, default=None,
+                    help="path to the private adopter registry (default: discovered — "
+                         f"${REGISTRY_ENV}, then ../{_HQ_REPO}/hq/products.local.json "
+                         "beside the main checkout, then <root>/hq/products.local.json)")
+    ap.add_argument("--locate-registry", action="store_true",
+                    help="print the discovered registry path and exit 0, or exit 3 "
+                         "when none is found (the pre-commit hook's skip decision)")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--no-strict", action="store_true",
                     help="treat a missing registry as a pass (NOT for CI/publish)")
@@ -249,6 +295,12 @@ def main() -> int:
                     help="tree to scan (default: this repo; the sync passes the "
                          "STAGED public tree so it gates the exact bytes it ships)")
     args = ap.parse_args()
+    if args.locate_registry:
+        found = discover_registry(args.root)
+        if found is None:
+            return 3
+        print(found)
+        return 0
     return run(registry_path=args.registry, json_output=args.json,
                strict=not args.no_strict, root=args.root)
 

@@ -3,6 +3,23 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.233.0] — The open-core boundary gate finds the private registry from a worktree
+
+- **The pre-commit boundary hook now runs in worktrees (fb-92d4815981be).** It looked for the
+  private adopter registry beside `git rev-parse --show-toplevel`. In a linked worktree that
+  is the worktree itself, so the probe missed and the hook printed "SKIPPED" and allowed every
+  sprint commit made in `worktrees/<role>`. `scripts/boundary_check.py` now has one
+  `discover_registry`: `$PRUSIK_HQ_REGISTRY` first, then the MAIN checkout's sibling
+  `prusik-hq`, then `<root>/hq/`. The main checkout is resolved through `--git-common-dir`,
+  which is the same from any worktree. The hook asks `--locate-registry` (rc 3 = none found,
+  the only SKIPPED case) and scans the tree being committed. A registry that is named but
+  missing, unreadable or malformed still blocks.
+- **The real-surface boundary test stops skipping.** `tests/test_boundary.py` looked only at
+  `<repo>/hq/`, a monorepo-era path, so on the maintainer machine the one test that scans the
+  actual public surface always skipped. It now uses the same discovery.
+- **`install-hooks.sh` works from a worktree.** It installs into the common hooks dir; in a
+  worktree, `.git` is a file.
+
 ## [0.232.0] — The full-suite check names the phase it guards and credits the sentinel's captured run
 
 - **The advisory names the phase being left (fb-6916f692908a).** `_full_suite_gate` guards
