@@ -3,6 +3,17 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.233.1] — CI gates hook cost deterministically, not by wall clock
+
+- **Noise no longer turns main red (fb-e10892101b85).** The stop hook sits at its 1.75× wall-clock
+  budget on GitHub runners, so the check failed on commits that never touched the hook path.
+  Both wall-clock budget tests now skip when `CI` is set and stay a hard local check at the same
+  budget. The budget itself is unchanged.
+- **CI's hook-cost checks now cover what only wall clock used to catch.** Each hook has a stdlib
+  allowlist, measured on macOS and Linux across Python 3.10–3.13, and a subprocess spawn budget
+  recorded by an audit hook. Tests prove both reject a regression. This is a test-only release;
+  the shipped package changes only its version and closures.
+
 ## [0.233.0] — The open-core boundary gate finds the private registry from a worktree
 
 - **The pre-commit boundary hook now runs in worktrees (fb-92d4815981be).** It looked for the

@@ -6,11 +6,12 @@ median, of which only ~27ms was the interpreter — prusik owned the rest: build
 (~12ms), and the pure-Python YAML loader (~3.6ms). A slow gate gets disabled, and a disabled
 gate protects nothing — so the cost is cut AND pinned.
 
-The deterministic guards are the CI gate (no parser built; per-hook import allowlists measured
-per payload class and phase; lazy imports that can't fail open). The wall-clock ratio is a
-deliberately coarse large-regression catch — min-of-N, normalized by the same interpreter's
-own startup — not a precision budget (shared runners + a 4-version matrix make an absolute
-p95 a flaky gate).
+The deterministic guards are the CI gate (no parser built; per-hook prusik, third-party and
+stdlib import allowlists and spawn budgets, measured per payload class and phase; lazy imports
+that can't fail open). The wall-clock ratio is local only: a deliberately coarse
+large-regression catch — min-of-N, normalized by the same interpreter's own startup. It skips
+under CI because stop sits at the budget on shared runners, so noise alone turned main red
+(fb-e10892101b85).
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -49,6 +51,19 @@ _POST_TOOL = {"prusik", "prusik.__main__", "prusik.gate", "prusik.ledger", "prus
 _STOP = {"prusik", "prusik.__main__", "prusik.gate", "prusik.ledger", "prusik.phases",
          "prusik.gate_class", "prusik.evidence", "prusik.pause", "prusik.schema",
          "prusik.consistency", "prusik.usage", "prusik.platform_adapter"}
+# Public stdlib top-levels above the baseline: the union measured on macOS and Linux across
+# 3.10–3.13 (2026-10-30). The names differ by version (ipaddress and urllib up to 3.12, glob
+# and pwd in 3.13), so a list measured on one interpreter reds the others.
+_POST_TOOL_STDLIB = {"argparse", "contextlib", "errno", "fnmatch", "gettext", "glob", "grp",
+                     "hashlib", "ipaddress", "math", "ntpath", "pathlib", "pwd", "shlex",
+                     "urllib", "warnings"}
+_PRE_TOOL_STDLIB = _POST_TOOL_STDLIB | {"ast", "copy", "dataclasses", "dis", "importlib",
+                                        "inspect", "linecache", "opcode", "token", "tokenize",
+                                        "typing", "weakref"}
+# Stop alone may spawn, so it alone may import subprocess and what subprocess pulls in.
+_STOP_STDLIB = _PRE_TOOL_STDLIB | {"fcntl", "locale", "select", "selectors", "signal",
+                                   "subprocess", "threading"}
+_REVIEWING_STOP_SPAWNS = 2                     # the git calls measured in reviewing
 
 
 # ---- fast dispatch: exact argv only, single source of hook names ------------------------
@@ -90,17 +105,23 @@ def test_parser_still_registers_every_hook(monkeypatch, capsys):
     assert all(h in out for h in cli.HOOK_COMMANDS)
 
 
-# ---- per-hook import allowlists, measured in a fresh subprocess via the console entry -----
+# ---- per-hook allowlists and spawn budgets, measured in a fresh subprocess via the console entry
 
+# The audit hook records spawns without importing anything, so it can't change the module set
+# under test.
 _PROBE = r"""
 import json, os, sys
+spawns = []
+_SPAWN_EVENTS = {"subprocess.Popen", "os.system", "os.exec", "os.fork", "os.forkpty",
+                 "os.posix_spawn", "os.spawn"}
+sys.addaudithook(lambda event, _: spawns.append(event) if event in _SPAWN_EVENTS else None)
 from prusik.__main__ import main
 sys.argv = ["prusik", "gate", os.environ["HOOK"]]
 try:
     main()
 except SystemExit:
     pass
-json.dump(sorted(sys.modules), open(os.environ["OUT"], "w"))
+json.dump({"modules": sorted(sys.modules), "spawns": spawns}, open(os.environ["OUT"], "w"))
 """
 
 
@@ -118,12 +139,14 @@ def _project(tmp_path: Path, phase: str | None, *, fix_round: bool = False) -> P
     return tmp_path
 
 
-def _modules(root: Path, hook: str, payload: dict | None, code: str = _PROBE) -> set[str]:
+def _probe(root: Path, hook: str, payload: dict | None,
+           code: str = _PROBE) -> tuple[set[str], list[str]]:
     out = root / "mods.json"
     env = {**os.environ, "HOOK": hook, "OUT": str(out), "CLAUDE_PROJECT_DIR": str(root)}
     subprocess.run([sys.executable, "-c", code], input=json.dumps(payload or {}), text=True,
                    capture_output=True, cwd=root, env=env, check=False, timeout=60)
-    return set(json.loads(out.read_text()))
+    measured = json.loads(out.read_text())
+    return set(measured["modules"]), measured["spawns"]
 
 
 def _third_party(mods: set[str], baseline: set[str]) -> set[str]:
@@ -131,13 +154,35 @@ def _third_party(mods: set[str], baseline: set[str]) -> set[str]:
     return {t for t in tops if t not in sys.stdlib_module_names and t != "prusik"}
 
 
+def _stdlib(mods: set[str], baseline: set[str]) -> set[str]:
+    # Leading-underscore C accelerators differ by build; their public module is what's pinned.
+    tops = {m.split(".")[0] for m in mods - baseline}
+    return {t for t in tops if t in sys.stdlib_module_names and not t.startswith("_")}
+
+
 def _baseline(root: Path) -> set[str]:
     # The one allowed third-party dependency is yaml — including whatever yaml itself loads
     # (libyaml's Cython runtime), so the baseline is "interpreter + yaml", not a name list.
-    return _modules(root, "none", None,
-                    code="import json,os,sys,yaml; yaml.load('a: 1', Loader=getattr("
-                         "yaml,'CSafeLoader',yaml.SafeLoader)); json.dump(sorted(sys.modules), "
-                         "open(os.environ['OUT'],'w'))")
+    return _probe(root, "none", None,
+                  code="import json,os,sys,yaml; yaml.load('a: 1', Loader=getattr("
+                       "yaml,'CSafeLoader',yaml.SafeLoader)); json.dump({'modules': "
+                       "sorted(sys.modules), 'spawns': []}, open(os.environ['OUT'],'w'))")[0]
+
+
+def _assert_hook_cost(root: Path, hook: str, payload: dict, prusik_allowed: set[str],
+                      stdlib_allowed: set[str], *, max_spawns: int = 0,
+                      code: str = _PROBE) -> set[str]:
+    """One check for every hook run: what it imports and what it spawns. Returns the prusik
+    modules it imported."""
+    mods, spawns = _probe(root, hook, payload, code)
+    baseline = _baseline(root)
+    prusik_mods = {m for m in mods if m == "prusik" or m.startswith("prusik.")}
+    assert prusik_mods <= prusik_allowed, sorted(prusik_mods - prusik_allowed)
+    assert not _third_party(mods, baseline)
+    extra_stdlib = _stdlib(mods, baseline) - stdlib_allowed
+    assert not extra_stdlib, sorted(extra_stdlib)
+    assert len(spawns) <= max_spawns, spawns
+    return prusik_mods
 
 
 def _pre(tool: str, inp: dict) -> dict:
@@ -166,10 +211,7 @@ _PRE_CASES = [
 @pytest.mark.parametrize("phase,fix_round,payload", _PRE_CASES)
 def test_pre_tool_imports_only_its_allowlist(tmp_path, phase, fix_round, payload):
     root = _project(tmp_path, phase, fix_round=fix_round)
-    mods = _modules(root, "pre-tool", payload)
-    prusik_mods = {m for m in mods if m == "prusik" or m.startswith("prusik.")}
-    assert prusik_mods <= _PRE_TOOL, sorted(prusik_mods - _PRE_TOOL)
-    assert not _third_party(mods, _baseline(root))
+    _assert_hook_cost(root, "pre-tool", payload, _PRE_TOOL, _PRE_TOOL_STDLIB)
 
 
 @pytest.mark.parametrize("phase,payload", [
@@ -183,10 +225,7 @@ def test_pre_tool_imports_only_its_allowlist(tmp_path, phase, fix_round, payload
 ])
 def test_post_tool_imports_only_its_allowlist(tmp_path, phase, payload):
     root = _project(tmp_path, phase)
-    mods = _modules(root, "post-tool", payload)
-    prusik_mods = {m for m in mods if m == "prusik" or m.startswith("prusik.")}
-    assert prusik_mods <= _POST_TOOL, sorted(prusik_mods - _POST_TOOL)
-    assert not _third_party(mods, _baseline(root))
+    _assert_hook_cost(root, "post-tool", payload, _POST_TOOL, _POST_TOOL_STDLIB)
 
 
 _STOP_PAYLOAD = {"session_id": "p", "hook_event_name": "Stop",
@@ -196,11 +235,37 @@ _STOP_PAYLOAD = {"session_id": "p", "hook_event_name": "Stop",
 @pytest.mark.parametrize("phase", [None, "solo_execute", "reviewing", "integrating"])
 def test_stop_imports_only_its_allowlist(tmp_path, phase):
     root = _project(tmp_path, phase)
-    mods = _modules(root, "stop", _STOP_PAYLOAD)
-    prusik_mods = {m for m in mods if m == "prusik" or m.startswith("prusik.")}
-    assert prusik_mods <= _STOP, sorted(prusik_mods - _STOP)
+    budget = _REVIEWING_STOP_SPAWNS if phase == "reviewing" else 0
+    prusik_mods = _assert_hook_cost(root, "stop", _STOP_PAYLOAD, _STOP, _STOP_STDLIB,
+                                    max_spawns=budget)
     assert "prusik.usage" in prusik_mods                     # registration actually ran
-    assert not _third_party(mods, _baseline(root))
+
+
+# The guards must reject the regressions wall clock used to catch: a check that can't fail
+# would leave CI with no hook-cost gate at all.
+# moat-finding: fb-e10892101b85
+def _regressed(statement: str) -> str:
+    return _PROBE.replace("sys.argv =", f"{statement}\nsys.argv =")
+
+
+def test_a_new_heavy_stdlib_import_fails_the_cost_check(tmp_path):
+    root = _project(tmp_path, None)
+    payload = _pre("Read", {"file_path": "README.md"})
+    with pytest.raises(AssertionError, match="asyncio"):
+        _assert_hook_cost(root, "pre-tool", payload, _PRE_TOOL, _PRE_TOOL_STDLIB,
+                          code=_regressed("import asyncio"))
+
+
+@pytest.mark.parametrize("statement,event", [
+    ("import subprocess; subprocess.run(['true'])", "subprocess.Popen"),
+    ("os.system('true')", "os.system"),
+])
+def test_a_new_spawn_fails_the_cost_check(tmp_path, statement, event):
+    # Stop's allowlist already holds subprocess, so only the spawn budget can catch this.
+    root = _project(tmp_path, None)
+    with pytest.raises(AssertionError, match=event):
+        _assert_hook_cost(root, "stop", _STOP_PAYLOAD, _STOP, _STOP_STDLIB,
+                          code=_regressed(statement))
 
 
 # ---- lazy imports can't fail open -------------------------------------------------------
@@ -289,7 +354,24 @@ def test_fallback_without_libyaml_gives_identical_results(tmp_path, monkeypatch)
     assert _load_via_phases(tmp_path, text) == yaml.load(text, Loader=yaml.SafeLoader)
 
 
-# ---- coarse wall-clock catch (min-of-N, machine-normalized) ------------------------------
+# ---- coarse wall-clock catch (min-of-N, machine-normalized), local only -------------------
+
+def _wall_clock_skipped(env: Mapping[str, str]) -> bool:
+    return bool(env.get("CI"))
+
+
+_LOCAL_ONLY = pytest.mark.skipif(_wall_clock_skipped(os.environ),
+                                 reason="wall clock is a local check on shared runners "
+                                        "(fb-e10892101b85); the cost checks above gate CI")
+
+
+def test_wall_clock_budget_is_local_only():
+    assert _wall_clock_skipped({"CI": "true"})
+    assert not _wall_clock_skipped({})
+    for test in (test_pre_tool_owned_overhead_stays_within_coarse_budget,
+                 test_stop_owned_overhead_stays_within_coarse_budget):
+        assert _LOCAL_ONLY.mark in test.pytestmark
+
 
 def _min_ms(cmd: list[str], root: Path, payload: str, n: int = 15, warmup: int = 3) -> float:
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
@@ -303,6 +385,7 @@ def _min_ms(cmd: list[str], root: Path, payload: str, n: int = 15, warmup: int =
     return best
 
 
+@_LOCAL_ONLY
 def test_pre_tool_owned_overhead_stays_within_coarse_budget(tmp_path):
     root = _project(tmp_path, None)
     payload = json.dumps(_pre("Read", {"file_path": "README.md"}))
@@ -313,6 +396,7 @@ def test_pre_tool_owned_overhead_stays_within_coarse_budget(tmp_path):
     assert owned <= 1.75 * bare, f"prusik-owned {owned:.1f}ms > 1.75 x bare {bare:.1f}ms"
 
 
+@_LOCAL_ONLY
 def test_stop_owned_overhead_stays_within_coarse_budget(tmp_path):
     root = _project(tmp_path, None)
     payload = json.dumps(_STOP_PAYLOAD)
