@@ -10,7 +10,22 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": "uv run python -m pytest tests/test_boundary_registry_discovery.py -q",
+    "fixed_in": "0.233.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-10-30T15:14:53.685706+00:00",
+      "exit": 0,
+      "executed_count": 10,
+      "verdict": true,
+      "why": "10 test(s) executed, exit 0",
+      "worktree_hash": "75aab2c-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }

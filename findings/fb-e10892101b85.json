@@ -1,0 +1,22 @@
+{
+  "id": "fb-e10892101b85",
+  "created_at": "2026-10-30T15:13:46.666502+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "test_stop_owned_overhead_stays_within_coarse_budget flakes on CI: wall-clock ratio on shared runners fails with no code change (2 of last 15 main runs)",
+  "detail": "tests/test_hook_hot_path.py asserts owned <= 1.75 x bare where both are min-of-15 wall-clock subprocess timings. On GitHub runners it went red on 79046f8 (findings-only commit; 24.7ms > 1.75 x 14.0ms) and 5c7b3c9 (43.5ms > 1.75 x 24.8ms), while the neighbouring commits with identical code were green. A machine-noise-dependent assertion that reds CI 13% of the time with no code change trains operators to ignore CI red. Fix direction: assert a deterministic proxy for the hot path (e.g. imported-module set / import count, which the hot-path perf work already constrains) as the gate, and keep the wall-clock ratio as a local-only or retried-median diagnostic, not a CI hard fail.",
+  "feature": null,
+  "content_hash": "e10892101b85",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [
+    {
+      "at": "2026-10-30T15:14:53.761403+00:00",
+      "role": "prusik-author",
+      "body": "Recurred on 75aab2c (v0.233.0 release push, no hook-path change): 39.2ms > 1.75 x 21.5ms. Failing ratios 1.75/1.76/1.82 \u2014 the stop hook sits AT the budget on CI runners, so noise tips it; not pure noise, a budget with no headroom on that hardware."
+    }
+  ],
+  "resolution": null,
+  "verify_history": [],
+  "status": "acknowledged"
+}
