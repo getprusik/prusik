@@ -16,7 +16,22 @@
       "body": "Recurred on 75aab2c (v0.233.0 release push, no hook-path change): 39.2ms > 1.75 x 21.5ms. Failing ratios 1.75/1.76/1.82 \u2014 the stop hook sits AT the budget on CI runners, so noise tips it; not pure noise, a budget with no headroom on that hardware."
     }
   ],
-  "resolution": null,
-  "verify_history": [],
-  "status": "acknowledged"
+  "resolution": {
+    "type": "fix",
+    "verify": "uv run python -m pytest tests/test_hook_hot_path.py -q",
+    "fixed_in": "0.233.1",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-10-31T14:17:47.443286+00:00",
+      "exit": 0,
+      "executed_count": 42,
+      "verdict": true,
+      "why": "42 test(s) executed, exit 0",
+      "worktree_hash": "96234b0-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
