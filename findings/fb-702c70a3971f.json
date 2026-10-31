@@ -1,0 +1,16 @@
+{
+  "id": "fb-702c70a3971f",
+  "created_at": "2026-10-30T15:36:36.519975+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "single-writer lease blocks writes outside the shared tree and outlives a finished session",
+  "detail": "A session that had ended (last turn 15:15, no live process in the repo) still held .sprint/main-writer.json, so the next session's Bash write to its own scratchpad, which is outside the main tree, was denied. Two gaps: the lease guards a target it does not own, and it does not detect that the holder has ended, so the operator must check by hand before release-writer.",
+  "feature": null,
+  "content_hash": "702c70a3971f",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
