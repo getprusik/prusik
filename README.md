@@ -15,7 +15,7 @@ AI agents now write code faster than anyone can review it — and they routinely
 | A fix ships, then quietly regresses | Closed findings re-verify — a regression **auto-reopens the ticket** |
 | "Done" = a persuasive summary | "Done" = captured evidence in an append-only ledger you can hand an auditor |
 
-Free, Apache-2.0, **no telemetry, no account, no phone-home** — a verification tool you don't have to trust blindly would be a contradiction. The `prove` / `scan` / `feedback` layer works with **any** agent or CI; the full phase-gated harness targets Claude Code today. Backed by [1,900+ tests](tests/), including [regression tests pinned to 98 findings](prusik/_closures.json), each one fixed and proof-closed ([CI](https://github.com/getprusik/prusik/actions/workflows/ci.yml)).
+Free, Apache-2.0, **no telemetry, no account, no phone-home** — a verification tool you don't have to trust blindly would be a contradiction. The one network call it makes on its own is an update check against public GitHub and PyPI; see [SECURITY.md](SECURITY.md). The `prove` / `scan` / `feedback` layer works with **any** agent or CI; the full phase-gated harness targets Claude Code today. Backed by [1,900+ tests](tests/), including [regression tests pinned to 98 findings](prusik/_closures.json), each one fixed and proof-closed ([CI](https://github.com/getprusik/prusik/actions/workflows/ci.yml)).
 
 ## Prove your agent's tests actually ran (30 seconds, zero config)
 
