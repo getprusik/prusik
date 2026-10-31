@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/getprusik/prusik/actions/workflows/ci.yml/badge.svg)](https://github.com/getprusik/prusik/actions/workflows/ci.yml) [![PyPI version](https://img.shields.io/pypi/v/prusik)](https://pypi.org/project/prusik/) [![Python versions](https://img.shields.io/pypi/pyversions/prusik)](https://pypi.org/project/prusik/) [![License](https://img.shields.io/pypi/l/prusik)](https://github.com/getprusik/prusik/blob/main/LICENSE)
 
-**Prusik is an independent verification layer for AI coding agents.** Agents write the code; prusik proves the work — that tests really executed, changes stayed in scope, and every "done" has evidence behind it. It's named after the climbing knot: slides freely while you work, grips instantly under load.
+**Agents do the work; prusik checks the receipt.** Prusik is an independent verification layer for AI coding agents. Agents write the code; prusik proves the work — that tests really executed, changes stayed in scope, and every "done" has evidence behind it. It's named after the climbing knot: slides freely while you work, grips instantly under load.
 
 AI agents now write code faster than anyone can review it — and they routinely report success that didn't happen: green suites where nothing ran, tests bent to match a bug, changes far outside what you asked for. Reviewing harder doesn't scale, and an agent's report can never be evidence for its own work — which makes an independent verification layer a structural requirement of the agentic SDLC, not an add-on. Prusik is that layer: it sits **outside** the agent and verifies from the tools' own output — **proof, not opinion.**
 
@@ -15,7 +15,7 @@ AI agents now write code faster than anyone can review it — and they routinely
 | A fix ships, then quietly regresses | Closed findings re-verify — a regression **auto-reopens the ticket** |
 | "Done" = a persuasive summary | "Done" = captured evidence in an append-only ledger you can hand an auditor |
 
-Free, Apache-2.0, **no telemetry, no account, no phone-home** — a verification tool you don't have to trust blindly would be a contradiction. The `prove` / `scan` / `feedback` layer works with **any** agent or CI; the full phase-gated harness targets Claude Code today. Backed by [1,300+ tests](tests/), including [59 regression tests](prusik/_closures.json) harvested from real field findings — every one born from a defect an adopter hit, fixed, and proof-closed ([CI](https://github.com/getprusik/prusik/actions/workflows/ci.yml)).
+Free, Apache-2.0, **no telemetry, no account, no phone-home** — a verification tool you don't have to trust blindly would be a contradiction. The `prove` / `scan` / `feedback` layer works with **any** agent or CI; the full phase-gated harness targets Claude Code today. Backed by [1,900+ tests](tests/), including [regression tests pinned to 98 findings](prusik/_closures.json), each one fixed and proof-closed ([CI](https://github.com/getprusik/prusik/actions/workflows/ci.yml)).
 
 ## Prove your agent's tests actually ran (30 seconds, zero config)
 
@@ -221,9 +221,40 @@ Prusik operates at one layer: **build-time process discipline and evidence**. ID
 - **Python-AST-privileged discovery.** JS/TS/Go are regex-based (good enough for scoping); Rust/Java/Ruby unsupported until tree-sitter lands (recurrence-gated).
 - **No UI, no production runtime.** CLI + hooks by design; pair with the tools above for dashboards and runtime observability.
 
+## Free forever, and what will cost money
+
+**Everything that proves work in one repository is free forever. What will cost money is the org-level layer across many repositories: you pay for the fleet answer, never for the proof.**
+
+**Free forever, Apache-2.0.** Everything shipped in the `prusik` package today and its successors:
+
+- `prove` (all evidence kinds, present and future), `scan`, the CI Action
+- The full harness: `init`, phase gates, writable-path enforcement, the single-writer lease, prove-red, baselines, critics, watchdog, triage
+- The feedback loop: findings, proof-gated closure, auto-reopen, proof-transfer on update
+- Per-repo instruments: `trust-report`, `metrics`, `catches`, `overhead`, `effort` (including measured token usage), `digest`, `eval scorecard`, SARIF export
+- `update` / `doctor` / `disable` / `uninstall`: adopt, stay current, leave cleanly
+
+If it runs offline in one repo and answers "can I trust this repo's agent work?", it is free, forever, no exceptions added retroactively.
+
+**The product: the fleet layer. Not available yet.**
+
+- Org-level rollup of per-repo dossiers into one evidence-backed view
+- Benchmarking against the field: your catch rates compared with other fleets
+- Fleet cost visibility: what agents consume across repos, by role and model
+- Hosted, signed attestation with a tamper-evident chain and retention
+- Org administration: policy distribution, adoption-drift visibility across a fleet, priority support
+
+If it only makes sense across many repos, or requires shared infrastructure or population data, it is the product.
+
+**The promise.**
+
+- No feature currently free ever moves behind the paid line.
+- No telemetry is ever added to the free engine as a funnel for paid insights.
+- The paid layer consumes the same ledgers and dossiers the free tier produces. You are never locked in: your data is yours, readable without us.
+- Pricing is public the day it exists.
+
 ## Self-hosting
 
-Prusik develops itself with prusik: the repo's own `.claude/` wires the same hooks, the same gates, the same ledger. The 59 field-finding regression tests in this suite are the moat that closed real adopter tickets — the loop in this README is the loop that built it.
+Prusik develops itself with prusik: the repo's own `.claude/` wires the same hooks, the same gates, the same ledger. The regression tests pinned to 98 findings in this suite are the moat that closed real adopter tickets — the loop in this README is the loop that built it.
 
 <details>
 <summary><b>Repository layout</b></summary>
@@ -234,7 +265,7 @@ prusik/                    — engine
   issue_plugins/           — per-tracker sync
   templates/               — copied into target projects by `prusik init`
 benchmarks/ examples/      — sample-repo fixtures for detectors + evals
-tests/                     — 1,300+ tests incl. 59 field-finding regression tests
+tests/                     — 1,900+ tests incl. regression tests pinned to 98 findings
 .claude/                   — self-host: prusik's own harness config
 ```
 
