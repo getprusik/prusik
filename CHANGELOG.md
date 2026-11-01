@@ -3,6 +3,31 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.238.0] — The bash gate reads the file verbs
+
+- **`cp`, `mv`, `rm`, `truncate`, `dd`, `touch` and `install` are gated (fb-f113f05860db).** Each
+  changed a file the Write tool had been refused. The field held 87 such writes the gate never saw,
+  mostly `cp worktrees/<role>/src/... src/...` into the main tree during `building` and `reviewing`.
+  The verbs are read at command position only, so `git rm`, `pip install` and `echo rm x` name
+  nothing, and sources and reference files are never named.
+- **A literal assignment in the command resolves.** `S=/tmp/x; cp a "$S/b"` lands at `/tmp/x/b`, for
+  redirects, `tee`, in-place editors, the file verbs and `cd`, and `$HOME` resolves as `~` does. A
+  name assigned twice, after the use, in a subshell, as a `VAR=x cmd` prefix, or by `for` or `read`
+  still fails closed, as does a command substitution. `> "$LOG"` no longer needs the Write tool when
+  the command sets `LOG`.
+- **A relative path starts from the shell's directory.** `ToolEvent` carries the host's `cwd`, so a
+  relative target in a shell sitting in `worktrees/solo` lands there, and a git commit from there no
+  longer counts as a shared-tree write.
+- **Regenerable directories can always be cleared.** `rm` of a path through `_DERIVED_DIRS`, `.venv`
+  or `venv` names nothing, because the gate refuses to advance with caches left behind. The check
+  reads the normalized path, so `rm .pytest_cache/../design/f/scope.md` is still named.
+- **Still not read.** `xargs rm`, `find -exec`, `find -delete`, `sudo` and `env` hide a file verb, so
+  `xargs sed -i` fails closed while `xargs rm` stays unread (fb-0e678051f98e). `ln`, `rsync`, `tar`,
+  `unzip`, `patch`, `curl -o`, `mkdir` and `rmdir` are not read either (fb-331f8487c548).
+- **Proof.** Over 5,755 in-sprint field commands at the phase each ran in, every refusal added or
+  dropped against v0.237.1 is classified in `reports/bash-file-verbs/field-replay.txt`: 108 added,
+  70 dropped, none unexplained, none a regenerable cleanup.
+
 ## [0.237.1] — The boundary matches paths, not strings
 
 - **A module admits itself and what lies under it (fb-cbaf583f3925).** `builder_writes_within_plan`

@@ -44,11 +44,14 @@ class ToolEvent:
         by the gate).
       - `session`: the host's session identity, when it provides one — the key for
         cross-session serialization (fb-0b9d0a6d1ce6 single-writer lease). None when
-        a host can't identify sessions; the lease check is then inapplicable."""
+        a host can't identify sessions; the lease check is then inapplicable.
+      - `cwd`: the directory a shell command starts in, when the host says. Relative paths
+        in `command` start there; with None they start at the project root."""
     tool: str
     file_targets: tuple[str, ...] = field(default_factory=tuple)
     command: str | None = None
     session: str | None = None
+    cwd: str | None = None
 
 
 @dataclass(frozen=True)
@@ -158,7 +161,7 @@ class ClaudeCodeAdapter(PlatformAdapter):
                              session=session)
         if tool == "Bash":
             return ToolEvent(tool=tool, command=ti.get("command", ""),
-                             session=session)
+                             session=session, cwd=payload.get("cwd") or None)
         return ToolEvent(tool=tool, session=session)  # non-write, non-shell → nothing to gate
 
     def deny(self, reason: str) -> int:

@@ -215,7 +215,7 @@ def _record_briefing_for_event(event, active_feature: str | None) -> None:
     # other Bash call skips the redirect scan entirely.
     if command and "briefs" in command:
         try:
-            targets += list(_bash_write_targets(_strip_heredocs(command)))
+            targets += _event_write_targets(event, _strip_heredocs(command))
         except Exception as exc:  # noqa: BLE001
             briefing_failed("bash_redirect", exc)
     if targets:
@@ -257,11 +257,12 @@ def _under_worktrees(target: str) -> bool:
     return str(rel).startswith("worktrees/")
 
 
-def _shared_tree_git_mutation(executable: str) -> bool:
+def _shared_tree_git_mutation(executable: str, start: str = "") -> bool:
     """True if any statement runs a mutating git subcommand against the shared
     tree. Statement-ordered: a `cd worktrees/...` earlier in the same command
-    scopes the following statements into that worktree."""
-    in_worktree = False
+    scopes the following statements into that worktree, and `start` is where the
+    command begins."""
+    in_worktree = bool(start) and _under_worktrees(start)
     for stmt in re.split(r"(?:;|&&|\|\||\||\n)", executable):
         toks = stmt.split()
         if not toks:
@@ -290,10 +291,11 @@ def _mutates_shared_tree(event) -> bool:
             return True
     if event.command:
         executable = _strip_heredocs(event.command)
-        for target in _bash_write_targets(executable):
+        for target in _event_write_targets(event, executable):
             if not _under_worktrees(target):
                 return True
-        if _shared_tree_git_mutation(executable):
+        if "git" in executable and _shared_tree_git_mutation(
+                executable, _shell_start(event.cwd)):
             return True
     return False
 
@@ -334,7 +336,7 @@ def _gate_decision(event, config: dict, phase: str, feature) -> str | None:
         # v0.3.8: Bash also writes files, and was bypassing the writable-path
         # check entirely (that check only covered Write/Edit/NotebookEdit).
         # Scan the command's write targets and apply is_path_writable to each.
-        for target in _bash_write_targets(executable):
+        for target in _event_write_targets(event, executable):
             ok, reason = phases.is_path_writable(target, config, phase, feature)
             if not ok:
                 ledger.append("gate_blocked", tool=event.tool, command=cmd,
@@ -477,6 +479,17 @@ def _worktree_redirect_hint(target: str, config: dict, phase: str,
 # `>&` with a digit or `-` after it duplicates a descriptor and writes no file.
 _REDIRECT_RE = re.compile(r"&>>?|[0-9]*(?:>>|>\||>&(?![0-9-])|>|<>)")
 _WRITER_RE = re.compile(r"(?<![\w.-])(tee|sed|perl)(?=[ \t\\])")
+# Unlike tee or sed, these words are routine arguments (`git rm`, `pip install`), so each must
+# stand at command position, optionally under a path (`/bin/rm`).
+_FILE_VERB_RE = re.compile(
+    r"(?<![\w.-])(?:[\w./~-]*/)?(cp|mv|rm|truncate|dd|touch|install)(?=[ \t\\])")
+_ENV_PREFIX_RE = re.compile(r"""(?:[A-Za-z_]\w*=(?:"[^"\n]*"|'[^'\n]*'|[^\s;&|()])*[ \t]+)+$""")
+_ASSIGNMENT_RE = re.compile(
+    r"(?<![\w$.=/-])(?:(?:export|readonly|local|declare|typeset)[ \t]+)?([A-Za-z_]\w*)(\+?)=")
+_REBINDER_RE = re.compile(
+    r"(?<![\w.-])(?:(?:for|select)[ \t]+(\w+)|(?:read|unset|mapfile|readarray|getopts|printf)"
+    r"[ \t]([^;&|\n]*))")
+_VARIABLE_RE = re.compile(r"\$(?:\{(\w+)\}|(\w+))")
 _CWD_RE = re.compile(r"[()]|\b(?:cd|pushd|popd)(?:[ \t]+|(?=[;&|)\n]|$))")
 _COMMAND_POSITION_RE = re.compile(
     r"(?:^|[;&|({\n]|(?<![\w-])(?:if|elif|else|while|until|then|do|!))[ \t]*$")
@@ -493,30 +506,65 @@ _WRITE_HINTS = (">", "tee", "sed", "perl")
 _WORD_END = frozenset(" \t\n;&|<>()")
 # The flags that take a script, and the other flags that take a value, per in-place editor.
 _INPLACE_FLAGS = {"sed": ("ef", ""), "perl": ("eE", "IMmF")}
+# The short and long flags that take a value, per file verb, across BSD and GNU. `-t` is GNU's
+# target directory. A flag read wrongly here can't move `cp`'s destination, the last operand.
+_VERB_VALUE_FLAGS = {"cp": "St", "mv": "St", "rm": "", "truncate": "rs", "touch": "Adrt",
+                     "install": "Sgmot"}
+_VERB_VALUE_LONG = frozenset(("--date", "--group", "--mode", "--owner", "--reference", "--size",
+                              "--suffix", "--target-directory", "--time"))
 # Targets only the running shell can name. `$` marks them as unresolved.
 _FROM_STDIN = "$(stdin)"
 _FROM_FIND = "$({})"
 
 
-def _bash_write_targets(cmd: str) -> list[str]:
-    """The files a bash command writes, at the path each lands on, as far as its text says.
+def _shell_start(cwd: str | None) -> str:
+    """The host's `cwd` as a landing base: relative to the project root, absolute outside it,
+    and "" at the root or when the host gave none."""
+    if not cwd:
+        return ""
+    path = Path(cwd).resolve()
+    try:
+        rel = path.relative_to(ledger.project_root().resolve())
+    except (ValueError, OSError):
+        return str(path)
+    return "" if rel == Path() else str(rel)
 
-    Covers redirects, `tee`, and the in-place editors `sed -i` and `perl -i`. Called on
-    heredoc-stripped input, so heredoc prose names nothing.
+
+def _event_write_targets(event, executable: str) -> list[str]:
+    """`_bash_write_targets` from where the event's shell starts. A command naming no writer
+    costs no path resolution."""
+    if not _may_write(executable):
+        return []
+    return _bash_write_targets(executable, _shell_start(getattr(event, "cwd", None)))
+
+
+def _may_write(cmd: str) -> bool:
+    return any(hint in cmd for hint in _WRITE_HINTS) or _FILE_VERB_RE.search(cmd) is not None
+
+
+def _bash_write_targets(cmd: str, start: str = "") -> list[str]:
+    """The files a bash command writes, at the path each lands on, as far as its text says.
+    Relative paths start at `start`, itself relative to the project root.
+
+    Covers redirects, `tee`, the in-place editors `sed -i` and `perl -i`, and the file verbs
+    in `_FILE_VERB_RE`. Called on heredoc-stripped input, so heredoc prose names nothing.
 
     `-c "..."` payloads go first (v0.3.11): their `>` and `>=` are code, and they stay out of
     reach. An operator in literal text is not a redirect (fb-48a328898d07); see
     `_literal_text_mask`. A path-likeness filter drops what survives when the mask gives up.
 
-    A target holding a `$` or a backtick comes back unexpanded and fails closed; see
-    `_is_unresolved`. Other writers (`cp`, `mv`, `rm`, `dd`) are not read.
+    `$NAME` resolves when the command itself assigned it; see `_literal_bindings`. Any other
+    target holding a `$` or a backtick comes back unexpanded and fails closed; see
+    `_is_unresolved`. `find -exec`, `xargs` and `sudo` hide a file verb from this reading.
     """
-    if not any(hint in cmd for hint in _WRITE_HINTS):
+    if not _may_write(cmd):
         return []
     cleaned = _strip_c_payloads(cmd)
     literal = _literal_text_mask(cleaned)
-    cwds = _cwd_scopes(cleaned, literal)
+    bindings = _literal_bindings(cleaned, literal)
+    cwds = _cwd_scopes(cleaned, literal, start, bindings)
     named: list[tuple[int, str]] = []
+    verb_files: list[tuple[int, str, str]] = []
     for m in _REDIRECT_RE.finditer(cleaned):
         if not literal[m.start()]:
             named += [(m.start(), word) for word in _redirect_words(cleaned, m.end())]
@@ -526,11 +574,148 @@ def _bash_write_targets(cmd: str) -> list[str]:
             files = ([a for a in args if not a.startswith("-")] if m[1] == "tee"
                      else _inplace_files(m[1], args))
             named += [(m.start(), f) for f in files]
+    for m in _FILE_VERB_RE.finditer(cleaned):
+        if not literal[m.start()] and _starts_command(cleaned, m.start()):
+            args = _command_args(cleaned, m.end(), literal)
+            verb_files += [(m.start(), m[1], f) for f in _file_verb_targets(m[1], args)]
     targets: list[str] = []
-    for pos, tok in named:
+    for pos, raw in named:
+        tok = _expand(raw, pos, bindings)
         if tok not in _SKIP_TARGETS and (_is_unresolved(tok) or _looks_like_file_target(tok)):
             targets.append(_landing_path(tok, _cwd_at(cwds, pos)))
+    for pos, verb, raw in verb_files:     # an operand is a path, so no path-likeness filter
+        tok = _expand(raw, pos, bindings)
+        path = _landing_path(tok, _cwd_at(cwds, pos))
+        if tok not in _SKIP_TARGETS and not (verb == "rm" and _is_regenerable(path)):
+            targets.append(path)
     return targets
+
+
+def _is_regenerable(path: str) -> bool:
+    """True if `rm` of this normalized path only clears what a tool rebuilds. An unresolved
+    path was not normalized, so its `..` could leave the directory, and it stays a target."""
+    return not _is_unresolved(path) and not _REGENERABLE_DIRS.isdisjoint(path.split("/"))
+
+
+def _starts_command(cmd: str, i: int) -> bool:
+    """True if the word at `i` is the command of its statement, past any `VAR=x` prefix."""
+    prefix = _ENV_PREFIX_RE.search(cmd[:i])
+    return _at_command_position(cmd, prefix.start() if prefix else i)
+
+
+def _file_verb_targets(verb: str, args: list[str]) -> list[str]:
+    """The paths a file verb changes, from its argv, never a source it only reads. A
+    destination is a directory when its text says so (a trailing `/`, `.`, several sources,
+    `-t`). An existing directory written bare stays a path of its own, and is refused or
+    allowed as one."""
+    if verb == "dd":
+        return [a[3:] for a in args if a.startswith("of=")]
+    operands, target_dir, makes_dirs = _verb_operands(verb, args)
+    if verb in ("rm", "truncate", "touch") or makes_dirs:
+        return operands
+    if target_dir is None:
+        if len(operands) < 2:
+            return []
+        *sources, dest = operands
+    else:
+        sources, dest = operands, target_dir
+    into_dir = (target_dir is not None or len(sources) > 1
+                or dest.endswith(("/", "/.", "/..")) or dest in (".", ".."))
+    landed = ([f"{dest.rstrip('/')}/{os.path.basename(s.rstrip('/'))}" for s in sources]
+              if into_dir else [dest])
+    return sources + landed if verb == "mv" else landed
+
+
+def _verb_operands(verb: str, args: list[str]) -> tuple[list[str], str | None, bool]:
+    """(operands, `-t` directory, `install -d`) from a file verb's argv."""
+    value_flags = _VERB_VALUE_FLAGS[verb]
+    operands: list[str] = []
+    target_dir: str | None = None
+    makes_dirs = False
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if arg == "--":
+            operands += args[i:]
+            break
+        if arg.startswith("--"):
+            flag, has_value, value = arg.partition("=")
+            makes_dirs = makes_dirs or (verb == "install" and flag == "--directory")
+            if flag in _VERB_VALUE_LONG:
+                if not has_value:
+                    value = args[i] if i < len(args) else ""
+                    i += 1
+                if flag == "--target-directory":
+                    target_dir = value
+        elif arg.startswith("-") and len(arg) > 1:
+            for j, flag in enumerate(arg[1:], 2):
+                makes_dirs = makes_dirs or (verb == "install" and flag == "d")
+                if flag in value_flags:
+                    value = arg[j:]
+                    if not value:
+                        value = args[i] if i < len(args) else ""
+                        i += 1
+                    if flag == "t":
+                        target_dir = value
+                    break
+        else:
+            operands.append(arg)
+    return operands, target_dir, makes_dirs
+
+
+def _literal_bindings(cmd: str, literal: bytearray) -> dict[str, tuple[int, str]]:
+    """{name: (position, value)} for each variable the command assigns exactly once, at the
+    top level, so a use after it reads that value. Anything that could leave the name holding
+    another value leaves it out, and its uses fail closed: a second binder (`for`, `read`,
+    `+=`, `unset`), a subshell, or a `X=a cmd` prefix, which never reaches the next statement.
+
+    An assignment inside `if` or after `&&` counts as taken, and a value with a space counts
+    as one word even where an unquoted use would split it."""
+    if "=" not in cmd or "$" not in cmd:
+        return {}
+    bound: dict[str, tuple[int, str]] = {}
+    spoiled: set[str] = set()
+    for m in _REBINDER_RE.finditer(cmd):
+        if not literal[m.start()]:
+            spoiled.update(re.findall(r"[A-Za-z_]\w*", m[1] or m[2] or ""))
+    for m in _ASSIGNMENT_RE.finditer(cmd):
+        name = m[1]
+        if literal[m.start()] or not _starts_command(cmd, m.start()):
+            continue
+        word, end = (("", m.end()) if cmd[m.end():m.end() + 1] in _WORD_END
+                     else _shell_word(cmd, m.end()))
+        after = _skip_blanks(cmd, end)
+        persists = after >= len(cmd) or cmd[after] in ";&|)\n#"
+        if (name in bound or m[2] or not persists
+                or _subshell_depth(cmd, literal, m.start()) > 0):
+            spoiled.add(name)
+        else:
+            bound[name] = (m.start(), _expand(word or "", m.start(), bound))
+    return {name: found for name, found in bound.items() if name not in spoiled}
+
+
+def _subshell_depth(cmd: str, literal: bytearray, i: int) -> int:
+    depth = 0
+    for pos in range(i):
+        if not literal[pos] and cmd[pos] in "()":
+            depth = max(0, depth + (1 if cmd[pos] == "(" else -1))
+    return depth
+
+
+def _expand(word: str, pos: int, bindings: dict[str, tuple[int, str]]) -> str:
+    """`word` with each `$NAME` the command bound before `pos`, and `$HOME`, filled in."""
+    if "$" not in word:
+        return word
+
+    def fill(m: re.Match) -> str:
+        name = m[1] or m[2]
+        if name == "HOME":
+            return os.path.expanduser("~")
+        found = bindings.get(name)
+        return found[1] if found and found[0] < pos else m[0]
+
+    return _VARIABLE_RE.sub(fill, word)
 
 
 def _is_unresolved(target: str) -> bool:
@@ -553,14 +738,15 @@ def _at_command_position(cmd: str, i: int) -> bool:
     return _COMMAND_POSITION_RE.search(cmd[:i]) is not None
 
 
-def _cwd_scopes(cmd: str, literal: bytearray) -> list[tuple[int, str]]:
-    """(position, directory) at each change of the `cd` in force, relative to where the
-    command started. A `cd` inside `( )` or `$( )` ends with it. `pushd` and `popd` move the
-    same way, and a directory they can't name is unresolved."""
-    scopes = [(0, "")]
+def _cwd_scopes(cmd: str, literal: bytearray, start: str = "",
+                bindings: dict[str, tuple[int, str]] | None = None) -> list[tuple[int, str]]:
+    """(position, directory) at each change of the `cd` in force, beginning at `start`. A `cd`
+    inside `( )` or `$( )` ends with it. `pushd` and `popd` move the same way, and a directory
+    they can't name is unresolved."""
+    scopes = [(0, start)]
     saved: list[str] = []
     pushed: list[str] = []
-    cwd = ""
+    cwd = start
     for m in _CWD_RE.finditer(cmd):
         if literal[m.start()]:
             continue
@@ -573,6 +759,7 @@ def _cwd_scopes(cmd: str, literal: bytearray) -> list[tuple[int, str]]:
         elif _at_command_position(cmd, m.start()):
             verb = m[0].strip()
             word, _end = _shell_word(cmd, m.end())
+            word = _expand(word, m.start(), bindings or {}) if word else word
             if verb == "popd":
                 cwd = pushed.pop() if pushed else "$OLDPWD"
             elif word.startswith(("-", "+")) if word else verb == "pushd":
@@ -2604,6 +2791,10 @@ _DERIVED_DIRS = frozenset({
     "node_modules", "dist", ".next", ".nuxt", ".turbo", ".svelte-kit",
     "coverage", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
 })
+# What `rm` may clear in any phase: the same names, plus virtualenvs, which the hash prunes
+# for a different reason. The gate blocks advancing with caches left behind, so the cleanup
+# it demands must never be refused.
+_REGENERABLE_DIRS = _DERIVED_DIRS | {".venv", "venv"}
 
 # Never descended into by the non-git main-tree walk (VCS metadata, virtualenvs, sprint
 # worktrees) — the fingerprint's cost stays bounded by the project's own source.
