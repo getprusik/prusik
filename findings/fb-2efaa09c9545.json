@@ -1,0 +1,16 @@
+{
+  "id": "fb-2efaa09c9545",
+  "created_at": "2026-11-01T06:03:44.203616+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "redirect gate misses a redirect with no separator before it",
+  "detail": "gate._REDIRECT_RE needs whitespace, an operator char or a quote before the redirect operator, so real writes such as cat> f1, echo a>f1, esac> f1 and $((1>2))> f1 return no target. Confirmed in real bash while fuzzing quote-aware-redirects (v0.235.1); it predates that change. A file HEAD appeared to catch here was only matched inside a comment. Separately, a target with escaped spaces (a\\ b) is cut at the first space. Now that literal text is masked, the separator requirement may be droppable. Left out of that sprint.",
+  "feature": "quote-aware-redirects",
+  "content_hash": "2efaa09c9545",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
