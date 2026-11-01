@@ -3,6 +3,34 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.237.0] — The bash gate sees every write it can name, where it lands
+
+- **`sed -i` and `perl -i` are gated (fb-a609748e159f).** An in-place edit changed a file the Edit
+  tool had just been refused. The gate now reads their argv, in every flag form real sed and perl
+  accept, and names each edited file and never the script. `_bash_redirect_targets` is now
+  `_bash_write_targets`.
+- **A target is judged where it lands.** A relative target after `cd d` is `d/target`. Chained `cd`s
+  join, a `cd` inside `( )` or `$( )` ends with it, and `pushd` and `popd` move the same way. `cd worktrees/solo && echo a > f` was judged
+  as `f` at the project root. 154 of 309 field `sed -i` commands follow a `cd`, so gating them
+  without this would have refused real worktree edits.
+- **Bash decides what a redirect is (fb-2efaa09c9545).** No separator is needed before an operator,
+  so `cat> f1` and `esac> f1` are seen, as are `>|`, `>&f`, `<>` and `{fd}>`. Arithmetic and `[[ ]]`
+  are literal text. A target is read as one shell word, so `a\ b` and `"a b"c` are whole. `~/x`
+  expands, and `tee` names every file it is given, past any `>(...)` among them.
+- **An unresolvable target fails closed and says so (fb-7e7454d19bc0).** `> $OUT` was missed while
+  `> $OUT/x` was refused under a path it isn't. Any target holding `$` or a backtick, and an in-place
+  edit whose files come from `xargs` or `find -exec`, is now checked unexpanded. A refusal says the
+  gate can't tell where the target lands, offers no worktree route, and asks for the literal path.
+  `> "$LOG"` is now refused in a phase with a narrow writable set, so name the path instead.
+- **Literal text stays literal in more commands.** The mask read `--eval` as `eval`, counted an
+  escaped backtick as a real one, and gave up on the first `"$(...)"` or `${x}`. It now reads
+  `$(...)` in double quotes by the same rules, and turns off only for an `eval`, `trap` or `| sh`
+  outside literal text. A `-c` payload holding `\"` is stripped whole.
+- **Proof.** A 3,000-case fuzz against real bash, sed and perl: v0.236.1 missed 842 writes, this
+  release none. Over 61,157 field commands, every added or dropped target is classified.
+- **Still unread.** `cp`, `mv`, `rm`, `truncate`, `dd`, `touch` and `install`, `bash -c` and
+  `python -c` payloads, and variables assigned earlier in the same command.
+
 ## [0.236.1] — Every pytest invocation collects the same suite
 
 - **`pytest <file>` works (fb-c515bcaf0476).** 60 of 163 test modules failed collection alone with

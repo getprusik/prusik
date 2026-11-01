@@ -1170,38 +1170,38 @@ def test_agents_doctor_handles_no_agents_dir():
 
 # ---------- v0.3.8 bash redirect gate ----------
 
-def test_bash_redirect_targets_extracts_simple():
-    assert "foo.log" in gate._bash_redirect_targets("echo hi > foo.log")
-    assert "foo.log" in gate._bash_redirect_targets("echo hi >> foo.log")
-    assert "foo.log" in gate._bash_redirect_targets("cmd &> foo.log")
-    assert "err.log" in gate._bash_redirect_targets("cmd 2> err.log")
+def test_bash_write_targets_extracts_simple():
+    assert "foo.log" in gate._bash_write_targets("echo hi > foo.log")
+    assert "foo.log" in gate._bash_write_targets("echo hi >> foo.log")
+    assert "foo.log" in gate._bash_write_targets("cmd &> foo.log")
+    assert "err.log" in gate._bash_write_targets("cmd 2> err.log")
 
 
-def test_bash_redirect_targets_ignores_python_ge_operator():
+def test_bash_write_targets_ignores_python_ge_operator():
     """v0.3.11 fix: `>=` inside `python -c "..."` must not match."""
     cmd = """python3 -c "x = re.search(r'\\d{3}', s); assert len(backlog) >= 30" """
-    assert gate._bash_redirect_targets(cmd) == []
+    assert gate._bash_write_targets(cmd) == []
 
 
-def test_bash_redirect_targets_ignores_python_comparison_in_c_payload():
+def test_bash_write_targets_ignores_python_comparison_in_c_payload():
     cmd = """python3 -c "assert x > 3 and y == 5" """
-    assert gate._bash_redirect_targets(cmd) == []
+    assert gate._bash_write_targets(cmd) == []
 
 
-def test_bash_redirect_targets_ignores_for_loop_colon():
+def test_bash_write_targets_ignores_for_loop_colon():
     cmd = """python3 -c "for i, t in enumerate(BACKLOG, 1): print(i, t)" """
-    assert gate._bash_redirect_targets(cmd) == []
+    assert gate._bash_write_targets(cmd) == []
 
 
-def test_bash_redirect_targets_ignores_uv_run_payload():
+def test_bash_write_targets_ignores_uv_run_payload():
     cmd = """uv run python -c "print(len(backlog) >= 84)" """
-    assert gate._bash_redirect_targets(cmd) == []
+    assert gate._bash_write_targets(cmd) == []
 
 
-def test_bash_redirect_targets_catches_real_redirect_after_c_payload():
+def test_bash_write_targets_catches_real_redirect_after_c_payload():
     """Regression guard: stripping -c payload must not eat actual redirects."""
     cmd = """python3 -c "print('hi')" > real-output.log"""
-    assert "real-output.log" in gate._bash_redirect_targets(cmd)
+    assert "real-output.log" in gate._bash_write_targets(cmd)
 
 
 def test_looks_like_file_target_rejects_operators():
@@ -1220,18 +1220,18 @@ def test_looks_like_file_target_accepts_paths():
     assert gate._looks_like_file_target("out.log") is True
 
 
-def test_bash_redirect_targets_extracts_tee():
-    assert "bar.log" in gate._bash_redirect_targets("echo | tee bar.log")
-    assert "bar.log" in gate._bash_redirect_targets("echo | tee -a bar.log")
+def test_bash_write_targets_extracts_tee():
+    assert "bar.log" in gate._bash_write_targets("echo | tee bar.log")
+    assert "bar.log" in gate._bash_write_targets("echo | tee -a bar.log")
 
 
-def test_bash_redirect_targets_skips_dev_null():
-    targets = gate._bash_redirect_targets("cmd > /dev/null 2>&1")
+def test_bash_write_targets_skips_dev_null():
+    targets = gate._bash_write_targets("cmd > /dev/null 2>&1")
     assert "/dev/null" not in targets
 
 
-def test_bash_redirect_targets_handles_quoted_paths():
-    targets = gate._bash_redirect_targets('echo hi > "path with spaces.log"')
+def test_bash_write_targets_handles_quoted_paths():
+    targets = gate._bash_write_targets('echo hi > "path with spaces.log"')
     assert "path with spaces.log" in targets
 
 

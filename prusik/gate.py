@@ -215,7 +215,7 @@ def _record_briefing_for_event(event, active_feature: str | None) -> None:
     # other Bash call skips the redirect scan entirely.
     if command and "briefs" in command:
         try:
-            targets += list(_bash_redirect_targets(_strip_heredocs(command)))
+            targets += list(_bash_write_targets(_strip_heredocs(command)))
         except Exception as exc:  # noqa: BLE001
             briefing_failed("bash_redirect", exc)
     if targets:
@@ -290,7 +290,7 @@ def _mutates_shared_tree(event) -> bool:
             return True
     if event.command:
         executable = _strip_heredocs(event.command)
-        for target in _bash_redirect_targets(executable):
+        for target in _bash_write_targets(executable):
             if not _under_worktrees(target):
                 return True
         if _shared_tree_git_mutation(executable):
@@ -331,11 +331,10 @@ def _gate_decision(event, config: dict, phase: str, feature) -> str | None:
         executable = _strip_heredocs(cmd)
         phase_spec = phases.get_phase_spec(config, phase) or {}
 
-        # v0.3.8: Bash redirects also write files, and were bypassing the
-        # writable-path check entirely (that check only covered Write/Edit/
-        # NotebookEdit). Scan redirect targets and apply is_path_writable
-        # per target.
-        for target in _bash_redirect_targets(executable):
+        # v0.3.8: Bash also writes files, and was bypassing the writable-path
+        # check entirely (that check only covered Write/Edit/NotebookEdit).
+        # Scan the command's write targets and apply is_path_writable to each.
+        for target in _bash_write_targets(executable):
             ok, reason = phases.is_path_writable(target, config, phase, feature)
             if not ok:
                 ledger.append("gate_blocked", tool=event.tool, command=cmd,
@@ -343,7 +342,7 @@ def _gate_decision(event, config: dict, phase: str, feature) -> str | None:
                               gate_class=gate_class.WRITABLE_SCOPE,
                               reason=f"bash redirect to unwriteable path: {target} ({reason})")
                 return _writable_scope_deny_msg(
-                    "bash redirect", target, reason, config, phase, feature)
+                    "bash write", target, reason, config, phase, feature)
 
         # Preferred: deny_commands — token-based match. Immune to prose
         # inside heredocs or strings because we check command-position only.
@@ -431,12 +430,18 @@ def _writable_scope_deny_msg(action: str, target: str, reason: str | None, confi
     'don't retry other locations' — so the next write can be valid on the first
     try instead of the fifth. Same `gate_class` (writable_scope), so the rewrite's
     effect is provable by re-running the bounce report."""
+    unresolved = _is_unresolved(target)
+    if unresolved:
+        reason = "the shell expands this target, so the gate can't tell where it lands"
     reason = reason or "outside the phase's writable set"
     lines = [f"[prusik-gate] phase '{phase}' blocks {action} to {target}: {reason}"]
     allowed = phases.writable_patterns(config, phase, feature)
     if allowed:
         shown = ", ".join(allowed[:8]) + (" …" if len(allowed) > 8 else "")
         lines.append(f"  '{phase}' may write ONLY to: {shown}")
+    if unresolved:
+        lines.append("  → name the literal path in the command, or use the Write tool.")
+        return "\n".join(lines)
     hint = _worktree_redirect_hint(target, config, phase, feature)
     if hint:
         lines.append(f"  → {hint}")
@@ -467,72 +472,297 @@ def _worktree_redirect_hint(target: str, config: dict, phase: str,
     return f"Try writing to worktrees/{role_seg}/{rel} instead ({phase} phase)."
 
 
-# Bash shell redirects that WRITE to a target file.
-# Matches: >file  >>file  &>file  2>file  2>>file  1>file
-# Targets can be quoted or bare. We deliberately skip /dev/null etc.
-# Group 1 is the operator, the position `_literal_text_mask` is asked about.
-_REDIRECT_RE = re.compile(
-    r"""(?:^|[\s;&|("'])([0-9&]?>>?|&>)\s*("[^"]+"|'[^']+'|[^\s;&|<>()`]+)""",
-    re.MULTILINE,
-)
-_TEE_RE = re.compile(
-    r"""\b(tee)\s+(?:-a\s+)?("[^"]+"|'[^']+'|[^\s;&|<>()`]+)""",
-)
+# Every operator bash opens a file for writing with, written as bash reads it: no separator
+# is needed before one (`cat> f`). The target is read by `_shell_word`, never by this regex.
+# `>&` with a digit or `-` after it duplicates a descriptor and writes no file.
+_REDIRECT_RE = re.compile(r"&>>?|[0-9]*(?:>>|>\||>&(?![0-9-])|>|<>)")
+_WRITER_RE = re.compile(r"(?<![\w.-])(tee|sed|perl)(?=[ \t\\])")
+_CWD_RE = re.compile(r"[()]|\b(?:cd|pushd|popd)(?:[ \t]+|(?=[;&|)\n]|$))")
+_COMMAND_POSITION_RE = re.compile(
+    r"(?:^|[;&|({\n]|(?<![\w-])(?:if|elif|else|while|until|then|do|!))[ \t]*$")
 _REEXEC_RE = re.compile(
-    r"\b(?:eval|trap)\b|\|\s*(?:xargs\b[^|;&\n]*)?(?:[^\s|;&]*/)?(?:ba|z|k|da)?sh\b")
+    r"(?<![\w:.-])(?:eval|trap)\b|\|\s*(?:xargs\b[^|;&\n]*)?(?:[^\s|;&]*/)?(?:ba|z|k|da)?sh\b")
+_ARITHMETIC_RE = re.compile(r"\$?\(\([^;&|()]*\)\)")
+_TEST_RE = re.compile(r"\[\[[^\n]*?\]\]")
+_PARAMETER_RE = re.compile(r"""\$\{[^{}'"`$]*\}""")
+_UNESCAPED_BACKTICK_RE = re.compile(r"(?<!\\)`")
+_INNER_QUOTE_RE = re.compile(r"""(?<!\\)['"`]""")
 _SKIP_TARGETS = {"/dev/null", "/dev/stderr", "/dev/stdout",
                  "/dev/tty", "/dev/zero"}
+_WRITE_HINTS = (">", "tee", "sed", "perl")
+_WORD_END = frozenset(" \t\n;&|<>()")
+# The flags that take a script, and the other flags that take a value, per in-place editor.
+_INPLACE_FLAGS = {"sed": ("ef", ""), "perl": ("eE", "IMmF")}
+# Targets only the running shell can name. `$` marks them as unresolved.
+_FROM_STDIN = "$(stdin)"
+_FROM_FIND = "$({})"
 
 
-def _bash_redirect_targets(cmd: str) -> list[str]:
-    """Extract file paths that a bash command writes to via redirect or tee.
+def _bash_write_targets(cmd: str) -> list[str]:
+    """The files a bash command writes, at the path each lands on, as far as its text says.
 
-    Called on heredoc-stripped input so we don't pick up redirects that
-    were only in heredoc prose.
+    Covers redirects, `tee`, and the in-place editors `sed -i` and `perl -i`. Called on
+    heredoc-stripped input, so heredoc prose names nothing.
 
-    v0.3.11: also strips `-c "..."` / `-c '...'` payloads BEFORE scanning,
-    because inline Python/bash payloads contain `>`, `>=`, `>>` (as
-    comparison operators, regex tokens, etc.) that are NOT shell redirects
-    but that the scanner was mistaking for them. After stripping, a
-    path-likeness filter rejects remaining tokens that start with `=` or
-    `:` or don't look file-shaped, catching any false-positives that
-    survive.
+    `-c "..."` payloads go first (v0.3.11): their `>` and `>=` are code, and they stay out of
+    reach. An operator in literal text is not a redirect (fb-48a328898d07); see
+    `_literal_text_mask`. A path-likeness filter drops what survives when the mask gives up.
 
-    An operator in literal text is not a redirect (fb-48a328898d07); see
-    `_literal_text_mask`.
+    A target holding a `$` or a backtick comes back unexpanded and fails closed; see
+    `_is_unresolved`. Other writers (`cp`, `mv`, `rm`, `dd`) are not read.
     """
-    if ">" not in cmd and "tee" not in cmd:
+    if not any(hint in cmd for hint in _WRITE_HINTS):
         return []
     cleaned = _strip_c_payloads(cmd)
     literal = _literal_text_mask(cleaned)
+    cwds = _cwd_scopes(cleaned, literal)
+    named: list[tuple[int, str]] = []
+    for m in _REDIRECT_RE.finditer(cleaned):
+        if not literal[m.start()]:
+            named += [(m.start(), word) for word in _redirect_words(cleaned, m.end())]
+    for m in _WRITER_RE.finditer(cleaned):
+        if not literal[m.start()]:
+            args = _command_args(cleaned, m.end(), literal)
+            files = ([a for a in args if not a.startswith("-")] if m[1] == "tee"
+                     else _inplace_files(m[1], args))
+            named += [(m.start(), f) for f in files]
     targets: list[str] = []
-    for regex in (_REDIRECT_RE, _TEE_RE):
-        pos = 0
-        while m := regex.search(cleaned, pos):
-            # Resume right after the operator, never after the target: a false match's
-            # "target" can span the real redirect that follows, as in `echo '>' >'f1'`.
-            pos = m.end(1)
-            tok = m.group(2).strip("\"'")
-            if (not literal[m.start(1)] and tok and tok not in _SKIP_TARGETS
-                    and _looks_like_file_target(tok)):
-                targets.append(tok)
+    for pos, tok in named:
+        if tok not in _SKIP_TARGETS and (_is_unresolved(tok) or _looks_like_file_target(tok)):
+            targets.append(_landing_path(tok, _cwd_at(cwds, pos)))
     return targets
 
 
-def _literal_text_mask(cmd: str) -> bytearray:
-    """1 at every position bash reads as literal text: quotes, escaped `>`, comments.
+def _is_unresolved(target: str) -> bool:
+    """True if the shell would expand `target`, so its text is not the path written. Such a
+    target is still checked against the writable set as it stands, which fails closed
+    wherever that set is narrower than everything (fb-7e7454d19bc0)."""
+    return "$" in target or "`" in target
 
-    The gate must never lose a real redirect, so where this can't be sure it stops
-    marking and the rest of the command scans as code. That covers `$(` or a backtick
-    in double quotes, which run a command and can nest quotes; `${`, `$'` and a bare
-    backtick, whose quoting rules differ; an unterminated quote; and text a shell runs
-    again, such as `eval`, `trap` or `| sh`. A false block costs a turn, and a missed
+
+def _landing_path(target: str, cwd: str) -> str:
+    """`target` joined onto `cwd`, or as it stands when it is unresolved at its head. A
+    relative path still starts from the project root when no `cd` precedes it."""
+    if target.startswith(("$", "`")):       # may be absolute, so the `cd` can't be kept
+        return target
+    path = os.path.join(cwd, os.path.expanduser(target))
+    return path if _is_unresolved(path) else os.path.normpath(path)
+
+
+def _at_command_position(cmd: str, i: int) -> bool:
+    return _COMMAND_POSITION_RE.search(cmd[:i]) is not None
+
+
+def _cwd_scopes(cmd: str, literal: bytearray) -> list[tuple[int, str]]:
+    """(position, directory) at each change of the `cd` in force, relative to where the
+    command started. A `cd` inside `( )` or `$( )` ends with it. `pushd` and `popd` move the
+    same way, and a directory they can't name is unresolved."""
+    scopes = [(0, "")]
+    saved: list[str] = []
+    pushed: list[str] = []
+    cwd = ""
+    for m in _CWD_RE.finditer(cmd):
+        if literal[m.start()]:
+            continue
+        if m[0] == "(":
+            saved.append(cwd)
+        elif m[0] == ")":
+            if not saved:
+                continue
+            cwd = saved.pop()
+        elif _at_command_position(cmd, m.start()):
+            verb = m[0].strip()
+            word, _end = _shell_word(cmd, m.end())
+            if verb == "popd":
+                cwd = pushed.pop() if pushed else "$OLDPWD"
+            elif word.startswith(("-", "+")) if word else verb == "pushd":
+                cwd = "$OLDPWD"
+            else:
+                if verb == "pushd":
+                    pushed.append(cwd)
+                cwd = _landing_path(word or "~", cwd)
+        else:
+            continue
+        scopes.append((m.start(), cwd))
+    return scopes
+
+
+def _cwd_at(scopes: list[tuple[int, str]], pos: int) -> str:
+    return next(cwd for start, cwd in reversed(scopes) if start <= pos)
+
+
+def _skip_blanks(cmd: str, i: int) -> int:
+    while i < len(cmd):
+        if cmd[i] in " \t":
+            i += 1
+        elif cmd.startswith("\\\n", i):
+            i += 2
+        else:
+            break
+    return i
+
+
+def _shell_word(cmd: str, i: int) -> tuple[str | None, int]:
+    """The word starting at `i` after blanks, as bash reads it, and the index past it. None
+    if no word starts there. Quotes and escapes come off. An expansion stays as text, which
+    `_is_unresolved` then catches. An empty `""` is a word."""
+    i = start = _skip_blanks(cmd, i)
+    n = len(cmd)
+    out: list[str] = []
+    while i < n and cmd[i] not in _WORD_END:
+        c = cmd[i]
+        if c == "\\":
+            if cmd[i + 1:i + 2] != "\n":
+                out.append(cmd[i + 1:i + 2])
+            i += 2
+        elif c == "'":
+            end = cmd.find("'", i + 1)
+            end = n if end < 0 else end
+            out.append(cmd[i + 1:end])
+            i = end + 1
+        elif c == '"':
+            end = _double_quote_end(cmd, i) or n + 1
+            out.append(re.sub(r'\\(["\\$`])', r"\1", cmd[i + 1:end - 1]))
+            i = end
+        elif c == "`" or cmd.startswith("$(", i):
+            end = _substitution_end(cmd, i)
+            out.append(cmd[i:end])
+            i = end
+        else:
+            out.append(c)
+            i += 1
+    return ("".join(out), i) if i > start else (None, i)
+
+
+def _redirect_words(cmd: str, i: int) -> list[str]:
+    """The target at `i`, plus its head when a quote or backtick starts inside it. In text a
+    shell runs again, that quote closes the string the redirect sits in (`eval "echo > f"`),
+    so the head is the target. Elsewhere it is one more path to check, and fails closed."""
+    start = _skip_blanks(cmd, i)
+    word, end = _shell_word(cmd, start)
+    if not word:
+        return []
+    inner = _INNER_QUOTE_RE.search(cmd, start + 1, end)
+    head = _shell_word(cmd[start:inner.start()], 0)[0] if inner else None
+    if head and cmd.count("`", start, end) % 2:     # a backtick this word never closes
+        return [head]
+    return [word, head] if head else [word]
+
+
+def _substitution_end(cmd: str, start: int) -> int:
+    """Index just past the `$(...)` or backtick span at `start`, or the command's end. Quotes
+    inside `$(...)` are skipped, so a `)` in them closes nothing."""
+    if cmd[start] == "`":
+        end = cmd.find("`", start + 1)
+        return len(cmd) if end < 0 else end + 1
+    depth, i, n = 1, start + 2, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == "'":
+            end = cmd.find("'", i + 1)
+            i = n if end < 0 else end + 1
+            continue
+        if c == '"':
+            i = _double_quote_end(cmd, i) or n
+            continue
+        depth += (c == "(") - (c == ")")
+        i += 1
+        if depth == 0:
+            return i
+    return n
+
+
+def _command_args(cmd: str, i: int, literal: bytearray) -> list[str]:
+    """The words of the command from `i` to the end of its statement, leaving out redirects
+    and the descriptor number before one."""
+    args: list[str] = []
+    while True:
+        i = _skip_blanks(cmd, i)
+        if i >= len(cmd) or cmd[i] in ";&|()\n" or (cmd[i] == "#" and literal[i]):
+            return args
+        if cmd.startswith(("<(", ">("), i):         # a process substitution is an argument
+            i = _substitution_end(cmd, i)
+            continue
+        if cmd[i] in "<>":
+            m = _REDIRECT_RE.match(cmd, i)
+            i = m.end() if m else i + 1
+            _word, i = _shell_word(cmd, i)
+            continue
+        word, end = _shell_word(cmd, i)
+        if word is None:
+            return args
+        if not (word.isdigit() and cmd[end:end + 1] in ("<", ">")):
+            args.append(word)
+        i = end
+
+
+def _inplace_files(editor: str, args: list[str]) -> list[str]:
+    """The files `sed` or `perl` edits in place, from its argv, or [] with no `-i`. Without
+    `-e` or `-f` the first operand is the script. `-i` takes a suffix only when attached,
+    and BSD's separate `-i ''` is the one spaced form (`perl -pie` means suffix `e`)."""
+    script_flags, value_flags = _INPLACE_FLAGS[editor]
+    inplace = script = False
+    operands: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if arg == "--":
+            operands += args[i:]
+            break
+        if arg.startswith("--"):
+            flag, has_value, _value = arg.partition("=")
+            inplace = inplace or flag == "--in-place"
+            if flag in ("--expression", "--file"):
+                script = True
+                i += 0 if has_value else 1
+        elif arg.startswith("-") and len(arg) > 1:
+            for j, flag in enumerate(arg[1:], 2):
+                attached = arg[j:]
+                if flag == "i":
+                    inplace = True
+                    if not attached and args[i:i + 1] == [""]:
+                        i += 1
+                    break
+                if flag in script_flags or flag in value_flags:
+                    script = script or flag in script_flags
+                    i += 0 if attached else 1
+                    break
+        else:
+            operands.append(arg)
+    if not inplace:
+        return []
+    files = operands if script else operands[1:]
+    if "{}" in files:
+        return [_FROM_FIND]
+    return files or [_FROM_STDIN]
+
+
+def _literal_text_mask(cmd: str) -> bytearray:
+    """1 at every position bash reads as literal text: quotes, escaped `>`, comments,
+    arithmetic and `[[ ]]`, where `>` compares.
+
+    `$(...)` in double quotes is code again, so it is read by the same rules. The gate must
+    never lose a real redirect, so where this can't be sure it stops marking and the rest
+    of the command scans as code. That covers a backtick in double quotes, which runs a
+    command and can nest quotes; a complex `${`, `$'` and a bare backtick, whose quoting
+    rules differ; an unterminated quote; and text a shell runs again, such as `eval`,
+    `trap` or `| sh`. A false block costs a turn, and a missed
     redirect is a write the gate never sees. Indirection (`$cmd "..."`) and a script
     written then sourced are out of reach, as `bash -c` payloads already are.
     """
+    mask = _quoted_text_mask(cmd)
+    if any(not mask[m.start()] for m in _REEXEC_RE.finditer(cmd)):
+        return bytearray(len(cmd))
+    return mask
+
+
+def _quoted_text_mask(cmd: str) -> bytearray:
+    """The mask before any re-execution check: the same marks, with `eval` read as a word."""
     mask = bytearray(len(cmd))
-    if _REEXEC_RE.search(cmd):
-        return mask
     i, n = 0, len(cmd)
     word_start = True
     while i < n:
@@ -544,14 +774,34 @@ def _literal_text_mask(cmd: str) -> bytearray:
                 mask[i + 1] = 1
             i += 2
             continue
-        if c == "`" or cmd.startswith(("${", "$'"), i):
+        if c == "`" or cmd.startswith("$'", i):
             return mask
+        compare = None
+        if c == "$" or (at_word_start and c == "("):
+            compare = _ARITHMETIC_RE.match(cmd, i)
+        elif at_word_start and cmd.startswith("[[", i) and _at_command_position(cmd, i):
+            compare = _TEST_RE.match(cmd, i)
+        if compare:
+            mask[i:compare.end()] = b"\x01" * (compare.end() - i)
+            i = compare.end()
+            continue
+        if cmd.startswith("${", i):
+            param = _PARAMETER_RE.match(cmd, i)
+            if not param:
+                return mask
+            mask[i:param.end()] = b"\x01" * (param.end() - i)
+            i = param.end()
+            continue
         if c == "'":
             end = cmd.find("'", i + 1) + 1
         elif c == '"':
             end = _double_quote_end(cmd, i)
-            if end and ("$(" in cmd[i:end] or "`" in cmd[i:end]):
+            if end and _UNESCAPED_BACKTICK_RE.search(cmd, i, end):
                 return mask
+            if end:
+                _mask_double_quotes(cmd, i, end, mask)
+                i = end
+                continue
         elif c == "#" and at_word_start:
             newline = cmd.find("\n", i)
             end = newline if newline >= 0 else n
@@ -565,14 +815,35 @@ def _literal_text_mask(cmd: str) -> bytearray:
     return mask
 
 
+def _mask_double_quotes(cmd: str, start: int, end: int, mask: bytearray) -> None:
+    """Mark the double-quoted span, leaving each `$(...)` in it masked as the code it is."""
+    mask[start:end] = b"\x01" * (end - start)
+    i = start + 1
+    while i < end - 1:
+        if cmd[i] == "\\":
+            i += 2
+        elif arithmetic := _ARITHMETIC_RE.match(cmd, i):
+            i = arithmetic.end()
+        elif cmd.startswith("$(", i):
+            stop = _substitution_end(cmd, i)
+            mask[i:stop] = bytes(stop - i)
+            mask[i + 2:stop - 1] = _literal_text_mask(cmd[i + 2:stop - 1])
+            i = stop
+        else:
+            i += 1
+
+
 def _double_quote_end(cmd: str, start: int) -> int:
-    """Index just past the `"` closing the one at `start`, or 0 if it never closes."""
+    """Index just past the `"` closing the one at `start`, or 0 if it never closes. A `$(`
+    opens its own quoting, so a `"` inside one closes nothing here."""
     i = start + 1
     while i < len(cmd):
         if cmd[i] == "\\":
             i += 2
         elif cmd[i] == '"':
             return i + 1
+        elif cmd.startswith("$(", i):
+            i = _substitution_end(cmd, i)
         else:
             i += 1
     return 0
@@ -584,7 +855,7 @@ _C_PAYLOAD_RE = re.compile(
     r"""(?:python[23]?|bash|sh|zsh|ksh|uv\s+run\s+python[23]?|uv\s+run)\s+
         (?:[^'"\s<>;&|()`]+\s+)*           # any flags before -c
         -c\s+
-        (?:"[^"]*"|'[^']*')                # the payload itself (quoted)
+        (?:"(?:[^"\\]|\\.)*"|'[^']*')        # the payload itself (quoted)
     """,
     re.VERBOSE,
 )
@@ -620,8 +891,9 @@ def _looks_like_file_target(tok: str) -> bool:
     # Has a file extension — accept (handles quoted paths with spaces)
     if re.search(r"\.[a-zA-Z0-9]+$", tok):
         return True
-    # Bare word without extension (e.g. `tee logfile`) — conservative accept
-    if re.match(r"^[a-zA-Z_][\w\-]*$", tok):
+    # Bare word without extension (e.g. `tee logfile`, or a quoted `my file`) — conservative
+    # accept
+    if re.match(r"^[a-zA-Z_][\w\- ]*$", tok):
         return True
     return False
 

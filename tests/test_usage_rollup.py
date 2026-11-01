@@ -496,7 +496,7 @@ def test_a_redirect_source_fault_keeps_file_targets_and_is_recorded(proj, monkey
     def boom(*a, **k):
         raise ValueError("redirect parser exploded")
 
-    monkeypatch.setattr(gate, "_bash_redirect_targets", boom)
+    monkeypatch.setattr(gate, "_bash_write_targets", boom)
     ev = ToolEvent(tool="X", file_targets=("briefs/a.md",), command="echo > briefs/b.md")
     assert gate._record_briefing_for_event(ev, None) is None
     assert _briefed() == ["a"]
