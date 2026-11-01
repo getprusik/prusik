@@ -1,0 +1,16 @@
+{
+  "id": "fb-7e7454d19bc0",
+  "created_at": "2026-11-01T07:05:43.694848+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "bash gate refuses a redirect whose target is a shell variable, even when it expands to an always-writable path",
+  "detail": "During solo_execute on the engine repo, a heredoc redirect to $S/probe_prusik.py, with S set to the session scratchpad under /private/tmp, was blocked: '$S/probe_prusik.py' not in writable patterns. The gate compares the unexpanded text, so the block reason and the suggested path (worktrees/solo/$S/probe_prusik.py) are both wrong for what the command would do. The Write tool to the same literal path succeeded. Failing closed on an unresolvable target is right; the message should say the target could not be resolved rather than name a path that is not the one written. Surfaced building v0.236.1.",
+  "feature": null,
+  "content_hash": "7e7454d19bc0",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
