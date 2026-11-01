@@ -10,7 +10,22 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": "uv run pytest tests/test_quote_aware_redirects.py -q",
+    "fixed_in": "0.235.1",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-01T16:33:25.531234+00:00",
+      "exit": 0,
+      "executed_count": 66,
+      "verdict": true,
+      "why": "66 test(s) executed, exit 0",
+      "worktree_hash": "4452c88-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
