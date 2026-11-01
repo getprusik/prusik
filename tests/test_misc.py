@@ -371,11 +371,11 @@ def test_digest_without_by_size_flag_unchanged():
 
 def test_extract_enum_strips_markdown():
     """v0.4.1: **S**, *S*, `S`, _S_ all extract as S for enum matching."""
-    assert schema._extract_enum_value("**S**") == "S"
-    assert schema._extract_enum_value("*S*  small thing") == "S"
-    assert schema._extract_enum_value("`S`") == "S"
-    assert schema._extract_enum_value("_S_") == "S"
-    assert schema._extract_enum_value("S  — plain still works") == "S"
+    assert schema.extract_enum_value("**S**") == "S"
+    assert schema.extract_enum_value("*S*  small thing") == "S"
+    assert schema.extract_enum_value("`S`") == "S"
+    assert schema.extract_enum_value("_S_") == "S"
+    assert schema.extract_enum_value("S  — plain still works") == "S"
 
 
 def test_scope_validator_accepts_markdown_wrapped_size():

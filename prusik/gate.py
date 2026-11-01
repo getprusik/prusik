@@ -1103,6 +1103,7 @@ def sprint_start(args) -> int:
     _prior_feature = _prior.get("feature")
     _prior_phase = _prior.get("phase")
     _paused = _pause.is_paused(root)
+    _discard: list[str] | None = None
     if (_prior_feature and _prior_feature != feature
             and (_paused or _prior_phase in _PROTECTED_PHASES)):
         wt = root / "worktrees"
@@ -1123,12 +1124,9 @@ def sprint_start(args) -> int:
                           prior_feature=_prior_feature, prior_phase=_prior_phase,
                           paused=_paused, worktrees=_live)
             return 2
-        # Explicit opt-out: discard the other sprint cleanly, incl. its stale
-        # pause marker, then fall through to the normal (destructive) start.
-        if _paused:
-            _pause.resume()
-        print(f"[prusik-gate] --force-clean: discarding sprint {_prior_feature!r} "
-              f"and its {len(_live)} worktree(s).")
+        # Explicit opt-out: the discard itself waits until every refusal below has
+        # passed, so a refused start leaves the other sprint untouched (fb-3adb150c6991).
+        _discard = _live
 
     brief_path = root / "briefs" / f"{feature}.md"
     if not brief_path.exists():
@@ -1164,6 +1162,33 @@ def sprint_start(args) -> int:
                       gate_class=gate_class.SPRINT_START_GATE)
         return 2
 
+    # v0.11.0 #2 — proportional-ceremony (trivial) lane. Ceremony
+    # proportional to blast radius IS prusik's stated value; a guarded,
+    # near-zero-blast-radius change earning near-zero design ceremony is
+    # that principle applied, not a loophole. The guard is ungameable: the
+    # brief's Type must be one a one-shot change can plausibly be. Decided
+    # HERE (sprint-start) not at triage — triage runs AFTER scoping, too
+    # late to skip the scope-critic ceremony that is the actual cost.
+    if getattr(args, "trivial", False):
+        btype = schema.extract_enum_value(
+            schema.parse_sections(brief_path.read_text()).get("## Type", "")) or ""
+        if btype not in _TRIVIAL_ELIGIBLE_TYPES:
+            print(f"[prusik-gate] --trivial rejected: brief Type is {btype!r}; the "
+                  f"trivial lane is only for {sorted(_TRIVIAL_ELIGIBLE_TYPES)}.",
+                  file=sys.stderr)
+            print("  A new_feature/refactor/migration has real blast radius — "
+                  "run without --trivial (full scope/plan review).",
+                  file=sys.stderr)
+            ledger.append("trivial_lane_rejected", feature=feature, brief_type=btype)
+            return 2
+
+    # Every refusal is above this line; everything below changes state.
+    if _discard is not None:
+        if _paused:
+            _pause.resume()
+        print(f"[prusik-gate] --force-clean: discarding sprint {_prior_feature!r} "
+              f"and its {len(_discard)} worktree(s).")
+
     # v0.3.9: wipe stale worktrees before the sprint begins. Worktrees are
     # per-sprint ephemeral scratch space; contamination from a prior sprint
     # leaks into the current sprint's touch-list and confuses reviewers
@@ -1186,13 +1211,6 @@ def sprint_start(args) -> int:
         print(f"[prusik-gate] Reaped orphaned fix-round from "
               f"{_reaped.get('feature')!r} before starting {feature!r}.")
 
-    # v0.11.0 #2 — proportional-ceremony (trivial) lane. Ceremony
-    # proportional to blast radius IS prusik's stated value; a guarded,
-    # near-zero-blast-radius change earning near-zero design ceremony is
-    # that principle applied, not a loophole. The guard is ungameable: the
-    # brief's Type must be one a one-shot change can plausibly be. Decided
-    # HERE (sprint-start) not at triage — triage runs AFTER scoping, too
-    # late to skip the scope-critic ceremony that is the actual cost.
     state: dict = {"phase": "scoping", "feature": feature}
     # Record the base commit so a completing sprint can diff EXACTLY what it changed,
     # independent of push state (fb-e340cd203897: the ci-deliverable-observation check
@@ -1202,17 +1220,6 @@ def sprint_start(args) -> int:
     if _base:
         state["base_commit"] = _base
     if getattr(args, "trivial", False):
-        btype = schema.parse_sections(brief_path.read_text()).get("## Type", "")
-        btype = (btype.strip().split() or [""])[0].strip("`*_").rstrip(",.")
-        if btype not in _TRIVIAL_ELIGIBLE_TYPES:
-            print(f"[prusik-gate] --trivial rejected: brief Type is {btype!r}; the "
-                  f"trivial lane is only for {sorted(_TRIVIAL_ELIGIBLE_TYPES)}.",
-                  file=sys.stderr)
-            print("  A new_feature/refactor/migration has real blast radius — "
-                  "run without --trivial (full scope/plan review).",
-                  file=sys.stderr)
-            ledger.append("trivial_lane_rejected", feature=feature, brief_type=btype)
-            return 2
         state["lane"] = "trivial"
 
     phases.set_sprint_state(state)
@@ -2050,6 +2057,12 @@ def advance(args) -> int:
                 return 2
 
         inconsistencies = consistency.run_for_phase(current, ledger.project_root(), feature)
+
+        if current == "scoping":
+            for flag in consistency.brief_type_matches_scope(ledger.project_root(), feature):
+                print(f"[prusik-gate] ⚠ {flag}")
+                ledger.append("size_type_flag", from_phase=current, feature=feature,
+                              detail=flag)
 
         # v0.10.0 (Fix 1): observability of the eliminated hand-list rot.
         # Emitted on building/solo_execute exit when the hand-list actually

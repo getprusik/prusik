@@ -362,11 +362,6 @@ def assemble_worktrees_to_root(project_root: Path,
     return sorted(set(copied))
 
 
-def _first_token(body: str) -> str | None:
-    s = body.strip()
-    return s.split()[0].rstrip(",.") if s else None
-
-
 def _modules_from(artifact_path: Path) -> set[str]:
     if not artifact_path.exists():
         return set()
@@ -588,8 +583,10 @@ def worktrees_clean_of_cache_artifacts(project_root: Path, feature: str
 def brief_type_matches_scope(project_root: Path, feature: str) -> list[str]:
     """Obvious contradictions between brief type and derived size.
 
-    A bug_fix or doc or config with scope size L/XL usually means either
-    the brief mistyped or the scope overreached. Flag, don't block.
+    A bug_fix or doc or config with scope size L/XL can mean the brief mistyped or
+    the scope overreached, but an honest bug_fix can be large too: all 8 field hits
+    were. Flag, don't block: `gate.advance` prints this and records `size_type_flag`,
+    so it is not in PHASE_CHECKS.
     """
     brief = project_root / "briefs" / f"{feature}.md"
     scope = project_root / "design" / feature / "scope.md"
@@ -597,8 +594,8 @@ def brief_type_matches_scope(project_root: Path, feature: str) -> list[str]:
         return []
     b = schema.parse_sections(brief.read_text())
     s = schema.parse_sections(scope.read_text())
-    btype = _first_token(b.get("## Type", ""))
-    size = _first_token(s.get("## Size", ""))
+    btype = schema.extract_enum_value(b.get("## Type", ""))
+    size = schema.extract_enum_value(s.get("## Size", ""))
     small_types = {"bug_fix", "doc", "config"}
     if btype in small_types and size in ("L", "XL"):
         return [
@@ -648,7 +645,7 @@ def reconciliation_summary(project_root: Path, feature: str) -> dict | None:
 # no longer a phase gate. This is the structural cure for the m4-s8c Tier-1
 # rot (`plan_within_scope` blocked 3× on hand-list drift across ~10 rewinds).
 PHASE_CHECKS = {
-    "scoping": [brief_type_matches_scope],
+    "scoping": [],
     "planning": [],
     "building": [builder_writes_within_plan, worktrees_clean_of_cache_artifacts],
     "solo_execute": [builder_writes_within_plan, worktrees_clean_of_cache_artifacts],

@@ -111,19 +111,21 @@ def substantive_hash(path: Path, extra_exclude: tuple[str, ...] = ()) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
-def _extract_enum_value(body: str) -> str | None:
-    """First non-whitespace token of the body.
+def extract_enum_value(body: str) -> str | None:
+    """First non-whitespace token of the body, the one reader for enum-like sections
+    (`## Type`, `## Size`, `## Priority`, `## Milestone`).
 
     v0.4.1: strips markdown wrappers (**S**, *S*, `S`, _S_) before matching
     so a scoping agent that bolds a single-letter enum value doesn't cost
-    a round-trip.
+    a round-trip. Punctuation can sit on either side of a wrapper (`**L**,`
+    and `**L.**`), so it is stripped on both.
     """
     stripped = body.strip()
     if not stripped:
         return None
     from prusik import artifact_variants as av
-    tok = av.strip_markdown_wrappers(stripped.split()[0])
-    return tok.rstrip(",.")
+    return av.strip_trailing_punct(
+        av.strip_markdown_wrappers(av.strip_trailing_punct(stripped.split()[0])))
 
 
 # Ordered-list marker: digits + `.` or `)` + at least one space (CommonMark
@@ -364,7 +366,7 @@ def _validate_field(name: str, body: str, spec: dict) -> list[str]:
     errors: list[str] = []
     ftype = spec.get("type", "text")
     if ftype == "enum":
-        val = _extract_enum_value(body)
+        val = extract_enum_value(body)
         allowed = spec.get("values", [])
         if val not in allowed:
             errors.append(f"{name}: value '{val}' not in {allowed}")

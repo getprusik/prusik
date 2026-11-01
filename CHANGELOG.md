@@ -3,6 +3,24 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.235.0] — A refused sprint-start changes nothing, and markdown can't change a size verdict
+
+- **A refusal has no side effects (fb-3adb150c6991).** `sprint-start --force-clean` used to
+  un-pause and announce the discard of the old sprint, then refuse on a missing gate. A rejected
+  `--trivial` deleted worktrees and reaped the open fix-round before refusing. Every refusal now
+  comes before the first change to state. A start that passes every gate still discards.
+- **A second feature can prepare while a sprint is active (fb-3adb150c6991).**
+  `design/*/product-fit.md` is writable in every phase, which ends the loop of needing the file to
+  start a sprint and needing the sprint to write the file.
+- **Markdown can't change a verdict (fb-5bf7db8c67a1).** `**L**`, `**L.**`, `` `L` `` and `L,` all
+  read as `L`, through one `schema.extract_enum_value` shared by validation, triage, the size rule
+  and the `--trivial` check. **A bolded size now reaches triage's size rules, so a bold `L` or
+  `XL` can route differently than it did.**
+- **The type/size rule flags, as it always documented (fb-5bf7db8c67a1).** A `bug_fix`, `doc` or
+  `config` brief at size L or XL no longer blocks leaving scoping. It prints a warning and records
+  `size_type_flag`. All 8 field hits were honest large bug fixes, and 7 only passed because their
+  size was bold.
+
 ## [0.234.0] — One parser for Modules touched, and prose can't open the builder boundary
 
 - **Prose no longer declares modules (fb-c554221bbd75).** Every backticked word in a bullet used
