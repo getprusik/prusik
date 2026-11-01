@@ -1,0 +1,16 @@
+{
+  "id": "fb-82127b9f9ca9",
+  "created_at": "2026-11-01T19:00:52.126865+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "a logged deviation credits every file with the same name",
+  "detail": "consistency._declared_deviations records each logged path and also its file name, and _is_declared credits by name, so DEV-001: api/util.py credits web/util.py, or any other util.py, at the builder boundary. v0.237.1 removed only the string-suffix branch. The name credit is what lets a logged partial path (errors/E.ts) credit src/errors/E.ts, so the fix is to compare trailing path segments, and count how field deviations.md files use bare names first.",
+  "feature": null,
+  "content_hash": "82127b9f9ca9",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
