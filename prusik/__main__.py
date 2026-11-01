@@ -1,23 +1,19 @@
 import argparse
-import re
 import sys
 
 from prusik import __version__
 
 
-# v0.6.4 (B9): single-source-of-truth slug validator. Applied to every
-# --feature argument via argparse type= so invalid slugs are rejected
-# at the CLI boundary with a clear error, before any downstream code
-# tries to use the slug as a path component.
+# v0.6.4 (B9): the slug validator, on every --feature argument via argparse
+# type=, so an invalid slug is rejected at the CLI boundary with a clear error,
+# before any downstream code tries to use it as a path component.
 #
 # Surfaced when /sprint-run domain-schema — strict on-rails: ... rendered
 # the em dash as the feature slug everywhere. Defense-in-depth: prusik engine
 # rejects garbage slugs even if the slash-command pre-flight is bypassed.
-_SLUG_RE = re.compile(r"^[a-z][a-z0-9-]*$")
-
-
 def _slug(value: str) -> str:
-    if not _SLUG_RE.match(value):
+    from prusik.phases import SLUG_RE
+    if not SLUG_RE.match(value):
         raise argparse.ArgumentTypeError(
             f"Invalid feature slug {value!r}: must be lowercase alphanumeric + "
             f"hyphens, starting with a letter (e.g. 'domain-schema'). "
@@ -97,7 +93,8 @@ def main():
     p_adv.add_argument("--allow-rewind", action="store_true",
                        help="Allow advancing to an earlier phase (recorded as phase_rewind)")
     p_brief = gsub.add_parser("brief", help="Validate a brief file")
-    p_brief.add_argument("path")
+    p_brief.add_argument("path", metavar="slug-or-path",
+                         help="feature slug (briefs/<slug>.md) or a path")
     gsub.add_parser("release-writer",
                     help="Release the shared-tree single-writer lease "
                          "(fb-0b9d0a6d1ce6) — audited hand-off when the "
@@ -156,10 +153,12 @@ def main():
     p_cap.add_argument("command", nargs=argparse.REMAINDER,
                         help="-- <verbatim command to run>")
     p_scope = gsub.add_parser("scope", help="Validate a scope file")
-    p_scope.add_argument("path")
+    p_scope.add_argument("path", metavar="slug-or-path",
+                         help="feature slug (design/<slug>/scope.md) or a path")
     p_plan = gsub.add_parser("plan", help="Validate a plan file "
                                           "(structure + plan ⊆ scope cross-ref)")
-    p_plan.add_argument("path")
+    p_plan.add_argument("path", metavar="slug-or-path",
+                        help="feature slug (design/<slug>/plan.md) or a path")
     p_fr = gsub.add_parser("fix-round",
                             help="Open/close a reviewer fix-round window "
                                  "(v0.5.7; expands writable to worktrees/*/** "

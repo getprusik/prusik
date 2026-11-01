@@ -1105,8 +1105,10 @@ def sprint_init(args) -> int:
         print(f"[prusik-sprint-init] reports/{feature}/brief-critique.txt missing.")
         print()
         print("Next:")
-        print(f"  1. Invoke brief-critic via Agent(subagent_type='brief-critic') on briefs/{feature}.md.")
-        print(f"  2. Re-run: prusik gate sprint-init --feature {feature}")
+        print(f"  1. Run `prusik gate brief {feature}`. On rc≠0, fix the brief first.")
+        print("  2. Invoke brief-critic via Agent(subagent_type='brief-critic') on "
+              f"briefs/{feature}.md, with that output in its prompt.")
+        print(f"  3. Re-run: prusik gate sprint-init --feature {feature}")
         return 1
 
     # 6. v0.5.9: permissions baseline must be present. Hard-blocks team-mode
@@ -3550,13 +3552,34 @@ def _evidence_unsatisfied(rel_path: str, feature: str | None,
     return None
 
 
+def _gate_artifact(kind: str, arg: str, template: str) -> Path | None:
+    """The file a `gate brief|scope|plan` argument names (fb-40d53eec7b0c): a feature
+    slug's artifact under the project root, else a path as given. A slug wins over a
+    same-named file in the cwd, as a sprint gate would read it. None means neither
+    exists, which is a wrong argument, said here so it never reads as an INVALID
+    artifact."""
+    if phases.SLUG_RE.match(arg):
+        slugged = ledger.project_root() / template.replace("<slug>", arg)
+        if slugged.is_file():
+            return slugged
+    path = Path(arg)
+    if path.is_file():
+        return path
+    print(f"[prusik-gate] {kind} not found: {arg!r} — pass a feature slug "
+          f"({template}) or a path to the file", file=sys.stderr)
+    return None
+
+
 def brief(args) -> int:
     from prusik import schema
-    ok, errors = schema.validate_brief(args.path)
+    path = _gate_artifact("brief", args.path, "briefs/<slug>.md")
+    if path is None:
+        return 2
+    ok, errors = schema.validate_brief(path)
     if ok:
-        print(f"[prusik-gate] brief valid: {args.path}")
+        print(f"[prusik-gate] brief valid: {path}")
         return 0
-    print(f"[prusik-gate] brief INVALID: {args.path}", file=sys.stderr)
+    print(f"[prusik-gate] brief INVALID: {path}", file=sys.stderr)
     for e in errors:
         print(f"  - {e}", file=sys.stderr)
     return 2
@@ -3577,11 +3600,14 @@ def baseline(args) -> int:
 
 def scope(args) -> int:
     from prusik import schema
-    ok, errors = schema.validate_scope(args.path, ledger.project_root())
+    path = _gate_artifact("scope", args.path, "design/<slug>/scope.md")
+    if path is None:
+        return 2
+    ok, errors = schema.validate_scope(path, ledger.project_root())
     if ok:
-        print(f"[prusik-gate] scope valid: {args.path}")
+        print(f"[prusik-gate] scope valid: {path}")
         return 0
-    print(f"[prusik-gate] scope INVALID: {args.path}", file=sys.stderr)
+    print(f"[prusik-gate] scope INVALID: {path}", file=sys.stderr)
     for e in errors:
         print(f"  - {e}", file=sys.stderr)
     return 2
@@ -3590,11 +3616,14 @@ def scope(args) -> int:
 def plan(args) -> int:
     from prusik import schema
     root = ledger.project_root()
-    ok, errors = schema.validate_plan(args.path, root)
+    path = _gate_artifact("plan", args.path, "design/<slug>/plan.md")
+    if path is None:
+        return 2
+    ok, errors = schema.validate_plan(path, root)
     if ok:
-        print(f"[prusik-gate] plan valid: {args.path}")
+        print(f"[prusik-gate] plan valid: {path}")
     else:
-        print(f"[prusik-gate] plan INVALID: {args.path}", file=sys.stderr)
+        print(f"[prusik-gate] plan INVALID: {path}", file=sys.stderr)
         for e in errors:
             print(f"  - {e}", file=sys.stderr)
     # v0.63.0 — plan-time blast-radius advisory (field finding #2). Non-blocking SIGNAL:
@@ -3603,7 +3632,7 @@ def plan(args) -> int:
     # alters rc; on failure it says so (not a silent skip).
     try:
         from prusik import blast_plan
-        feature = Path(args.path).parent.name
+        feature = path.resolve().parent.name
         adv = blast_plan.advisory(feature, root)
         if adv:
             print(adv)
@@ -3614,7 +3643,7 @@ def plan(args) -> int:
     # agent silently falls back to a manual stand-in. Flag it before the build.
     try:
         from prusik import roles
-        adv = roles.advisory(Path(args.path).parent.name, root)
+        adv = roles.advisory(path.resolve().parent.name, root)
         if adv:
             print(adv)
     except Exception as e:  # noqa: BLE001 — advisory must never break the gate

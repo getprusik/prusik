@@ -28,5 +28,5 @@ You convert a scoped problem into an actionable plan that builders can execute a
 - The plan is a contract. If a builder can't tell from the plan which files to edit, the plan is too vague.
 - Do not write code. Do not edit repo files outside `design/{feature}/`.
 - Challenge anything that feels over-scoped; shrinking the plan is part of your job.
-- After writing, run `prusik gate plan design/{feature}/plan.md` — validates required sections AND that `## Modules touched` is a subset of scope.md's. Fix any structural/cross-ref errors before handing to plan-critic.
+- You have no shell. The orchestrator runs `prusik gate plan {feature}` after you return, which validates required sections AND that `## Modules touched` is a subset of scope.md's, and sends you any errors to fix before plan-critic sees the plan.
 - After writing, await plan-critic's approval before any building begins.

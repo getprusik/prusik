@@ -3,6 +3,26 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.236.0] — Gates take a slug, and a role is never told to run what it can't run
+
+- **`gate brief`, `gate scope` and `gate plan` take a slug (fb-40d53eec7b0c).** `prusik gate brief
+  my-feature` used to fail as `brief INVALID` on a healthy brief. All three now take a feature slug
+  or a path, through one resolver. A slug resolves against the project root from any directory,
+  and it wins over a same-named file in the cwd.
+- **A wrong argument reads as one (fb-40d53eec7b0c).** A missing file or a directory now prints
+  `not found` and the two accepted forms, where a directory used to give a traceback. The exit
+  code stays 2. `INVALID` now always means the file was read and its content failed.
+- **The orchestrator owns the mechanical check (fb-02d01d7a2a59).** The brief-critic has no shell,
+  yet its spec told it to run `prusik gate brief`, so all 12 field rounds reported they could not.
+  `/sprint-start`, `/sprint-run` and `gate sprint-init` now run the gate first, stop on failure and
+  pass its output to the critic. `/sprint-run` runs `prusik gate plan` after the feature-planner,
+  which had the same defect. A test over all 15 roles keeps a role without Bash from being told to
+  run a command.
+- **Critiques separate blocking from advisory (fb-02d01d7a2a59).** Items are labelled `blocking:` or
+  `advisory:`, and a review with only advisory items is a PASS. The rule is in the role spec: no
+  gate rejects a FAIL with no `blocking:` item. **Adopters get the new specs and commands on
+  `prusik update`.**
+
 ## [0.235.1] — The redirect gate reads shell quoting
 
 - **Quoted text is no longer a redirect (fb-48a328898d07).** A `>` or `tee` inside quotes, after a

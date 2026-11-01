@@ -16,7 +16,7 @@ Start a sprint for feature `$ARGUMENTS`.
 
 **Model tier, every spawn:** before each `Agent(...)` call for a prusik role, run `prusik tier resolve <feature-slug> --role <role>`. `<feature-slug>` is the first word of $ARGUMENTS only, never `$ARGUMENTS` itself: `/sprint-start foo --trivial` must give `prusik tier resolve foo --role ...`. On `model=<ref>`, pass `model=<ref>` to that Agent call. On `model=off`, pass no model. On rc ≠ 0, STOP and show the output; do not spawn untiered. (This applies to every role spawn in steps 2-6.)
 
-2. **Pre-sprint gate: brief-critique.** If `.claude/sprint-config.yaml` has `pre_sprint_gates.brief_critique.enabled: true` (the default), and `reports/$ARGUMENTS/brief-critique.txt` does not yet exist, invoke the `brief-critic` agent (via the Agent tool with `subagent_type=brief-critic`). Its job: read `briefs/$ARGUMENTS.md` and produce `reports/$ARGUMENTS/brief-critique.txt` whose first line is `PASS` or `FAIL`.
+2. **Pre-sprint gate: brief-critique.** If `.claude/sprint-config.yaml` has `pre_sprint_gates.brief_critique.enabled: true` (the default), and `reports/$ARGUMENTS/brief-critique.txt` does not yet exist, first run `prusik gate brief <feature-slug>` via Bash. It reports every mechanical violation together. On a non-zero exit, show the output and stop: the brief needs fixing and no critic round is due. On exit 0, invoke the `brief-critic` agent (via the Agent tool with `subagent_type=brief-critic`), with that output in its prompt, because the role has no shell. Its job: read `briefs/$ARGUMENTS.md` and produce `reports/$ARGUMENTS/brief-critique.txt` whose first line is `PASS` or `FAIL`.
 
    **Reviewer artifact fallback (v0.5.0+):** after invoking brief-critic, check that `reports/$ARGUMENTS/brief-critique.txt` exists. If the agent returned a verdict in its text response but did NOT Write the file (recurring CC behavior — see the v0.4.5 `prusik refresh` restart note for why this happens):
 
@@ -27,7 +27,7 @@ Start a sprint for feature `$ARGUMENTS`.
         ```
      c. If the first word is anything else (hedged, ambiguous, "mostly PASS", paragraph prose, etc.): STOP. Tell the user the agent's response is unparseable and ask them to decide the verdict manually. Do NOT infer silently.
 
-   If FAIL (either from the file or via fallback): show the user the critique and stop — they need to fix the brief.
+   If FAIL (either from the file or via fallback): show the user the critique and stop — they need to fix the `blocking:` items. `advisory:` items never hold a sprint.
 
 3. **Pre-sprint gate: product-fit critique (auto-sequenced).** Only when a product charter exists (`design/product.md`) and `.claude/sprint-config.yaml` has `pre_sprint_gates.product_fit.require_critique: true`. The engine's `prusik gate sprint-start` (step 5) BLOCKS until `reports/$ARGUMENTS/product-fit-critique.txt` reads `PASS` — so run the critic HERE, rather than letting the form-check pass and then bouncing off that gate (fb-8295dd5d4859: that form→manual-critic→re-run two-step recurred EVERY sprint).
 

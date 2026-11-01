@@ -15,6 +15,10 @@ import yaml
 
 from prusik.ledger import project_root
 
+# What a feature slug is: the one pattern behind `--feature` validation and the
+# slug-or-path argument of `gate brief|scope|plan`.
+SLUG_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+
 
 def load_sprint_config(root: Path | None = None) -> dict | None:
     root = root or project_root()

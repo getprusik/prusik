@@ -106,9 +106,9 @@ Possible outputs:
 
 - **"briefs/$ARGUMENTS.md missing"** → STOP. The brief is the user's intent contract; do not fabricate it.
 
-- **"reports/$ARGUMENTS/brief-critique.txt missing"** → invoke `brief-critic`:
+- **"reports/$ARGUMENTS/brief-critique.txt missing"** → run `prusik gate brief $ARGUMENTS` via Bash. It reports every mechanical violation together. On a non-zero exit, STOP and show the output: the brief needs fixing and no critic round is due. On exit 0, invoke `brief-critic` with that output in its prompt, because the role has no shell:
 
-      Agent(subagent_type='brief-critic', prompt='review briefs/$ARGUMENTS.md per your role spec')
+      Agent(subagent_type='brief-critic', prompt='review briefs/$ARGUMENTS.md per your role spec. `prusik gate brief` output: <paste it here>')
 
   **Reviewer artifact fallback (v0.5.0+):** After the agent returns, check whether `reports/$ARGUMENTS/brief-critique.txt` was written. If NOT:
     - Inspect the agent's text response.
@@ -186,6 +186,8 @@ Run the project's smoke/unit tests. If passing, advance:
 Invoke `feature-planner`:
 
     Agent(subagent_type='feature-planner', prompt='produce design/$ARGUMENTS/plan.md per your role spec')
+
+Then run `prusik gate plan $ARGUMENTS` via Bash, because the role has no shell. On a non-zero exit, send the errors back to `feature-planner` and re-run the gate before going on.
 
 Invoke `plan-critic`:
 
