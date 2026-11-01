@@ -48,12 +48,9 @@ def _source_modules(feature: str, root: Path) -> list[str]:
     scope = root / "design" / feature / "scope.md"
     if not scope.exists():
         return []
-    secs = schema.parse_sections(scope.read_text())
-    items = schema.extract_list_items(secs.get("## Modules touched", ""))
     out: list[str] = []
-    for it in items:
-        tok, is_new = schema.extract_module_token(it)
-        if tok and not is_new and _is_source(tok) and (root / tok).exists():
+    for tok, is_new in schema.declared_modules(scope.read_text()):
+        if not is_new and _is_source(tok) and (root / tok).exists():
             out.append(tok)
     return sorted(set(out))
 

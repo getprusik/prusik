@@ -863,8 +863,8 @@ def test_consistency_no_longer_has_duplicate_bullet_extractor():
     src = (Path(__file__).parent.parent / "prusik" / "consistency.py").read_text()
     assert "def _bullet_items" not in src, \
         "consistency.py must not have its own bullet-extractor — use schema.extract_list_items"
-    assert "schema.extract_list_items" in src, \
-        "consistency.py must route through schema.extract_list_items"
+    assert "schema.declared_modules" in src, \
+        "consistency.py must route through schema.declared_modules"
 
 
 

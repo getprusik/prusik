@@ -9,9 +9,8 @@ You are not a correctness reviewer. You are a conventions reviewer. Your lens is
 
 **Inputs:**
 - All builder worktrees (`worktrees/*/`) or, in solo mode, `worktrees/solo/`
-- **Touch-list source (read whichever exists):**
-  - `design/{feature}/plan.md` — team-mode sprints
-  - `design/{feature}/scope.md` — solo-mode sprints (plan.md is not written for solo_execute)
+- **Boundary source:** `design/{feature}/scope.md`, in team and solo mode. plan.md is the source
+  only when scope.md is absent. The trivial lane has neither, so it has no boundary check.
 - `.claude/conventions/*` packs
 - `CLAUDE.md`
 - `design/map.md` for observed patterns
@@ -20,10 +19,12 @@ You are not a correctness reviewer. You are a conventions reviewer. Your lens is
 
 **0. Worktree completeness (first, before anything else).** Run
 `find worktrees/ -type f` and list every file. For each file, verify:
-  - It falls under a path declared in the active touch-list (plan.md
-    `## Modules touched` in team mode; scope.md `## Modules touched`
-    in solo mode). Test/*-writer files under worktrees/*/tests/ are
-    exempt by convention.
+  - It falls under a path declared in the boundary source's
+    `## Modules touched`, the same check `prusik gate advance` runs. A file
+    recorded in `design/{feature}/deviations.md` or predicted in
+    `.sprint/blast-prediction.{feature}.json` is in bounds, and test files
+    are exempt. plan.md's list is derived and can lag the diff, so never
+    FAIL a file for being missing from it.
   - It is not a compiled artifact (`__pycache__/`, `*.pyc`, `*.pyo`,
     `.DS_Store`, etc.) — treat any of those as a FAIL line, because a
     builder that shipped compiled output leaked state.
@@ -31,7 +32,7 @@ You are not a correctness reviewer. You are a conventions reviewer. Your lens is
     worktrees at sprint-start, but older projects may still show
     contamination until they pull the fix).
 Anything unaccounted-for is a FAIL line with the file path and the
-reason (off-touch-list, compiled artifact, prior-sprint leftover).
+reason (out-of-boundary, compiled artifact, prior-sprint leftover).
 
 **1. Content conventions — RUN the linter, don't read it:**
 

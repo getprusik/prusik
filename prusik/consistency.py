@@ -11,13 +11,11 @@ runs the checks appropriate for the phase being left.
 
 from __future__ import annotations
 
-import re
 import subprocess
 from pathlib import Path
 
 from prusik import schema
 
-_BACKTICK_PATH_RE = re.compile(r"`\s*\+?\s*([^`]+?)\s*`")
 
 # Dependency / build / artifact directories that are never a sprint deliverable.
 # A worktree set up for a JS/TS build (prusik worktree-setup, findings #10/#11)
@@ -369,50 +367,10 @@ def _first_token(body: str) -> str | None:
     return s.split()[0].rstrip(",.") if s else None
 
 
-def _bullet_module_tokens(item: str) -> list[str]:
-    """All path tokens a Modules-touched bullet declares — the primary token AND any
-    additional backticked paths in the same bullet (fb-75fd9cfa7ead: a bullet
-    with two backticked paths, ``a.sh`` + ``b.yml``, previously registered only the
-    first)."""
-    toks: list[str] = []
-    primary, _is_new = schema.extract_module_token(item)
-    if primary:
-        toks.append(primary)
-    for m in _BACKTICK_PATH_RE.finditer(item):
-        cand = schema.extract_path_token(m.group(1))
-        if cand and cand not in toks:
-            toks.append(cand)
-    return toks
-
-
-def _modules_from(artifact_path: Path, section: str = "## Modules touched") -> set[str]:
+def _modules_from(artifact_path: Path) -> set[str]:
     if not artifact_path.exists():
         return set()
-    sections = schema.parse_sections(artifact_path.read_text())
-    # fb-6a4075fb15fe + fb-75fd9cfa7ead: tolerate a header SUFFIX
-    # ("## Modules touched (final)") and honour a later restated declaration — union
-    # the bodies of ALL sections whose header starts with the canonical one, not just
-    # the single exact-named contiguous block.
-    body = "\n".join(b for h, b in sections.items() if h.startswith(section))
-    # v0.5.5: delegate to schema.extract_module_token so this cross-artifact
-    # parser agrees with validate_scope on `+ `-prefixed and markdown-wrapped
-    # bullets. Previously raw extract_path_token captured `+` as a standalone
-    # path for `- + \`path\`` bullets, producing thousands of false
-    # builder-out-of-plan violations and deadlocking advance at building.
-    # v0.6.7: route through schema.extract_list_items so cross-artifact
-    # parsing inherits HR skipping (v0.6.1), `+ `/`* ` alt markers (v0.6.1),
-    # AND nested-bullet skipping (v0.6.7) — same code path = can't drift.
-    # Pre-v0.6.7 consistency had its own _bullet_items that lacked all three.
-    # Drop exclusion/commentary subsections (e.g. "### NOT in the touch-list") so they
-    # don't register as declared modules — same helper as validate_scope, so the two
-    # cross-artifact parsers can't drift (fb-085135ece453).
-    out: set[str] = set()
-    for item in schema.extract_list_items(
-            schema.strip_non_declaration_subsections(body)):
-        if not item.strip():
-            continue
-        out.update(_bullet_module_tokens(item))
-    return out
+    return {path for path, _is_new in schema.declared_modules(artifact_path.read_text())}
 
 
 def plan_within_scope(project_root: Path, feature: str) -> list[str]:

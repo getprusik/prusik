@@ -26,12 +26,10 @@ def parse_scope(scope_path: Path) -> dict:
     # and nested-bullet skipping (v0.6.7). Pre-v0.6.8 triage had its own
     # `_bullets` duplicate that was missing all three — a latent twin of
     # the consistency._bullet_items duplicate that v0.6.7 closed.
-    sections = schema.parse_sections(scope_path.read_text())
+    text = scope_path.read_text()
+    sections = schema.parse_sections(text)
     return {
-        "modules": [schema.extract_path_token(b)
-                    for b in schema.extract_list_items(
-                        sections.get("## Modules touched", ""))
-                    if schema.extract_path_token(b)],
+        "modules": list(dict.fromkeys(path for path, _is_new in schema.declared_modules(text))),
         "domains": [d.split()[0] for d in schema.extract_list_items(
             sections.get("## Domains", ""))],
         "size": _first_token(sections.get("## Size", "")),

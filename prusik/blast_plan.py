@@ -61,14 +61,9 @@ def plan_modules(feature: str, root: Path) -> tuple[list[str], list[str]]:
     plan_path = _plan_path(feature, root)
     if not plan_path.exists():
         return [], []
-    sections = schema.parse_sections(plan_path.read_text())
-    items = schema.extract_list_items(sections.get("## Modules touched", ""))
     existing: list[str] = []
     new: list[str] = []
-    for it in items:
-        tok, is_new = schema.extract_module_token(it)
-        if not tok:
-            continue
+    for tok, is_new in schema.declared_modules(plan_path.read_text()):
         if is_new:
             new.append(tok)
         elif (root / tok).exists():

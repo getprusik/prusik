@@ -3,6 +3,28 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.234.0] — One parser for Modules touched, and prose can't open the builder boundary
+
+- **Prose no longer declares modules (fb-c554221bbd75).** Every backticked word in a bullet used
+  to count as a module. A bullet now declares its first path plus backticked paths joined to it
+  by `,`, `;`, `+`, `&`, `and` or `or`, and a joined span must look like a path, so a joined
+  symbol declares nothing. **A file named only in a scope bullet's description is no longer in
+  scope: declare it in the bullet's head, or log it in `deviations.md`.**
+- **The builder boundary closes a fail-open.** A prose `/` became an empty prefix that matched
+  every file, which switched the boundary off. Prefixes like `re` and `as` widened it.
+- **Every gate reads the same list.** `schema.declared_modules` replaces separate readers in scope
+  validation, the consistency checks, triage, affected tests and plan reach. The last three gain
+  the `(final)` header suffix and exclusion subsections they were missing.
+- **New files survive triage (fb-4e4a9fe3d850, fb-8f6e68b77a32).** `scope_summary.modules` keeps
+  `+ path` bullets as paths instead of a bare `+`.
+- **Comma-joined paths parse (fb-e0c3707245d2).** `` `a.sh`, `b.md` `` yields both with no stray
+  backtick, and each is checked for existence. A joined path that doesn't exist now fails
+  `gate scope`, where it used to go unchecked.
+- **An exclusion subsection stops at its own section.** A `### NOT in the touch-list` at the end
+  of one section no longer swallows a following `## Modules touched (final)`.
+- **The enforcer checks what the gate checks (fb-967150eabdce).** Step 0 now uses scope.md, logged
+  deviations and predicted fan-out, and never FAILs a file for missing from plan.md.
+
 ## [0.233.1] — CI gates hook cost deterministically, not by wall clock
 
 - **Noise no longer turns main red (fb-e10892101b85).** The stop hook sits at its 1.75× wall-clock
