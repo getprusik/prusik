@@ -19,7 +19,7 @@ import sys
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 
-from _common import _copy_sprint_config, _mktmp_project
+from tests._common import _copy_sprint_config, _mktmp_project
 
 from prusik import gate, main_writer, phases
 

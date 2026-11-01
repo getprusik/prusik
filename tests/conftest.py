@@ -54,17 +54,23 @@ atexit.register(lambda: shutil.rmtree(_HERMETIC, ignore_errors=True))
 # Dropping CLAUDE_PROJECT_DIR wasn't enough: cwd stayed at the repo root, so
 # `ledger.project_root()` walked up to the engine's own .sprint/ and every run
 # appended ~29 synthetic events to the REAL ledger (~60% of it by 2026-10-26).
-# The process leaves the repo now, before collection; each test then starts in
-# its own empty dir under this base — a sibling of HOME (never under it, so a
-# test-created HOME/.claude can't become the root) and apart from tmp_path (so
-# a leaked event never lands where a test looks).
+# The process leaves the repo before collection, in `pytest_configure` below;
+# each test then starts in its own empty dir under this base — a sibling of HOME
+# (never under it, so a test-created HOME/.claude can't become the root) and
+# apart from tmp_path (so a leaked event never lands where a test looks).
 _REPO = Path(__file__).resolve().parent.parent
 _CWD_BASE = os.path.realpath(
     tempfile.mkdtemp(prefix="prusik-pytest-cwd-", dir=os.path.dirname(_HERMETIC)))
 if Path(_CWD_BASE).is_relative_to(_REPO):
     raise pytest.UsageError(f"hermetic cwd base {_CWD_BASE} is inside the repo {_REPO}")
-os.chdir(_CWD_BASE)
 atexit.register(lambda: shutil.rmtree(_CWD_BASE, ignore_errors=True))
+
+
+def pytest_configure(config):
+    """Leave the repo here, not at import: pytest globs `testpaths` against cwd after loading
+    this file, and an empty glob makes it walk the whole repo (fb-c515bcaf0476)."""
+    os.chdir(_CWD_BASE)
+
 
 # The detector: a ledger path inside the repo — this checkout or the canonical
 # root a builder worktree resolves to — fails the test, naming the leak. Every

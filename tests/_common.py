@@ -25,8 +25,6 @@ import tempfile
 import time  # noqa: F401  (re-exported)
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 # Re-export commonly imported prusik modules so split files can do
 # `from ._common import gate, phases, kit_init, ...` without
 # re-listing the full import block in every file.

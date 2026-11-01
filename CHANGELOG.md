@@ -3,6 +3,20 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.236.1] — Every pytest invocation collects the same suite
+
+- **`pytest <file>` works (fb-c515bcaf0476).** 60 of 163 test modules failed collection alone with
+  `No module named 'tests'`, and `pytest tests` failed 28. `pyproject.toml` now sets
+  `pythonpath = ["."]`, so the repo root is importable before any conftest loads. The
+  `sys.path.insert` in `tests/_common.py` is gone.
+- **`testpaths` is honoured (fb-c515bcaf0476).** `tests/conftest.py` left the repo while it was
+  imported, before pytest globbed `testpaths`. The glob came back empty, so pytest walked the whole
+  repo, including any sprint worktree, and bare `pytest` passed only because that walk reached
+  `prusik/` first. The chdir now runs in `pytest_configure`, still before collection.
+- **A worktree tests its own code.** Bare `pytest` inside a worktree imported the main tree's
+  `prusik` through the editable install. It now imports the worktree's. `python -m pytest` was
+  always right, and CI uses that form.
+
 ## [0.236.0] — Gates take a slug, and a role is never told to run what it can't run
 
 - **`gate brief`, `gate scope` and `gate plan` take a slug (fb-40d53eec7b0c).** `prusik gate brief

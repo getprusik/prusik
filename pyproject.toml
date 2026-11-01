@@ -81,6 +81,7 @@ dev = [
 # is functional from any entry point, not just the maintainer's habit.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 norecursedirs = ["benchmarks", "examples", "build", "dist", ".venv*", "*.egg-info"]
 
 # Lint discipline for prusik itself. Principle: enforce correctness and
