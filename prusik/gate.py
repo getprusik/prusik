@@ -470,13 +470,16 @@ def _worktree_redirect_hint(target: str, config: dict, phase: str,
 # Bash shell redirects that WRITE to a target file.
 # Matches: >file  >>file  &>file  2>file  2>>file  1>file
 # Targets can be quoted or bare. We deliberately skip /dev/null etc.
+# Group 1 is the operator, the position `_literal_text_mask` is asked about.
 _REDIRECT_RE = re.compile(
-    r"""(?:^|[\s;&|(])(?:[0-9&]?>>?|&>)\s*("[^"]+"|'[^']+'|[^\s;&|<>()`]+)""",
+    r"""(?:^|[\s;&|("'])([0-9&]?>>?|&>)\s*("[^"]+"|'[^']+'|[^\s;&|<>()`]+)""",
     re.MULTILINE,
 )
 _TEE_RE = re.compile(
-    r"""\btee\s+(?:-a\s+)?("[^"]+"|'[^']+'|[^\s;&|<>()`]+)""",
+    r"""\b(tee)\s+(?:-a\s+)?("[^"]+"|'[^']+'|[^\s;&|<>()`]+)""",
 )
+_REEXEC_RE = re.compile(
+    r"\b(?:eval|trap)\b|\|\s*(?:xargs\b[^|;&\n]*)?(?:[^\s|;&]*/)?(?:ba|z|k|da)?sh\b")
 _SKIP_TARGETS = {"/dev/null", "/dev/stderr", "/dev/stdout",
                  "/dev/tty", "/dev/zero"}
 
@@ -494,18 +497,85 @@ def _bash_redirect_targets(cmd: str) -> list[str]:
     path-likeness filter rejects remaining tokens that start with `=` or
     `:` or don't look file-shaped, catching any false-positives that
     survive.
+
+    An operator in literal text is not a redirect (fb-48a328898d07); see
+    `_literal_text_mask`.
     """
+    if ">" not in cmd and "tee" not in cmd:
+        return []
     cleaned = _strip_c_payloads(cmd)
+    literal = _literal_text_mask(cleaned)
     targets: list[str] = []
-    for m in _REDIRECT_RE.finditer(cleaned):
-        tok = m.group(1).strip("\"'")
-        if tok and tok not in _SKIP_TARGETS and _looks_like_file_target(tok):
-            targets.append(tok)
-    for m in _TEE_RE.finditer(cleaned):
-        tok = m.group(1).strip("\"'")
-        if tok and tok not in _SKIP_TARGETS and _looks_like_file_target(tok):
-            targets.append(tok)
+    for regex in (_REDIRECT_RE, _TEE_RE):
+        pos = 0
+        while m := regex.search(cleaned, pos):
+            # Resume right after the operator, never after the target: a false match's
+            # "target" can span the real redirect that follows, as in `echo '>' >'f1'`.
+            pos = m.end(1)
+            tok = m.group(2).strip("\"'")
+            if (not literal[m.start(1)] and tok and tok not in _SKIP_TARGETS
+                    and _looks_like_file_target(tok)):
+                targets.append(tok)
     return targets
+
+
+def _literal_text_mask(cmd: str) -> bytearray:
+    """1 at every position bash reads as literal text: quotes, escaped `>`, comments.
+
+    The gate must never lose a real redirect, so where this can't be sure it stops
+    marking and the rest of the command scans as code. That covers `$(` or a backtick
+    in double quotes, which run a command and can nest quotes; `${`, `$'` and a bare
+    backtick, whose quoting rules differ; an unterminated quote; and text a shell runs
+    again, such as `eval`, `trap` or `| sh`. A false block costs a turn, and a missed
+    redirect is a write the gate never sees. Indirection (`$cmd "..."`) and a script
+    written then sourced are out of reach, as `bash -c` payloads already are.
+    """
+    mask = bytearray(len(cmd))
+    if _REEXEC_RE.search(cmd):
+        return mask
+    i, n = 0, len(cmd)
+    word_start = True
+    while i < n:
+        c = cmd[i]
+        at_word_start, word_start = word_start, c in " \t\n"
+        if c == "\\":
+            # Skipped so `\'` opens no quote. Only `>` is masked: `\tee` still runs tee.
+            if cmd[i + 1:i + 2] == ">":
+                mask[i + 1] = 1
+            i += 2
+            continue
+        if c == "`" or cmd.startswith(("${", "$'"), i):
+            return mask
+        if c == "'":
+            end = cmd.find("'", i + 1) + 1
+        elif c == '"':
+            end = _double_quote_end(cmd, i)
+            if end and ("$(" in cmd[i:end] or "`" in cmd[i:end]):
+                return mask
+        elif c == "#" and at_word_start:
+            newline = cmd.find("\n", i)
+            end = newline if newline >= 0 else n
+        else:
+            i += 1
+            continue
+        if not end:                               # unterminated quote
+            return mask
+        mask[i:end] = b"\x01" * (end - i)
+        i = end
+    return mask
+
+
+def _double_quote_end(cmd: str, start: int) -> int:
+    """Index just past the `"` closing the one at `start`, or 0 if it never closes."""
+    i = start + 1
+    while i < len(cmd):
+        if cmd[i] == "\\":
+            i += 2
+        elif cmd[i] == '"':
+            return i + 1
+        else:
+            i += 1
+    return 0
 
 
 # Strip `python -c "<program>"` / `bash -c '<script>'` / `sh -c "..."` etc.

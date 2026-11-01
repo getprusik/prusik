@@ -3,6 +3,17 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.235.1] — The redirect gate reads shell quoting
+
+- **Quoted text is no longer a redirect (fb-48a328898d07).** A `>` or `tee` inside quotes, after a
+  backslash or in a comment used to block the command as a write. The gate now tells literal text
+  from a real redirect, so a sed pattern or a prose argument passes. The check adds no import.
+- **It doesn't trade a real redirect for that.** Where it can't be sure, it scans the command as
+  before: `$(`, `${`, `$'` or a backtick, an unterminated quote, and text a shell runs again, such
+  as `eval`, `trap` or `| sh`. Tests check each case against real bash. Those commands keep today's
+  false blocks, and indirection like `$cmd "..."` stays out of reach, as `bash -c` payloads are.
+- **A redirect right after a closing quote is now caught.** `echo "hi">out.log` used to be missed.
+
 ## [0.235.0] — A refused sprint-start changes nothing, and markdown can't change a size verdict
 
 - **A refusal has no side effects (fb-3adb150c6991).** `sprint-start --force-clean` used to
