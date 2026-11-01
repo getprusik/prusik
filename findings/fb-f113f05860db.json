@@ -1,0 +1,16 @@
+{
+  "id": "fb-f113f05860db",
+  "created_at": "2026-11-01T16:58:49.238521+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "bash gate reads redirects, tee and in-place editors, but not cp, mv, rm, truncate, dd, touch or install",
+  "detail": "Surfaced building v0.237.0. _bash_write_targets now names every redirect, tee, sed -i and perl -i write at its landing path, but cp x design/f/scope.md, mv, rm, truncate, dd of= and touch still change a file the Write tool was refused. Left out on purpose: rm and mv are routine cleanup, so gating them needs a replay of the 61,157-command corpus first to size the false blocks (collect each Bash tool_use command from ~/.claude/projects/**/*.jsonl, run old and new extractors, classify the diff). _command_args and _landing_path already give the argv and the landing path, so each writer is one table entry.",
+  "feature": null,
+  "content_hash": "f113f05860db",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
