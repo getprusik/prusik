@@ -10,7 +10,22 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": ".venv/bin/pytest tests/test_bash_write_targets.py -q -p no:cacheprovider",
+    "fixed_in": "0.237.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-01T17:26:25.317198+00:00",
+      "exit": 0,
+      "executed_count": 165,
+      "verdict": true,
+      "why": "165 test(s) executed, exit 0",
+      "worktree_hash": "f0e80fe-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
