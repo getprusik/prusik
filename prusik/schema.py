@@ -11,7 +11,7 @@ import itertools
 import json
 import re
 import shlex
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import yaml
 
@@ -360,6 +360,34 @@ def declared_modules(text: str) -> list[tuple[str, bool]]:
                      if h.startswith("## Modules touched"))
     return [pair for item in extract_list_items(body)
             for pair in extract_declared_paths(item)]
+
+
+def module_segments(token: str) -> tuple[str, ...]:
+    """The repo-relative path segments a declared module names. Empty when it names no
+    path inside the repo: `/`, `.`, an absolute path, or one that uses `..`."""
+    path = PurePosixPath(token)
+    if path.is_absolute() or ".." in path.parts:
+        return ()
+    return path.parts
+
+
+def module_covers(module: str, rel_path: str) -> bool:
+    """A module covers itself and what lies under it, by segment: `api/x` covers
+    `api/x/y.py` and not `api/xyz.py` (fb-cbaf583f3925). A module with no segments covers
+    nothing, so a scope that predates the validators fails closed."""
+    segments = module_segments(module)
+    return bool(segments) and PurePosixPath(rel_path).parts[:len(segments)] == segments
+
+
+def _invalid_module_errors(text: str) -> list[str]:
+    modules = declared_modules(text)
+    if not modules and any(h.startswith("## Modules touched") for h in parse_sections(text)):
+        return ["modules_touched: declares no path, so the boundary would admit nothing"]
+    return [
+        f"modules_touched: not a path inside the repo: {token}\n"
+        f"    Name a file or directory relative to the project root."
+        for token, _is_new in modules if not module_segments(token)
+    ]
 
 
 def _validate_field(name: str, body: str, spec: dict) -> list[str]:
@@ -1133,6 +1161,7 @@ def validate_scope(path, project_root: Path | None = None) -> tuple[bool, list[s
         return False, [f"Scope not found: {path}"]
     text = p.read_text()
     errors = _validate_sections(text, load_schema("scope"))
+    errors.extend(_invalid_module_errors(text))
     if project_root:
         errors.extend(_validate_milestone(text, project_root))
     # Cross-ref: modules_touched paths must exist relative to project root.
@@ -1142,9 +1171,10 @@ def validate_scope(path, project_root: Path | None = None) -> tuple[bool, list[s
     # still must exist.
     if project_root:
         for token, is_new in declared_modules(text):
-            if is_new:
+            if is_new or not module_segments(token):
                 # New-file marker: skip existence check. Typo detection moves
-                # to builder time (file create fails).
+                # to builder time (file create fails). A module outside the repo
+                # is already refused above.
                 continue
             if not (project_root / token).exists():
                 errors.append(
@@ -1169,6 +1199,7 @@ def validate_plan(path, project_root: Path | None = None) -> tuple[bool, list[st
         return False, [f"Plan not found: {path}"]
     text = p.read_text()
     errors = _validate_sections(text, load_schema("plan"))
+    errors.extend(_invalid_module_errors(text))
     if project_root:
         # Infer feature from path shape design/<feature>/plan.md when possible,
         # then run the plan ⊆ scope check if a scope artifact exists.

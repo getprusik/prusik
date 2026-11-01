@@ -75,14 +75,9 @@ def _declared_deviations(project_root: Path, feature: str) -> set[str]:
 
 
 def _is_declared(rel_str: str, declared: set[str]) -> bool:
-    if not declared:
-        return False
-    if rel_str in declared or Path(rel_str).name in declared:
-        return True
-    # a logged partial path (e.g. `errors/AppError.ts`) crediting a fuller
-    # worktree path (`src/errors/AppError.ts`), or vice-versa.
-    return any(rel_str.endswith(d) or d.endswith(rel_str)
-               for d in declared if "/" in d)
+    # `_declared_deviations` records each path and its file name, so a logged partial path
+    # (`errors/AppError.ts`) credits a fuller one (`src/errors/AppError.ts`) by name.
+    return rel_str in declared or Path(rel_str).name in declared
 
 
 def _git_worktree_changed_files(teammate_dir: Path) -> list[str] | None:
@@ -441,8 +436,6 @@ def builder_writes_within_plan(project_root: Path, feature: str) -> list[str]:
         boundary_src = "plan.md"
     else:
         return []
-    if not boundary_mods:
-        return []
     worktrees = project_root / "worktrees"
     if not worktrees.exists():
         return []
@@ -490,7 +483,7 @@ def builder_writes_within_plan(project_root: Path, feature: str) -> list[str]:
                 continue
             if rel_str in fan_out:   # fb-7ab319116f42 — blast-radius-PREDICTED fan-out
                 continue
-            if not any(rel_str.startswith(m.rstrip("/")) for m in boundary_mods):
+            if not any(schema.module_covers(m, rel_str) for m in boundary_mods):
                 violations.append(
                     f"{teammate_dir.name}/{rel_str} is outside {boundary_src}'s "
                     f"Modules touched {sorted(boundary_mods)}"

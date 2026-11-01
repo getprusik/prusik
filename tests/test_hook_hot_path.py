@@ -22,6 +22,7 @@ import importlib.util
 import json
 import os
 import shutil
+import statistics
 import subprocess
 import sys
 import time
@@ -373,16 +374,24 @@ def test_wall_clock_budget_is_local_only():
         assert _LOCAL_ONLY.mark in test.pytestmark
 
 
-def _min_ms(cmd: list[str], root: Path, payload: str, n: int = 15, warmup: int = 3) -> float:
+def _ms(cmd: list[str], root: Path, payload: str) -> float:
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
-    best = float("inf")
+    t0 = time.perf_counter()
+    subprocess.run(cmd, input=payload, text=True, capture_output=True, cwd=root, env=env,
+                   check=False, timeout=60)
+    return (time.perf_counter() - t0) * 1000
+
+
+def _owned_ratio(hook: list[str], root: Path, payload: str, n: int = 15, warmup: int = 3) -> float:
+    """Prusik-owned time as a multiple of a bare interpreter. Each round times both back to
+    back so they share the host's load, and the median drops a round a spike split."""
+    ratios = []
     for i in range(warmup + n):
-        t0 = time.perf_counter()
-        subprocess.run(cmd, input=payload, text=True, capture_output=True, cwd=root, env=env,
-                       check=False, timeout=60)
+        bare = _ms([sys.executable, "-c", "pass"], root, "")
+        total = _ms(hook, root, payload)
         if i >= warmup:
-            best = min(best, (time.perf_counter() - t0) * 1000)
-    return best
+            ratios.append((total - bare) / bare)
+    return statistics.median(ratios)
 
 
 @_LOCAL_ONLY
@@ -391,9 +400,8 @@ def test_pre_tool_owned_overhead_stays_within_coarse_budget(tmp_path):
     payload = json.dumps(_pre("Read", {"file_path": "README.md"}))
     hook = [sys.executable, "-c", "import sys; from prusik.__main__ import main; "
             "sys.argv=['prusik','gate','pre-tool']; sys.exit(main())"]
-    bare = _min_ms([sys.executable, "-c", "pass"], root, "")
-    owned = _min_ms(hook, root, payload) - bare
-    assert owned <= 1.75 * bare, f"prusik-owned {owned:.1f}ms > 1.75 x bare {bare:.1f}ms"
+    ratio = _owned_ratio(hook, root, payload)
+    assert ratio <= 1.75, f"prusik-owned time is {ratio:.2f} x a bare interpreter, budget 1.75"
 
 
 @_LOCAL_ONLY
@@ -402,6 +410,5 @@ def test_stop_owned_overhead_stays_within_coarse_budget(tmp_path):
     payload = json.dumps(_STOP_PAYLOAD)
     hook = [sys.executable, "-c", "import sys; from prusik.__main__ import main; "
             "sys.argv=['prusik','gate','stop']; sys.exit(main())"]
-    bare = _min_ms([sys.executable, "-c", "pass"], root, "")
-    owned = _min_ms(hook, root, payload) - bare
-    assert owned <= 1.75 * bare, f"prusik-owned {owned:.1f}ms > 1.75 x bare {bare:.1f}ms"
+    ratio = _owned_ratio(hook, root, payload)
+    assert ratio <= 1.75, f"prusik-owned time is {ratio:.2f} x a bare interpreter, budget 1.75"

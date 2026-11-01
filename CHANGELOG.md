@@ -3,6 +3,27 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.237.1] — The boundary matches paths, not strings
+
+- **A module admits itself and what lies under it (fb-cbaf583f3925).** `builder_writes_within_plan`
+  compared strings, so `api/x` admitted `api/xyz.py`, `x.py` admitted `x.py.bak`, and a prose bullet
+  such as `+ a new module` declared `a` and admitted every path starting with it. It now compares
+  path segments through `schema.module_covers`.
+- **A module that names no repo path admits nothing.** `/`, `./`, an absolute path and one using `..`
+  match no file, so an older scope holding one fails closed. `validate_scope` and `validate_plan`
+  refuse them, with or without a `+`. `/etc` no longer passes the existence check by resolving
+  outside the project.
+- **A scope that declares nothing no longer skips the boundary.** A `## Modules touched` whose only
+  bullet is `.` parsed to no modules, and the check then returned clean. It now admits nothing, and
+  both validators refuse it.
+- **A deviation credits by file name only.** `_is_declared` also matched by string suffix, so a logged
+  `lib/ax.py` credited `x.py`. A logged partial path still credits the fuller path, by name.
+- **The hook budget tests survive a busy host.** They timed the bare interpreter and the hook in
+  separate runs, so a load spike during one failed bare `pytest`. Each round now times both back to
+  back and the budget reads the median ratio. Injected imports still fail it, at 2.25x against 1.75x.
+- **Proof.** Across every field scope and every path in each repo's history, each changed verdict is
+  classified in `reports/boundary-path-segments/field-replay.txt`.
+
 ## [0.237.0] — The bash gate sees every write it can name, where it lands
 
 - **`sed -i` and `perl -i` are gated (fb-a609748e159f).** An in-place edit changed a file the Edit
