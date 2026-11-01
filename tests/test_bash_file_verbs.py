@@ -293,6 +293,91 @@ def test_resolved_value_is_the_one_real_bash_uses(box):
     assert _targets(cmd) == [f"{box}/real/made"]
 
 
+@pytest.mark.parametrize("cmd", [
+    # quoting decides what a `$` is
+    "S=/tmp/x; echo hi > '$S/b'",
+    "S=/tmp/x; cp a '$S/b'",
+    "S=/tmp/x; cp a \\$S/b",
+    'S=/tmp/x; cp a "\\$S/b"',
+    "S='$OTHER/x'; cp a $S",
+    # a value bash would split or glob, used unquoted
+    'S="/tmp/a design/m"; echo x | tee $S',
+    'S="/tmp/a design/m"; rm $S',
+    'S="/tmp/*"; rm $S/f',
+    # code the gate can't read, or text that changes the name
+    'S=/tmp/x; eval "S=design"; rm $S/f',
+    "S=/tmp/x; source env.sh; rm $S/f",
+    "S=/tmp/x; . ./env.sh; rm $S/f",
+    "S=/tmp/x; let S=3; rm $S/f",
+    "S=/tmp/x; ((S=3)); rm $S/f",
+    "S=/tmp/x; echo $((S=3)); rm $S/f",
+    "S=/tmp/x; : ${S:=design}; rm $S/f",
+    "S=/tmp/x; ((S++)); rm $S/f",
+    "S=/tmp/x; declare -n S=T; rm $S/f",
+])
+def test_quoting_and_unseen_rebinding_fail_closed(cmd):
+    targets = [t for t in _targets(cmd) if "$" in t or "/tmp" not in t]
+    assert targets, _targets(cmd)
+    assert not [t for t in _targets(cmd) if t.startswith("/tmp/x/") or t == "/tmp/a design/m"]
+
+
+def test_quoted_multi_word_value_resolves_as_one_word():
+    assert _targets('C="/tmp/with space"; rm "$C/f"') == ["/tmp/with space/f"]
+
+
+@pytest.mark.parametrize("cmd,expected", [
+    ("S=/tmp/x; echo hi > '$S'", "$S"),
+    ("S=/tmp/x; cp src \\$S", "$S"),
+])
+def test_literal_dollar_is_the_file_real_bash_writes(box, cmd, expected):
+    subprocess.run(["/bin/bash", "-c", cmd], cwd=box, capture_output=True, check=False)
+    assert (box / expected).exists()
+    assert expected in _targets(cmd)
+
+
+def test_unquoted_split_writes_what_the_gate_refuses(box):
+    subprocess.run(["/bin/bash", "-c", 'S="one two"; touch $S'], cwd=box, check=True)
+    assert (box / "one").exists() and (box / "two").exists()
+    assert _targets('S="one two"; touch $S') == ["$S"]
+
+
+def test_no_internal_mark_reaches_a_target():
+    for cmd in ['cp a "$X/b"', "cp a '$X/b'", "cp a \\$X/b", 'echo > "$X"', 'cd "$X" && rm f']:
+        assert not any("\x00" in t or "\x01" in t for t in _targets(cmd))
+
+
+def test_install_bsd_suffix_flag_takes_its_value():
+    assert _targets("install -B .bak a b") == ["b"]
+
+
+@pytest.mark.parametrize("build", [lambda n: "rm a; " * n, lambda n: "a=1; " * n,
+                                   lambda n: "echo x > f; " * n])
+def test_cost_grows_linearly_with_the_command(build):
+    calls = []
+    original = gate._at_command_position
+
+    def counted(cmd, i):
+        calls.append(i)
+        return original(cmd, i)
+
+    gate._at_command_position = counted
+    try:
+        gate._bash_write_targets(build(4000))
+    finally:
+        gate._at_command_position = original
+    assert len(calls) < 4000 * 8
+
+
+def test_position_check_reads_no_further_than_the_statement():
+    long = "x " * 200_000
+    cmd = long + "; rm a"
+    import time
+    began = time.perf_counter()
+    for _ in range(2000):
+        gate._starts_command(cmd, len(cmd) - 4)
+    assert time.perf_counter() - began < 1.0
+
+
 # ---- the shell's starting directory -------------------------------------------------------
 
 @pytest.mark.parametrize("cmd,start,expected", [

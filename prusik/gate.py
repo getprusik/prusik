@@ -489,10 +489,24 @@ _ASSIGNMENT_RE = re.compile(
 _REBINDER_RE = re.compile(
     r"(?<![\w.-])(?:(?:for|select)[ \t]+(\w+)|(?:read|unset|mapfile|readarray|getopts|printf)"
     r"[ \t]([^;&|\n]*))")
-_VARIABLE_RE = re.compile(r"\$(?:\{(\w+)\}|(\w+))")
+# `_shell_word` writes each `$` as one of these, so the quoting that decides what it means
+# survives the quotes coming off. `_expand` turns both back into `$`.
+_LITERAL_DOLLAR = "\x00"       # `'$S'` or `\$S`: no expansion at all
+_QUOTED_DOLLAR = "\x01"        # `"$S"`: expands to one word
+_VARIABLE_RE = re.compile(rf"([${_QUOTED_DOLLAR}])(?:\{{(\w+)\}}|(\w+))")
+_SPLITS_RE = re.compile(r"[\s*?\[]")
+# Text that can rebind a name where this reading can't see it, as the run of `S=` forms below
+# can't cover: code run from a string or a file, and namerefs.
+_OPAQUE_CODE_RE = re.compile(
+    r"(?<![\w.-])(?:eval|source|let)\b|(?:^|[;&|(\n])[ \t]*\.[ \t]"
+    r"|(?<![\w-])(?:declare|typeset|local)[ \t]+-\w*n")
+# Read over literal text too, so `((S=3))`, `$((S=3))`, `${S:=x}` and `"S=x"` all count. A name
+# with more than one hit does not resolve. A false hit only costs a fail-closed target.
+_MUTATION_RE = re.compile(r"(?<!\w)([A-Za-z_]\w*)[ \t]*(?:[-+*/%:]?=|\+\+|--)")
 _CWD_RE = re.compile(r"[()]|\b(?:cd|pushd|popd)(?:[ \t]+|(?=[;&|)\n]|$))")
-_COMMAND_POSITION_RE = re.compile(
-    r"(?:^|[;&|({\n]|(?<![\w-])(?:if|elif|else|while|until|then|do|!))[ \t]*$")
+_COMMAND_STARTERS = frozenset(";&|({\n")
+_STATEMENT_ENDS = frozenset(";&|\n")
+_KEYWORD_BEFORE_RE = re.compile(r"(?<![\w-])(?:if|elif|else|while|until|then|do|!)$")
 _REEXEC_RE = re.compile(
     r"(?<![\w:.-])(?:eval|trap)\b|\|\s*(?:xargs\b[^|;&\n]*)?(?:[^\s|;&]*/)?(?:ba|z|k|da)?sh\b")
 _ARITHMETIC_RE = re.compile(r"\$?\(\([^;&|()]*\)\)")
@@ -508,8 +522,10 @@ _WORD_END = frozenset(" \t\n;&|<>()")
 _INPLACE_FLAGS = {"sed": ("ef", ""), "perl": ("eE", "IMmF")}
 # The short and long flags that take a value, per file verb, across BSD and GNU. `-t` is GNU's
 # target directory. A flag read wrongly here can't move `cp`'s destination, the last operand.
+# `install -S` is left out: it takes a suffix on GNU and nothing on BSD, and reading it as a plain
+# flag at worst names one false target, where the other reading could lose the source operand.
 _VERB_VALUE_FLAGS = {"cp": "St", "mv": "St", "rm": "", "truncate": "rs", "touch": "Adrt",
-                     "install": "Sgmot"}
+                     "install": "Bfgmot"}
 _VERB_VALUE_LONG = frozenset(("--date", "--group", "--mode", "--owner", "--reference", "--size",
                               "--suffix", "--target-directory", "--time"))
 # Targets only the running shell can name. `$` marks them as unresolved.
@@ -599,7 +615,10 @@ def _is_regenerable(path: str) -> bool:
 
 def _starts_command(cmd: str, i: int) -> bool:
     """True if the word at `i` is the command of its statement, past any `VAR=x` prefix."""
-    prefix = _ENV_PREFIX_RE.search(cmd[:i])
+    begin = i
+    while begin > 0 and cmd[begin - 1] not in _STATEMENT_ENDS:
+        begin -= 1
+    prefix = _ENV_PREFIX_RE.search(cmd, begin, i)
     return _at_command_position(cmd, prefix.start() if prefix else i)
 
 
@@ -668,54 +687,58 @@ def _literal_bindings(cmd: str, literal: bytearray) -> dict[str, tuple[int, str]
     """{name: (position, value)} for each variable the command assigns exactly once, at the
     top level, so a use after it reads that value. Anything that could leave the name holding
     another value leaves it out, and its uses fail closed: a second binder (`for`, `read`,
-    `+=`, `unset`), a subshell, or a `X=a cmd` prefix, which never reaches the next statement.
+    `+=`, `unset`), a subshell, a `X=a cmd` prefix, which never reaches the next statement, or
+    any second place the text could change it. Code the gate can't read (`eval`, `source`)
+    leaves every name out.
 
-    An assignment inside `if` or after `&&` counts as taken, and a value with a space counts
-    as one word even where an unquoted use would split it."""
-    if "=" not in cmd or "$" not in cmd:
+    An assignment inside `if` or after `&&` counts as taken."""
+    if "=" not in cmd or "$" not in cmd or _OPAQUE_CODE_RE.search(cmd):
         return {}
     bound: dict[str, tuple[int, str]] = {}
     spoiled: set[str] = set()
     for m in _REBINDER_RE.finditer(cmd):
         if not literal[m.start()]:
             spoiled.update(re.findall(r"[A-Za-z_]\w*", m[1] or m[2] or ""))
+    seen: set[str] = set()
+    for m in _MUTATION_RE.finditer(cmd):
+        (spoiled if m[1] in seen else seen).add(m[1])
+    depth = scanned = 0
     for m in _ASSIGNMENT_RE.finditer(cmd):
         name = m[1]
         if literal[m.start()] or not _starts_command(cmd, m.start()):
             continue
+        for pos in range(scanned, m.start()):
+            if cmd[pos] in "()" and not literal[pos]:
+                depth = max(0, depth + (1 if cmd[pos] == "(" else -1))
+        scanned = m.start()
         word, end = (("", m.end()) if cmd[m.end():m.end() + 1] in _WORD_END
                      else _shell_word(cmd, m.end()))
         after = _skip_blanks(cmd, end)
         persists = after >= len(cmd) or cmd[after] in ";&|)\n#"
-        if (name in bound or m[2] or not persists
-                or _subshell_depth(cmd, literal, m.start()) > 0):
+        if name in bound or m[2] or not persists or depth > 0:
             spoiled.add(name)
         else:
             bound[name] = (m.start(), _expand(word or "", m.start(), bound))
     return {name: found for name, found in bound.items() if name not in spoiled}
 
 
-def _subshell_depth(cmd: str, literal: bytearray, i: int) -> int:
-    depth = 0
-    for pos in range(i):
-        if not literal[pos] and cmd[pos] in "()":
-            depth = max(0, depth + (1 if cmd[pos] == "(" else -1))
-    return depth
-
-
 def _expand(word: str, pos: int, bindings: dict[str, tuple[int, str]]) -> str:
-    """`word` with each `$NAME` the command bound before `pos`, and `$HOME`, filled in."""
-    if "$" not in word:
-        return word
+    """`word`, as `_shell_word` gave it, with each `$NAME` the command bound before `pos`, and
+    `$HOME`, filled in, and its `$`s plain again. A quoted or escaped `$` stays text. Unquoted,
+    a value bash would split or glob stays unresolved, since it would not be this one word."""
 
     def fill(m: re.Match) -> str:
-        name = m[1] or m[2]
+        name = m[2] or m[3]
         if name == "HOME":
             return os.path.expanduser("~")
         found = bindings.get(name)
-        return found[1] if found and found[0] < pos else m[0]
+        if (found and found[0] < pos
+                and (m[1] == _QUOTED_DOLLAR or not _SPLITS_RE.search(found[1]))):
+            return found[1]
+        return m[0]
 
-    return _VARIABLE_RE.sub(fill, word)
+    expanded = _VARIABLE_RE.sub(fill, word) if "$" in word or _QUOTED_DOLLAR in word else word
+    return expanded.replace(_LITERAL_DOLLAR, "$").replace(_QUOTED_DOLLAR, "$")
 
 
 def _is_unresolved(target: str) -> bool:
@@ -735,7 +758,11 @@ def _landing_path(target: str, cwd: str) -> str:
 
 
 def _at_command_position(cmd: str, i: int) -> bool:
-    return _COMMAND_POSITION_RE.search(cmd[:i]) is not None
+    while i > 0 and cmd[i - 1] in " \t":
+        i -= 1
+    if i == 0 or cmd[i - 1] in _COMMAND_STARTERS:
+        return True
+    return _KEYWORD_BEFORE_RE.search(cmd, max(0, i - 6), i) is not None
 
 
 def _cwd_scopes(cmd: str, literal: bytearray, start: str = "",
@@ -791,8 +818,9 @@ def _skip_blanks(cmd: str, i: int) -> int:
 
 def _shell_word(cmd: str, i: int) -> tuple[str | None, int]:
     """The word starting at `i` after blanks, as bash reads it, and the index past it. None
-    if no word starts there. Quotes and escapes come off. An expansion stays as text, which
-    `_is_unresolved` then catches. An empty `""` is a word."""
+    if no word starts there. Quotes and escapes come off, and each `$` they governed is marked
+    for `_expand`, which every word bound for the gate passes through. An expansion stays as
+    text, which `_is_unresolved` then catches. An empty `""` is a word."""
     i = start = _skip_blanks(cmd, i)
     n = len(cmd)
     out: list[str] = []
@@ -800,16 +828,18 @@ def _shell_word(cmd: str, i: int) -> tuple[str | None, int]:
         c = cmd[i]
         if c == "\\":
             if cmd[i + 1:i + 2] != "\n":
-                out.append(cmd[i + 1:i + 2])
+                out.append(cmd[i + 1:i + 2].replace("$", _LITERAL_DOLLAR))
             i += 2
         elif c == "'":
             end = cmd.find("'", i + 1)
             end = n if end < 0 else end
-            out.append(cmd[i + 1:end])
+            out.append(cmd[i + 1:end].replace("$", _LITERAL_DOLLAR))
             i = end + 1
         elif c == '"':
             end = _double_quote_end(cmd, i) or n + 1
-            out.append(re.sub(r'\\(["\\$`])', r"\1", cmd[i + 1:end - 1]))
+            body = re.sub(r'\\(["\\$`])',
+                          lambda m: _LITERAL_DOLLAR if m[1] == "$" else m[1], cmd[i + 1:end - 1])
+            out.append(body.replace("$", _QUOTED_DOLLAR))
             i = end
         elif c == "`" or cmd.startswith("$(", i):
             end = _substitution_end(cmd, i)
