@@ -1,0 +1,16 @@
+{
+  "id": "fb-331f8487c548",
+  "created_at": "2026-11-01T23:25:45.273622+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "bash gate does not read ln, rsync, tar, unzip, patch, curl -o, mkdir or rmdir",
+  "detail": "Left out of v0.238.0, which read the verbs fb-f113f05860db named. Corpus target counts across all 60,566 Bash calls: mkdir 525, tar 26, ln 22, rmdir 22, rsync 16, unzip 6. rsync and tar write outside a sprint's writable set the same way cp does. Each is one branch in _file_verb_targets; replay first as v0.238.0 did, and curl -o needs its flags read since 1,631 curl calls mostly write nothing.",
+  "feature": "bash-file-verbs",
+  "content_hash": "331f8487c548",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

@@ -1,0 +1,16 @@
+{
+  "id": "fb-0e678051f98e",
+  "created_at": "2026-11-01T23:25:45.094227+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "bash gate reads no file verb behind find -exec, xargs, sudo or env",
+  "detail": "Left out of v0.238.0. find -exec rm {} + and xargs rm name no file, and sudo or env put the verb past command position, so _FILE_VERB_RE skips them. xargs sed -i fails closed through $(stdin), but xargs rm stays unread. The corpus holds 124 find -exec rm targets, nearly all cache cleanup, so failing closed needs the find root and -name read first, or the gate's own cache cleanup gets refused.",
+  "feature": "bash-file-verbs",
+  "content_hash": "0e678051f98e",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
