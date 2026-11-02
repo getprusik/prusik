@@ -51,8 +51,8 @@ def _declared_deviations(project_root: Path, feature: str) -> set[str]:
     """File paths the builder DECLARED touching out-of-plan in
     design/<feature>/deviations.md — the sanctioned, visible record of legitimate
     mid-build drift (field finding #17). The boundary check credits these: an honest,
-    logged departure from scope is authorized; a silent one is not. Returns both
-    full path tokens and basenames so a partial-path log entry still matches."""
+    logged departure from scope is authorized; a silent one is not. Returns each path
+    token as written, read relative to the project: `_credit_deviations` matches it."""
     dev = project_root / "design" / feature / "deviations.md"
     if not dev.exists():
         return set()
@@ -68,16 +68,31 @@ def _declared_deviations(project_root: Path, feature: str) -> set[str]:
         # strip only a leading `./` — NOT all leading dots, which would turn a
         # dotfile like `.env.test` into `env.test` and miss it (#20.1).
         tok = _re.sub(r"^\./", "", m.group(0))
+        for base in (str(project_root), str(project_root.resolve())):
+            tok = tok.removeprefix(f"{base}/")
+        tok = _re.sub(r"^worktrees/[^/]+/", "", tok)
         if tok:
             out.add(tok)
-            out.add(Path(tok).name)
     return out
 
 
-def _is_declared(rel_str: str, declared: set[str]) -> bool:
-    # `_declared_deviations` records each path and its file name, so a logged partial path
-    # (`errors/AppError.ts`) credits a fuller one (`src/errors/AppError.ts`) by name.
-    return rel_str in declared or Path(rel_str).name in declared
+def _credit_deviations(outside: set[str], declared: set[str]) -> tuple[set[str], dict[str, str]]:
+    """(the files the log credits, {file: the token that named it among others}), for the
+    distinct paths outside the boundary. A token names the paths whose trailing segments
+    equal it, so `errors/E.ts` is `src/errors/E.ts` and `x.py` is not `ax.py`. It credits
+    the one path it names. A token naming several credits none, because the log has not
+    said which one departed from scope (fb-82127b9f9ca9). A token equal to a whole path is
+    that path, so a file at the root can always be logged."""
+    credited: set[str] = set()
+    ambiguous: dict[str, str] = {}
+    for token in declared:
+        named = ([token] if token in outside
+                 else [path for path in outside if f"/{path}".endswith(f"/{token}")])
+        if len(named) == 1:
+            credited.update(named)
+        elif named:
+            ambiguous.update(dict.fromkeys(named, token))
+    return credited, ambiguous
 
 
 def _git_worktree_changed_files(teammate_dir: Path) -> list[str] | None:
@@ -442,7 +457,7 @@ def builder_writes_within_plan(project_root: Path, feature: str) -> list[str]:
     build_report_glob = f"reports/{feature}/build-*.txt"
     declared = _declared_deviations(project_root, feature)   # #17 — sanctioned drift
     fan_out = _fan_out_prediction(project_root, feature)      # fb-7ab319116f42 — predicted
-    violations: list[str] = []
+    outside: list[tuple[str, str]] = []
     for teammate_dir in worktrees.iterdir():
         if not teammate_dir.is_dir():
             continue
@@ -479,15 +494,23 @@ def builder_writes_within_plan(project_root: Path, feature: str) -> list[str]:
                 continue
             if Path(rel_str).name in _DEP_LOCK_FILES:   # lockfiles (#20.2)
                 continue
-            if _is_declared(rel_str, declared):   # #17 — recorded in deviations.md
-                continue
             if rel_str in fan_out:   # fb-7ab319116f42 — blast-radius-PREDICTED fan-out
                 continue
             if not any(schema.module_covers(m, rel_str) for m in boundary_mods):
-                violations.append(
-                    f"{teammate_dir.name}/{rel_str} is outside {boundary_src}'s "
-                    f"Modules touched {sorted(boundary_mods)}"
-                )
+                outside.append((teammate_dir.name, rel_str))
+    # #17 — recorded in deviations.md. Judged last, over every worktree, because whether a
+    # token names one file depends on all of them.
+    credited, ambiguous = _credit_deviations({rel for _name, rel in outside}, declared)
+    violations: list[str] = []
+    for name, rel_str in outside:
+        if rel_str in credited:
+            continue
+        violations.append(
+            f"{name}/{rel_str} is outside {boundary_src}'s "
+            f"Modules touched {sorted(boundary_mods)}"
+            + (f"; deviations.md's `{ambiguous[rel_str]}` names several files, so log the "
+               f"full path" if rel_str in ambiguous else "")
+        )
     if violations:
         return (
             [f"Builder files fall outside the sprint's declared boundary "

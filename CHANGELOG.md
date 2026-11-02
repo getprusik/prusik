@@ -3,6 +3,21 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.238.1] — A logged deviation credits the one file it names
+
+- **A token credits by path, not by file name (fb-82127b9f9ca9).** `DEV-001: api/util.py` also credited
+  `web/util.py`, and any other `util.py`, at the builder boundary. A token now names the paths whose
+  trailing segments equal it, so `errors/E.ts` still credits `src/errors/E.ts`.
+- **A token naming several files credits none.** Two thirds of the path tokens in field logs are bare
+  names, so a bare `index.ts` would still have credited every `index.ts`. It now credits only when
+  one distinct out-of-boundary file carries that name, across all worktrees. Otherwise the violation
+  names the token and says to log the full path.
+- **A token equal to a whole path is that path**, so a file at the root can always be logged.
+- **A logged path reads the way builders write it.** A `worktrees/<role>/` prefix and an absolute
+  path under the project are read as the project-relative path.
+- **Proof.** Over the 15 field sprints with a log and a scope, 33 files were credited before and
+  the same 33 after, in `reports/deviation-names-one-file/field-replay.txt`.
+
 ## [0.238.0] — The bash gate reads the file verbs
 
 - **`cp`, `mv`, `rm`, `truncate`, `dd`, `touch` and `install` are gated (fb-f113f05860db).** Each
