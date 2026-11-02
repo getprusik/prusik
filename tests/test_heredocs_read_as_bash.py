@@ -52,6 +52,9 @@ _RUNS = [
     "cat <<EOF \\\n| sh\n{run}\nEOF",
     "cat <<A; bash <<B\nprose\nA\n{run}\nB",
     "cat <<EOF 2>&1 | sh\n{run}\nEOF",
+    "cat <<EOF | {{ cat; }} | sh\n{run}\nEOF",
+    "cat <<EOF | (cat; true) | sh\n{run}\nEOF",
+    "cat <<EOF | while read l; do echo $l; done | sh\n{run}\nEOF",
     # A nested heredoc can't close past the body that holds it, and an outer substitution runs first.
     "bash <<A\ncat <<B\nx\nA\n{run}\nB",
     "bash <<A\ncat <<'B'\n$({run})\nB\nA",
@@ -86,11 +89,6 @@ _STAYS_DATA = [
     "cat <<EOF\n\\$({run})\nEOF",
     "cat <<EOF\n\\`{run}\\`\nEOF",
     "cat <<EOF\n$$({run})\nEOF",
-    # Not a shell, or not this heredoc's pipeline.
-    "cat <<EOF | sh.py\n{run}\nEOF",
-    "cat <<EOF | bash-completion\n{run}\nEOF",
-    "cat <<EOF || sh\n{run}\nEOF",
-    "cat <<EOF; echo x | sh\n{run}\nEOF",
     # Delimiters a `\w+` never matched.
     "cat <<'END OF'\n{run}\nEND OF",
     "cat <<a-b\n{run}\na-b",
@@ -159,6 +157,16 @@ def test_a_script_argument_is_read_as_code_on_purpose():
     """`bash script.sh <<EOF` runs no body, but telling it apart means parsing each shell's flags,
     and a false refusal costs one turn."""
     assert _gate_reads(f"bash script.sh <<EOF\n{_PUSH}\nEOF")[1] is True
+
+
+@pytest.mark.parametrize("line", [
+    "cat <<EOF | sh.py", "cat <<EOF | bash-completion", "cat <<EOF || sh", "cat <<EOF; echo x | sh",
+])
+def test_a_pipe_to_a_shell_on_the_line_reads_as_code_on_purpose(line):
+    """None of these feeds a shell. Telling them from `| bash-5.2` or `| { cat; } | sh` means
+    parsing names and groups, and the pattern is shared with the write check, which must not lose
+    a redirect. A false refusal costs one turn."""
+    assert _gate_reads(f"{line}\n{_PUSH}\nEOF")[1] is True
 
 
 def test_a_heredoc_with_no_closing_line_stays_code():

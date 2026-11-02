@@ -561,7 +561,7 @@ _COMMAND_STARTERS = frozenset(";&|({\n")
 _ESCAPABLE_OPERATORS = frozenset("<>;&|(){")
 _KEYWORD_BEFORE_RE = re.compile(r"(?<![\w-])(?:if|elif|else|while|until|then|do|!)$")
 _EXTGLOB_OPENERS = frozenset("?*+@!$")
-_PIPED_SHELL_RE = re.compile(r"\|\s*(?:xargs\b[^|;&\n]*)?(?:[^\s|;&]*/)?(?:ba|z|k|da)?sh(?![\w.-])")
+_PIPED_SHELL_RE = re.compile(r"\|\s*(?:xargs\b[^|;&\n]*)?(?:[^\s|;&]*/)?(?:ba|z|k|da)?sh\b")
 _REEXEC_RE = re.compile(rf"(?<![\w:.-])(?:eval|trap)\b|{_PIPED_SHELL_RE.pattern}")
 _ARITHMETIC_RE = re.compile(r"\$?\(\([^;&|()]*\)\)")
 _TEST_RE = re.compile(r"\[\[[^\n]*?\]\]")
@@ -1425,7 +1425,6 @@ def is_command_denied(cmd: str, phase_spec: dict) -> bool:
 
 _HEREDOC_OPERATOR_RE = re.compile(r"(?<!<)<<(-?)(?!<)")
 _LINE_END_RE = re.compile(r"(?<!\\)\n")
-_PIPELINE_END_RE = re.compile(r"\|\||;|(?<![|<>])&(?!>)")
 
 
 def _strip_heredocs(cmd: str, depth: int = 0) -> str:
@@ -1493,12 +1492,10 @@ def _take_bodies(cmd: str, operators: list[re.Match[str]], line_end: int, litera
 
 def _shell_reads_body(cmd: str, operator: int, line_end: int, starts: set[int],
                       literal: bytearray) -> bool:
-    """True if the heredoc at `operator` feeds a shell: its own command is one, or its pipeline
-    ends in one. `bash script.sh <<EOF` counts, as telling it apart means parsing each shell's
-    flags, and a false refusal costs a turn."""
-    pipeline_end = next((m.start() for m in _PIPELINE_END_RE.finditer(cmd, operator, line_end)
-                         if not literal[m.start()]), line_end)
-    if any(not literal[m.start()] for m in _PIPED_SHELL_RE.finditer(cmd, operator, pipeline_end)):
+    """True if the heredoc at `operator` may feed a shell: its own command is one, or a pipe to one
+    follows on the line. This errs towards code, as telling `bash script.sh <<EOF` or
+    `cat <<EOF; x | sh` apart means parsing flags and groups, and a false refusal costs a turn."""
+    if any(not literal[m.start()] for m in _PIPED_SHELL_RE.finditer(cmd, operator, line_end)):
         return True
     pos = max((s for s in starts if s <= operator), default=0)
     while (end := _prefix_end(cmd, pos)) is not None:
