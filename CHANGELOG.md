@@ -25,11 +25,12 @@ All notable changes to **Prusik** are documented here. The format follows
 - **Still not read.** `xargs rm`, `find -exec`, `find -delete`, `sudo` and `env` hide a file verb, so
   `xargs sed -i` fails closed while `xargs rm` stays unread (fb-0e678051f98e). `ln`, `rsync`, `tar`,
   `unzip`, `patch`, `curl -o`, `mkdir` and `rmdir` are not read either (fb-331f8487c548).
-- **Position checks are linear.** `_at_command_position` re-searched the whole command for every
-  match, so a very long command cost quadratic time in the hook.
-- **Proof.** Over 5,784 in-sprint field commands at the phase each ran in, every refusal added or
+- **Position checks are linear.** Command position is one forward pass over statement starts, so a
+  long command stays cheap in the hook, a separator inside a quoted `X="a;b" rm f` prefix splits
+  nothing, and a continued line starts no statement.
+- **Proof.** Over 5,822 in-sprint field commands at the phase each ran in, every refusal added or
   dropped against v0.237.1 is classified in `reports/bash-file-verbs/field-replay.txt`: 105 added,
-  66 dropped, none unexplained, none a regenerable cleanup.
+  68 dropped, none unexplained, none a regenerable cleanup.
 
 ## [0.237.1] — The boundary matches paths, not strings
 
