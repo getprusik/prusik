@@ -1244,7 +1244,8 @@ def _literal_text_mask(cmd: str) -> bytearray:
     rules differ; an unterminated quote; and text a shell runs again, such as `eval`,
     `trap` or `| sh`. A false block costs a turn, and a missed
     redirect is a write the gate never sees. Indirection (`$cmd "..."`) and a script
-    written then sourced are out of reach, as `bash -c` payloads already are.
+    written then sourced are out of reach, as `bash -c` payloads are for the write check.
+    `_named_commands` does read those.
     """
     mask = _quoted_text_mask(cmd)
     if any(not mask[m.start()] for m in _REEXEC_RE.finditer(cmd)):
@@ -1409,6 +1410,7 @@ def _command_denied(cmd: str, denied: str) -> bool:
 
 
 def _invokes(argv: list[str], words: list[str]) -> bool:
+    """True if `argv` begins with `words`, its command on any path and past git's global flags."""
     head = words[0] if os.path.basename(argv[0]) == words[0] else argv[0]
     rest = _git_call(argv, "")[0] if head == "git" else argv[1:]
     return [head, *rest][:len(words)] == words
@@ -3513,7 +3515,6 @@ _PHASE_ROLE = {
 # contracts:check"`, whose inner bash runs the SCRIPT `pnpm` ($0=contracts:check) →
 # a help screen, exit≠0. The identical wrong result then trips a convergence stall
 # (fb-9f107742fe4d).
-_CAPTURE_SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh"})
 _CAPTURE_SHELL_C = frozenset({"-c", "-lc", "-ic", "-lic", "-cl"})
 
 
@@ -3521,7 +3522,7 @@ def _shell_wrapper_misuse(cmd: list[str]) -> str | None:
     """Return loud, actionable guidance if `cmd` is a redundant `<shell> -c …`
     wrapper (which capture double-wraps + mangles), else None. Caller fails CLOSED
     — never run the wrong thing silently."""
-    if len(cmd) >= 2 and Path(cmd[0]).name in _CAPTURE_SHELLS \
+    if len(cmd) >= 2 and Path(cmd[0]).name in _SHELLS \
             and cmd[1] in _CAPTURE_SHELL_C:
         return (
             f"[prusik-gate] capture already runs your command through `bash -c`, so a "
