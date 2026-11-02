@@ -3,6 +3,34 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.238.3] — The bash gate reads every statement, and its own failure refuses the call
+
+- **A heredoc's opening line is read (fb-a9456cbd1f88).** The stripper removed everything from `<<`
+  through the closing delimiter, so `cat <<EOF > out`, `cat <<EOF; rm a` and `cat <<EOF | tee x`
+  reached the gate with the write gone. Only the body is removed now. This is the change most likely
+  to add a refusal, for a heredoc written to a path the phase doesn't allow.
+- **A gate that fails refuses (fb-860c63485143).** A hook that raises exits 1, which Claude Code
+  treats as a non-blocking error, so the tool ran ungated. `pre_tool` now denies any call it could
+  not judge, names the fault, and records `gate_blocked` with the new class `gate_fault`. A fault in
+  the gate therefore stops writes and Bash until it is fixed, by design.
+- **A gate out of time refuses (fb-d325f0be82a2).** A hook the host kills at 15s can deny nothing, so
+  `pre_tool` raises at 12s, inside a running regex too, and denies the same way. Windows has no
+  interval timer, so there the deadline is off and a slow gate still passes the call.
+- **Three regexes are linear.** 48KB of `/` took 26s in `_FILE_VERB_RE` on every Bash call, and now
+  takes 2ms. `_MUTATION_RE` and `_C_PAYLOAD_RE` are bounded too. A subscript over 256 characters
+  counts as a mutation of its name, and `-c` is found after at most 32 words.
+- **More statements are read (fb-961eaed62314).** A file verb is now seen after a leading redirect
+  (`>o rm a`), a subscripted prefix (`X[0]=1 rm a`), a case label, and a keyword before a continued
+  line. `cd` tracking and variable binding read the same statement starts, and a case label no
+  longer reads as a subshell.
+- **A flag in a variable is a flag.** After `S=-t; cp $S design a` the gate names `design/a`. A value
+  bash would split, as in `S="-t d"; cp $S a`, fails closed. A name with no value in the command is
+  still one operand.
+- **Still open.** `deny_commands` and the writer lease split statements naively, so `(git push)`
+  passes both (fb-7610468920d4). `find -exec`, `xargs`, `sudo`, `env` and `time` stay unread
+  (fb-0e678051f98e).
+- **Proof.** The replay is in `reports/gate-reads-every-statement/field-replay.txt`.
+
 ## [0.238.2] — A sprint closes only from its last phase, with that phase's exit artifacts
 
 - **A close checks the last phase's exit artifacts (fb-a959d1f48f12).** Only the Stop hook read them,

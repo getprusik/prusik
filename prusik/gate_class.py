@@ -42,6 +42,7 @@ CI_OBSERVE = "ci_observe"                             # advance: CI-job delivera
 SPRINT_START_GATE = "sprint_start_gate"              # sprint-start: unmet pre-sprint gate(s)
 DEFERRED_TIER = "deferred_tier"                       # sprint-complete: deferred test tier never proven
 CLOSE_BEFORE_LAST_PHASE = "close_before_last_phase"   # sprint-complete: run from an earlier phase
+GATE_FAULT = "gate_fault"                             # pre-tool: the gate itself failed or ran out of time
 UNCLASSIFIED = "unclassified"                        # recorded nothing identifying — never guessed
 
 # Completeness anchor — the test pins this to the module's constants so a class
@@ -60,6 +61,7 @@ GATE_CLASSES = (
     SPRINT_START_GATE,
     DEFERRED_TIER,
     CLOSE_BEFORE_LAST_PHASE,
+    GATE_FAULT,
     UNCLASSIFIED,
 )
 
@@ -80,6 +82,8 @@ def _derive(event: dict) -> str:
         return SPRINT_START_GATE
 
     if ev == "gate_blocked":
+        if reason.startswith("gate fault"):
+            return GATE_FAULT
         if reason.startswith("shared-tree writer lease"):
             return WRITER_LEASE
         if reason.startswith("deny command") or reason.startswith("deny pattern"):

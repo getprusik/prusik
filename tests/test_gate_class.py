@@ -76,6 +76,8 @@ def test_derives_every_class_from_pre_field_history():
          gc.DEFERRED_TIER),
         ({"event": "advance_blocked", "reason": "close before last phase: reviewing (last is x)"},
          gc.CLOSE_BEFORE_LAST_PHASE),
+        ({"event": "gate_blocked", "reason": "gate fault: RecursionError: too deep"},
+         gc.GATE_FAULT),
     ]
     for e, expected in cases:
         assert gc.classify(e) == expected, e
