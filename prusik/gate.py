@@ -290,14 +290,17 @@ def clear_briefing(slug: str) -> None:
 
 # fb-0b9d0a6d1ce6 — what counts as "mutating the SHARED tree" (vs a worktree,
 # which stays concurrent): a Write/Edit/notebook target outside worktrees/, a
-# bash redirect landing outside worktrees/, or a mutating git statement not
-# explicitly scoped into a worktree (`git -C worktrees/... <cmd>` / a prior
-# `cd worktrees/...` statement in the same command line).
+# bash redirect landing outside worktrees/, or a mutating git command that does not run in a
+# worktree (`git -C worktrees/... <cmd>`, or a `cd worktrees/...` in force).
 _MUTATING_GIT = frozenset((
     "reset", "rebase", "merge", "commit", "push", "checkout", "switch",
     "restore", "stash", "clean", "cherry-pick", "revert", "am", "apply",
     "rm", "mv",
 ))
+_GIT = frozenset(("git",))
+# Git's global flags that take a value: those that say where it runs, then the rest.
+_GIT_DIR_FLAGS = frozenset(("-C", "--git-dir", "--work-tree"))
+_GIT_VALUE_FLAGS = frozenset(("-c", "--namespace", "--config-env"))
 
 
 def _under_worktrees(target: str) -> bool:
@@ -312,29 +315,11 @@ def _under_worktrees(target: str) -> bool:
 
 
 def _shared_tree_git_mutation(executable: str, start: str = "") -> bool:
-    """True if any statement runs a mutating git subcommand against the shared
-    tree. Statement-ordered: a `cd worktrees/...` earlier in the same command
-    scopes the following statements into that worktree, and `start` is where the
-    command begins."""
-    in_worktree = bool(start) and _under_worktrees(start)
-    for stmt in re.split(r"(?:;|&&|\|\||\||\n)", executable):
-        toks = stmt.split()
-        if not toks:
-            continue
-        if toks[0] == "cd" and len(toks) > 1:
-            in_worktree = _under_worktrees(toks[1])
-            continue
-        if toks[0] != "git":
-            continue
-        # consume global flags; `-C <path>` scopes this statement explicitly
-        i, stmt_worktree = 1, in_worktree
-        while i < len(toks) and toks[i].startswith("-"):
-            if toks[i] == "-C" and i + 1 < len(toks):
-                stmt_worktree = _under_worktrees(toks[i + 1])
-                i += 2
-                continue
-            i += 2 if toks[i] == "-c" and i + 1 < len(toks) else 1
-        if i < len(toks) and toks[i] in _MUTATING_GIT and not stmt_worktree:
+    """True if any command runs a mutating git subcommand against the shared tree, judged from
+    where it runs: `start`, then the `cd` in force, then git's own directory flags."""
+    for argv, cwd in _named_commands(executable, _GIT, start):
+        args, directory = _git_call(argv, cwd)
+        if args and args[0] in _MUTATING_GIT and not _under_worktrees(directory):
             return True
     return False
 
@@ -348,8 +333,7 @@ def _mutates_shared_tree(event) -> bool:
         for target in _event_write_targets(event, executable):
             if not _under_worktrees(target):
                 return True
-        if "git" in executable and _shared_tree_git_mutation(
-                executable, _shell_start(event.cwd)):
+        if _shared_tree_git_mutation(executable, _shell_start(event.cwd)):
             return True
     return False
 
@@ -573,6 +557,7 @@ _MUTATION_RE = re.compile(
     rf"|(?<!\w)([A-Za-z_]\w*)(?=\[[^\]\n]{{{_MAX_SUBSCRIPT + 1}}})")
 _CWD_RE = re.compile(r"[()]|\b(?:cd|pushd|popd)(?:[ \t]+|(?=[;&|)\n]|$))")
 _COMMAND_STARTERS = frozenset(";&|({\n")
+_ESCAPABLE_OPERATORS = frozenset(">;&|(){")
 _KEYWORD_BEFORE_RE = re.compile(r"(?<![\w-])(?:if|elif|else|while|until|then|do|!)$")
 _EXTGLOB_OPENERS = frozenset("?*+@!$")
 _REEXEC_RE = re.compile(
@@ -596,6 +581,10 @@ _VERB_VALUE_FLAGS = {"cp": "St", "mv": "St", "rm": "", "truncate": "rs", "touch"
                      "install": "Bfgmot"}
 _VERB_VALUE_LONG = frozenset(("--date", "--group", "--mode", "--owner", "--reference", "--size",
                               "--suffix", "--target-directory", "--time"))
+# Commands whose argument is shell code, so what they run is read as well.
+_SHELLS = frozenset(("bash", "sh", "zsh", "ksh", "dash"))
+_CODE_RUNNERS = _SHELLS | {"eval", "trap"}
+_MAX_CODE_DEPTH = 32
 # Targets only the running shell can name. `$` marks them as unresolved.
 _FROM_STDIN = "$(stdin)"
 _FROM_FIND = "$({})"
@@ -678,6 +667,9 @@ def _bash_write_targets(cmd: str, start: str = "") -> list[str]:
         path = _landing_path(tok, _cwd_at(cwds, pos))
         if tok not in _SKIP_TARGETS and not (verb == "rm" and _is_regenerable(path)):
             targets.append(path)
+    for pos, body in _backtick_bodies(cleaned, literal):     # the redirects above saw this text
+        found = _bash_write_targets(body, _cwd_at(cwds, pos))
+        targets += [target for target in found if target not in targets]
     return targets
 
 
@@ -718,6 +710,81 @@ def _prefix_end(cmd: str, i: int) -> int | None:
         return redirect.end()
     word, end = _shell_word(cmd, redirect.end())
     return None if word is None else end
+
+
+def _named_commands(cmd: str, names: frozenset[str], start: str = "",
+                    depth: int = 0) -> list[tuple[list[str], str]]:
+    """Each command `cmd` runs under one of `names`, on any path, as (argv, the directory it runs
+    in), its words expanded. Called on heredoc-stripped input. Reads `bash -c`, `eval`, `trap` and
+    backtick bodies too. Only a named command's argv is read, so a line of keywords stays linear.
+
+    A name the command line never set stays unread: `$G push` could be anything, and refusing it
+    would refuse `$PYTHON -m pytest`. The same goes for a substitution before the command word.
+    `sudo`, `env` and the like hide a command from this reading. Code nested past
+    `_MAX_CODE_DEPTH` raises, which `pre_tool` turns into a refusal."""
+    if depth > _MAX_CODE_DEPTH:
+        raise RecursionError(f"shell code nested past {_MAX_CODE_DEPTH} levels")
+    literal = _literal_text_mask(cmd)
+    labels = _case_labels(cmd, literal)
+    starts = _command_starts(cmd, literal, labels)
+    bindings = _literal_bindings(cmd, literal, starts, labels)
+    cwds = _cwd_scopes(cmd, literal, start, bindings, labels, starts)
+    found: list[tuple[list[str], str]] = []
+    for pos in sorted(starts):
+        word = _shell_word(cmd, pos)[0] if cmd[pos:pos + 1] not in ("", "#") else None
+        name = os.path.basename(_expand(word, pos, bindings)) if word else ""
+        if name not in names and name not in _CODE_RUNNERS:
+            continue
+        argv = [_expand(a, pos, bindings) for a in _command_args(cmd, pos, literal)]
+        cwd = _cwd_at(cwds, pos)
+        if name in names:
+            found.append((argv, cwd))
+        code = _shell_code(name, argv)
+        if code:
+            found += _named_commands(code, names, cwd, depth + 1)
+    for pos, body in _backtick_bodies(cmd, literal):
+        found += _named_commands(body, names, _cwd_at(cwds, pos), depth + 1)
+    return found
+
+
+def _shell_code(name: str, argv: list[str]) -> str | None:
+    """The code `argv` hands a shell, if any. A flag holding `c` takes the code after it, as
+    `bash -lc` does. A script's own `-c` reads as code too, which only costs a false refusal."""
+    if name == "eval":
+        return " ".join(argv[1:])
+    if name == "trap":
+        return argv[1] if len(argv) > 1 else None
+    for i, arg in enumerate(argv[1:-1], 2):
+        if arg.startswith("-") and not arg.startswith("--") and "c" in arg:
+            return argv[i]
+    return None
+
+
+def _backtick_bodies(cmd: str, literal: bytearray) -> list[tuple[int, str]]:
+    """(position, code) of each backtick span, with one level of escapes off its own nested
+    backticks."""
+    if "`" not in cmd:
+        return []
+    ticks = [m.start() for m in _UNESCAPED_BACKTICK_RE.finditer(cmd) if not literal[m.start()]]
+    return [(opening, re.sub(r"\\([`\\$])", r"\1", cmd[opening + 1:closing]))
+            for opening, closing in zip(ticks[::2], ticks[1::2])]
+
+
+def _git_call(argv: list[str], cwd: str) -> tuple[list[str], str]:
+    """The words after git's global flags, from a git argv, and the directory it acts on: `cwd`
+    moved by each `-C`, `--git-dir` or `--work-tree`."""
+    directory = cwd
+    i = 1
+    while i < len(argv) and argv[i].startswith("-"):
+        flag, has_value, value = argv[i].partition("=")
+        i += 1
+        if flag in _GIT_DIR_FLAGS or flag in _GIT_VALUE_FLAGS:
+            if not has_value:
+                value = argv[i] if i < len(argv) else ""
+                i += 1
+            if flag in _GIT_DIR_FLAGS:
+                directory = _landing_path(value, directory)
+    return argv[i:], directory
 
 
 def _case_labels(cmd: str, literal: bytearray) -> set[int]:
@@ -1119,7 +1186,7 @@ def _inplace_files(editor: str, args: list[str]) -> list[str]:
 
 
 def _literal_text_mask(cmd: str) -> bytearray:
-    """1 at every position bash reads as literal text: quotes, escaped `>`, comments,
+    """1 at every position bash reads as literal text: quotes, escaped operators, comments,
     arithmetic and `[[ ]]`, where `>` compares.
 
     `$(...)` in double quotes is code again, so it is read by the same rules. The gate must
@@ -1146,8 +1213,8 @@ def _quoted_text_mask(cmd: str) -> bytearray:
         c = cmd[i]
         at_word_start, word_start = word_start, c in " \t\n"
         if c == "\\":
-            # Skipped so `\'` opens no quote. Only `>` is masked: `\tee` still runs tee.
-            if cmd[i + 1:i + 2] == ">":
+            # Skipped so `\'` opens no quote. Only an operator is masked: `\tee` still runs tee.
+            if cmd[i + 1:i + 2] in _ESCAPABLE_OPERATORS:
                 mask[i + 1] = 1
             i += 2
             continue
@@ -1276,29 +1343,27 @@ def _looks_like_file_target(tok: str) -> bool:
 
 
 def _command_denied(cmd: str, denied: str) -> bool:
-    """True if any shell statement in cmd begins with the denied command tokens.
-
-    Tokenizes cmd into statements (split on ; && || | \\n) and matches the
-    denied tokens as a prefix of each statement's word list. Safe against
-    prose inside heredocs (already stripped) or inside quoted strings
-    (those end up as single tokens that don't match naked word prefixes).
+    """True if `cmd` runs a command whose words begin with the denied words, on any path and
+    past git's global flags. See `_named_commands` for where a command is read. Quoted text and
+    comments are no command, and heredoc prose is already stripped.
 
     Examples, with denied = "git push":
       "git push origin main"      → True
-      "echo 'git push'"           → False (echo is command, 'git push' is a quoted arg)
-      "git status && git push"    → True (second statement matches)
-      "git   push main"           → True (multiple spaces collapse in split)
+      "echo 'git push'"           → False (a quoted argument)
+      "git status && git push"    → True
+      "(git -C . push)"           → True
     """
-    denied_tokens = denied.split()
-    if not denied_tokens:
+    words = denied.split()
+    if not words:
         return False
-    # Shell statement separators
-    statements = re.split(r"(?:;|&&|\|\||\||\n)", cmd)
-    for stmt in statements:
-        tokens = stmt.split()
-        if len(tokens) >= len(denied_tokens) and tokens[:len(denied_tokens)] == denied_tokens:
-            return True
-    return False
+    name = os.path.basename(words[0])
+    return any(_invokes(argv, words) for argv, _ in _named_commands(cmd, frozenset((name,))))
+
+
+def _invokes(argv: list[str], words: list[str]) -> bool:
+    head = words[0] if os.path.basename(argv[0]) == words[0] else argv[0]
+    rest = _git_call(argv, "")[0] if head == "git" else argv[1:]
+    return [head, *rest][:len(words)] == words
 
 
 def is_command_denied(cmd: str, phase_spec: dict) -> bool:

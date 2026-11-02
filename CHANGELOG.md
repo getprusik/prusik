@@ -3,6 +3,27 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.238.4] — deny_commands and the writer lease read commands where bash runs them
+
+- **One reader of what a command line runs (fb-7610468920d4).** `_command_denied` and
+  `_shared_tree_git_mutation` split on separators and compared first tokens, so `(git push)`,
+  `if git push`, `>o git push`, `X=1 git push`, `! git push`, `{ git push; }`, a case arm,
+  `$(git push)` and a backtick all passed a phase deny and the lease check. Both now use
+  `_named_commands`, built on the positions the write check reads. It follows `bash -c`, `eval`,
+  `trap` and backtick bodies, and a resolved `$G`. Shell code nested past 32 levels is refused.
+- **This is the change most likely to add a refusal.** In a phase that denies `git push` or
+  `git merge`, the deny now applies past git's global flags, so `git -C <dir> push` and
+  `git -c k=v merge` are refused, whichever repo `<dir>` names, as `cd <dir> && git push` already
+  was. A `VAR=x git push` is refused too.
+- **The lease judges where git acts.** `-C`, `--git-dir` and `--work-tree` count from the `cd` in
+  force, and several `-C` join. `cd "/path with spaces"` and a `$R` the command set now resolve, so
+  a git command in another repo no longer counts as this tree's.
+- **Quoted text is no command.** `git log --grep 'x; git push y'` and
+  `git commit -m "a; git push b"` were refused for `git push`. They are not now.
+- **An escaped operator separates nothing.** `echo \; git push` was read as two statements, and the
+  same mask now covers `\;`, `\&`, `\|`, `\(`, `\)` and `\{` for the write check too.
+- **The write check reads a backtick body.** `` echo `rm a` `` named nothing.
+
 ## [0.238.3] — The bash gate reads every statement, and its own failure refuses the call
 
 - **A heredoc's opening line is read (fb-a9456cbd1f88).** The stripper removed everything from `<<`
