@@ -483,7 +483,9 @@ _WRITER_RE = re.compile(r"(?<![\w.-])(tee|sed|perl)(?=[ \t\\])")
 # stand at command position, optionally under a path (`/bin/rm`).
 _FILE_VERB_RE = re.compile(
     r"(?<![\w.-])(?:[\w./~-]*/)?(cp|mv|rm|truncate|dd|touch|install)(?=[ \t\\])")
-_ENV_PREFIX_RE = re.compile(r"""(?:[A-Za-z_]\w*=(?:"[^"\n]*"|'[^'\n]*'|[^\s;&|()])*[ \t]+)+$""")
+_ENV_WORD_RE = re.compile(r"[A-Za-z_]\w*\+?=")
+_STATEMENT_START_RE = re.compile(
+    r"[;&|({]|(?<!\\)\n|(?<![\w-])(?:if|elif|else|while|until|then|do|!)(?=[ \t])")
 _ASSIGNMENT_RE = re.compile(
     r"(?<![\w$.=/-])(?:(?:export|readonly|local|declare|typeset)[ \t]+)?([A-Za-z_]\w*)(\+?)=")
 _REBINDER_RE = re.compile(
@@ -502,10 +504,9 @@ _OPAQUE_CODE_RE = re.compile(
     r"|(?<![\w-])(?:declare|typeset|local)[ \t]+-\w*n")
 # Read over literal text too, so `((S=3))`, `$((S=3))`, `${S:=x}` and `"S=x"` all count. A name
 # with more than one hit does not resolve. A false hit only costs a fail-closed target.
-_MUTATION_RE = re.compile(r"(?<!\w)([A-Za-z_]\w*)[ \t]*(?:[-+*/%:]?=|\+\+|--)")
+_MUTATION_RE = re.compile(r"(?<!\w)([A-Za-z_]\w*)(?:\[[^\]\n]*\])?[ \t]*(?:[-+*/%:]?=|\+\+|--)")
 _CWD_RE = re.compile(r"[()]|\b(?:cd|pushd|popd)(?:[ \t]+|(?=[;&|)\n]|$))")
 _COMMAND_STARTERS = frozenset(";&|({\n")
-_STATEMENT_ENDS = frozenset(";&|\n")
 _KEYWORD_BEFORE_RE = re.compile(r"(?<![\w-])(?:if|elif|else|while|until|then|do|!)$")
 _REEXEC_RE = re.compile(
     r"(?<![\w:.-])(?:eval|trap)\b|\|\s*(?:xargs\b[^|;&\n]*)?(?:[^\s|;&]*/)?(?:ba|z|k|da)?sh\b")
@@ -577,7 +578,7 @@ def _bash_write_targets(cmd: str, start: str = "") -> list[str]:
         return []
     cleaned = _strip_c_payloads(cmd)
     literal = _literal_text_mask(cleaned)
-    bindings = _literal_bindings(cleaned, literal)
+    bindings = _literal_bindings(cleaned, literal, _command_starts(cleaned, literal))
     cwds = _cwd_scopes(cleaned, literal, start, bindings)
     named: list[tuple[int, str]] = []
     verb_files: list[tuple[int, str, str]] = []
@@ -590,8 +591,9 @@ def _bash_write_targets(cmd: str, start: str = "") -> list[str]:
             files = ([a for a in args if not a.startswith("-")] if m[1] == "tee"
                      else _inplace_files(m[1], args))
             named += [(m.start(), f) for f in files]
+    starts = _command_starts(cleaned, literal)
     for m in _FILE_VERB_RE.finditer(cleaned):
-        if not literal[m.start()] and _starts_command(cleaned, m.start()):
+        if not literal[m.start()] and m.start() in starts:
             args = _command_args(cleaned, m.end(), literal)
             verb_files += [(m.start(), m[1], f) for f in _file_verb_targets(m[1], args)]
     targets: list[str] = []
@@ -613,13 +615,21 @@ def _is_regenerable(path: str) -> bool:
     return not _is_unresolved(path) and not _REGENERABLE_DIRS.isdisjoint(path.split("/"))
 
 
-def _starts_command(cmd: str, i: int) -> bool:
-    """True if the word at `i` is the command of its statement, past any `VAR=x` prefix."""
-    begin = i
-    while begin > 0 and cmd[begin - 1] not in _STATEMENT_ENDS:
-        begin -= 1
-    prefix = _ENV_PREFIX_RE.search(cmd, begin, i)
-    return _at_command_position(cmd, prefix.start() if prefix else i)
+def _command_starts(cmd: str, literal: bytearray) -> set[int]:
+    """Where each statement's first word begins, and each word after its `VAR=x` prefixes. One
+    forward pass, so a separator in literal text splits nothing and a long statement stays
+    linear."""
+    starts: set[int] = set()
+    boundaries = [m.end() for m in _STATEMENT_START_RE.finditer(cmd) if not literal[m.start()]]
+    for i in [0, *boundaries]:
+        i = _skip_blanks(cmd, i)
+        while i not in starts:
+            starts.add(i)
+            if not _ENV_WORD_RE.match(cmd, i):
+                break
+            _word, end = _shell_word(cmd, i)
+            i = _skip_blanks(cmd, end)
+    return starts
 
 
 def _file_verb_targets(verb: str, args: list[str]) -> list[str]:
@@ -683,7 +693,8 @@ def _verb_operands(verb: str, args: list[str]) -> tuple[list[str], str | None, b
     return operands, target_dir, makes_dirs
 
 
-def _literal_bindings(cmd: str, literal: bytearray) -> dict[str, tuple[int, str]]:
+def _literal_bindings(cmd: str, literal: bytearray,
+                      starts: set[int]) -> dict[str, tuple[int, str]]:
     """{name: (position, value)} for each variable the command assigns exactly once, at the
     top level, so a use after it reads that value. Anything that could leave the name holding
     another value leaves it out, and its uses fail closed: a second binder (`for`, `read`,
@@ -705,7 +716,7 @@ def _literal_bindings(cmd: str, literal: bytearray) -> dict[str, tuple[int, str]
     depth = scanned = 0
     for m in _ASSIGNMENT_RE.finditer(cmd):
         name = m[1]
-        if literal[m.start()] or not _starts_command(cmd, m.start()):
+        if literal[m.start()] or m.start() not in starts:
             continue
         for pos in range(scanned, m.start()):
             if cmd[pos] in "()" and not literal[pos]:
@@ -715,11 +726,12 @@ def _literal_bindings(cmd: str, literal: bytearray) -> dict[str, tuple[int, str]
                      else _shell_word(cmd, m.end()))
         after = _skip_blanks(cmd, end)
         persists = after >= len(cmd) or cmd[after] in ";&|)\n#"
-        if name in bound or m[2] or not persists or depth > 0:
-            spoiled.add(name)
+        if name in bound or name in spoiled or m[2] or not persists or depth > 0:
+            spoiled.add(name)     # `bound` never holds a spoiled name, so no value copies one
+            bound.pop(name, None)
         else:
             bound[name] = (m.start(), _expand(word or "", m.start(), bound))
-    return {name: found for name, found in bound.items() if name not in spoiled}
+    return bound
 
 
 def _expand(word: str, pos: int, bindings: dict[str, tuple[int, str]]) -> str:

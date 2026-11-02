@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 
 import pytest
 
@@ -314,6 +315,12 @@ def test_resolved_value_is_the_one_real_bash_uses(box):
     "S=/tmp/x; : ${S:=design}; rm $S/f",
     "S=/tmp/x; ((S++)); rm $S/f",
     "S=/tmp/x; declare -n S=T; rm $S/f",
+    # a stale value must not survive by being copied, or through an array element
+    "A=/tmp/x; A=design; B=$A; rm $B/f",
+    "A=/tmp/x; read A; B=$A; rm $B/f",
+    "for A in design; do B=$A; rm $B/f; done; A=/tmp/x",
+    "S=/tmp/x; S[0]=design; rm $S/f",
+    "S=/tmp/x; S[1]+=design; rm $S/f",
 ])
 def test_quoting_and_unseen_rebinding_fail_closed(cmd):
     targets = [t for t in _targets(cmd) if "$" in t or "/tmp" not in t]
@@ -368,14 +375,31 @@ def test_cost_grows_linearly_with_the_command(build):
     assert len(calls) < 4000 * 8
 
 
-def test_position_check_reads_no_further_than_the_statement():
-    long = "x " * 200_000
-    cmd = long + "; rm a"
-    import time
+@pytest.mark.parametrize("cmd", [
+    "echo " + "rm x " * 40000,
+    "S=1 " * 40000 + "; cp a $S",
+    "rm \\\n" * 40000 + "a",
+])
+def test_one_long_statement_stays_linear(cmd):
     began = time.perf_counter()
-    for _ in range(2000):
-        gate._starts_command(cmd, len(cmd) - 4)
-    assert time.perf_counter() - began < 1.0
+    gate._bash_write_targets(cmd)
+    assert time.perf_counter() - began < 5.0        # minutes if it turns quadratic
+
+
+@pytest.mark.parametrize("cmd,expected", [
+    ('X="a;b" rm design/f', ["design/f"]),
+    ('X="a|b" Y=\'c&d\' rm design/f', ["design/f"]),
+    ('X="$(a; b)" rm design/f', ["design/f"]),
+    ("x=1 y=2 rm design/f", ["design/f"]),
+    ("if true; then rm a; else rm b; fi", ["a", "b"]),
+    ("true && ! rm a", ["a"]),
+    ("(rm a) | { rm b; }", ["a", "b"]),
+    ("X=1\nrm a", ["a"]),
+    ("echo \\\n  rm x", []),                 # a continued line starts nothing
+    ("rm a \\\n  b", ["a", "b"]),
+])
+def test_command_position_survives_literal_separators(cmd, expected):
+    assert _targets(cmd) == expected
 
 
 # ---- the shell's starting directory -------------------------------------------------------
