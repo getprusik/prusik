@@ -98,7 +98,11 @@ def _gate_fault(event, exc: BaseException) -> str:
     except Exception:  # noqa: BLE001
         pass
     return (f"[prusik-gate] refused: the gate could not judge this call ({fault}). Nothing ran.\n"
-            "  → simplify the command or split it. If this is a routine call, report it with "
+            "  → a Recursion or Deadline fault is about this command: simplify or split it.\n"
+            "  → a YAML or JSON fault is a damaged .claude/sprint-config.yaml or .sprint/state.json."
+            " Every Edit and Bash call is refused until it parses, so the operator repairs it "
+            "outside this session.\n"
+            "  → anything else is a gate bug: tell the operator, and report it with "
             "`prusik feedback`.")
 
 
@@ -662,9 +666,9 @@ def _bash_write_targets(cmd: str, start: str = "") -> list[str]:
             # Expanded first: a value can be a flag, which changes what the operands mean.
             words = [_expand(a, m.start(), bindings) for a in args]
             files = _file_verb_targets(m[1], words)
-            files += [w for a, w in zip(args, words)
-                      if w not in files and _splits_when_used(a, m.start(), bindings)]
-            verb_files += [(m.start(), m[1], f) for f in files]
+            split = {w for a, w in zip(args, words)
+                     if _splits_when_used(a, m.start(), bindings)}
+            verb_files += [(m.start(), m[1], f) for f in [*files, *sorted(split - set(files))]]
     targets: list[str] = []
     for pos, raw in named:
         tok = _expand(raw, pos, bindings)
@@ -1307,7 +1311,7 @@ def is_command_denied(cmd: str, phase_spec: dict) -> bool:
 _HEREDOC_RE = re.compile(
     # `<<[-]?[']DELIM[']`, the rest of its line, then the body through ^DELIM$. Only the body is
     # data: the rest of the line is the command's, and can hold a redirect or a next statement.
-    r"<<-?\s*['\"]?(\w+)['\"]?([^\n]*\n).*?^\s*\1\s*$",
+    r"(?<!<)<<-?\s*['\"]?(\w+)['\"]?([^\n]*\n).*?^\s*\1\s*$",
     re.MULTILINE | re.DOTALL,
 )
 

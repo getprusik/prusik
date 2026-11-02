@@ -12,7 +12,8 @@ All notable changes to **Prusik** are documented here. The format follows
 - **A gate that fails refuses (fb-860c63485143).** A hook that raises exits 1, which Claude Code
   treats as a non-blocking error, so the tool ran ungated. `pre_tool` now denies any call it could
   not judge, names the fault, and records `gate_blocked` with the new class `gate_fault`. A fault in
-  the gate therefore stops writes and Bash until it is fixed, by design.
+  the gate therefore stops writes and Bash until it is fixed, by design. That includes a damaged
+  `.claude/sprint-config.yaml` or `.sprint/state.json`, which now needs repair outside the session.
 - **A gate out of time refuses (fb-d325f0be82a2).** A hook the host kills at 15s can deny nothing, so
   `pre_tool` raises at 12s, inside a running regex too, and denies the same way. Windows has no
   interval timer, so there the deadline is off and a slow gate still passes the call.
@@ -28,7 +29,8 @@ All notable changes to **Prusik** are documented here. The format follows
   still one operand.
 - **Still open.** `deny_commands` and the writer lease split statements naively, so `(git push)`
   passes both (fb-7610468920d4). `find -exec`, `xargs`, `sudo`, `env` and `time` stay unread
-  (fb-0e678051f98e).
+  (fb-0e678051f98e). The heredoc stripper still reads `<<` in quotes and arithmetic as a heredoc,
+  and reads no command in a heredoc body (fb-ccd55bc92cb0).
 - **Proof.** The replay is in `reports/gate-reads-every-statement/field-replay.txt`.
 
 ## [0.238.2] — A sprint closes only from its last phase, with that phase's exit artifacts

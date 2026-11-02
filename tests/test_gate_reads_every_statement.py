@@ -40,7 +40,7 @@ def _targets(cmd, start=""):
     "X[0]=1 rm a", "X[0]+=1 rm a", "X[a b]=1 rm a", "X= rm a", "X=1 Y[2]=3 2>e rm a",
     "<<EOF rm a\nbody\nEOF", "<<-EOF rm a\n\tbody\n\tEOF", "cat <<EOF; rm a\nbody\nEOF",
     "cat <<EOF >/dev/null && rm a\nbody\nEOF", "cat <<A <<B; rm a\nx\nA\ny\nB",
-    "cat <<'E' | cat; rm a\n>body\nE",
+    "cat <<'E' | cat; rm a\n>body\nE", "cat <<<EOF\nrm a\nEOF",
     "case x in x) rm a;; esac", "case x in (x) rm a;; esac", "case x in y|x) rm a;; esac",
     "case x in\n  x)\n    rm a\n    ;;\nesac",
     "case x in y) echo no;; x) rm a;; esac", "case x in x) case y in y) rm a;; esac;; esac",
@@ -210,6 +210,14 @@ def test_a_long_command_stays_linear(cmd):
     assert time.perf_counter() - begin < 1.0
 
 
+def test_many_operands_stay_linear():
+    for cmd in ("rm " + " ".join(f"f{i}.txt" for i in range(16_000)),
+                'S="a b"; cp ' + "$S " * 24_000 + "d"):
+        begin = time.perf_counter()
+        _targets(cmd)
+        assert time.perf_counter() - begin < 1.0
+
+
 def test_interpreter_payloads_are_still_stripped():
     assert _targets("""python -c "x > y" > out""") == ["out"]
     assert _targets("""python -u -X dev -c 'a > b'""") == []
@@ -365,6 +373,14 @@ def test_a_fault_clears_the_deadline_too(monkeypatch, adapter):
     gate.pre_tool()
     assert _signal.getitimer(_signal.ITIMER_REAL) == (0.0, 0.0)
     assert "ValueError: bad" in adapter.denied
+
+
+def test_a_damaged_config_is_refused_and_the_message_names_the_remedy(tmp_path):
+    root = _project(tmp_path)
+    (root / ".claude" / "sprint-config.yaml").write_text("key: [unclosed\n")
+    reason = _denied(_hook(root, _bash("echo hello", root)))
+    assert "ParserError" in reason and ".claude/sprint-config.yaml" in reason
+    assert "operator repairs it" in reason
 
 
 def test_a_ledger_that_cannot_be_written_still_denies(monkeypatch, adapter):
