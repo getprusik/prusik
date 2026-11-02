@@ -6,7 +6,7 @@ All notable changes to **Prusik** are documented here. The format follows
 ## [0.238.0] — The bash gate reads the file verbs
 
 - **`cp`, `mv`, `rm`, `truncate`, `dd`, `touch` and `install` are gated (fb-f113f05860db).** Each
-  changed a file the Write tool had been refused. The field held 87 such writes the gate never saw,
+  changed a file the Write tool had been refused. The field held 88 such writes the gate never saw,
   mostly `cp worktrees/<role>/src/... src/...` into the main tree during `building` and `reviewing`.
   The verbs are read at command position only, so `git rm`, `pip install` and `echo rm x` name
   nothing, and sources and reference files are never named.
