@@ -51,6 +51,13 @@ _RUNS = [
     "cat <<'EOF' | /bin/sh\n{run}\nEOF",
     "cat <<EOF \\\n| sh\n{run}\nEOF",
     "cat <<A; bash <<B\nprose\nA\n{run}\nB",
+    "cat <<EOF 2>&1 | sh\n{run}\nEOF",
+    # A nested heredoc can't close past the body that holds it, and an outer substitution runs first.
+    "bash <<A\ncat <<B\nx\nA\n{run}\nB",
+    "bash <<A\ncat <<'B'\n$({run})\nB\nA",
+    "cat <<A\n$(cat <<B\n$({run})\nB\n)\nA",
+    # A joined line leaves the delimiter unquoted.
+    "cat <<EOF\\\n>/dev/null\n$({run})\nEOF",
     # The closing line is bash's, so these bodies run on past the look-alike.
     "cat <<EOF\n  EOF\n$({run})\nEOF",
     "cat <<EOF\nEOF \n$({run})\nEOF",
@@ -78,6 +85,12 @@ _STAYS_DATA = [
     # An escape keeps a substitution literal.
     "cat <<EOF\n\\$({run})\nEOF",
     "cat <<EOF\n\\`{run}\\`\nEOF",
+    "cat <<EOF\n$$({run})\nEOF",
+    # Not a shell, or not this heredoc's pipeline.
+    "cat <<EOF | sh.py\n{run}\nEOF",
+    "cat <<EOF | bash-completion\n{run}\nEOF",
+    "cat <<EOF || sh\n{run}\nEOF",
+    "cat <<EOF; echo x | sh\n{run}\nEOF",
     # Delimiters a `\w+` never matched.
     "cat <<'END OF'\n{run}\nEND OF",
     "cat <<a-b\n{run}\na-b",
@@ -187,6 +200,14 @@ def test_text_a_shell_runs_again_stays_code(command):
 
 def test_nested_heredocs_in_a_kept_body_are_stripped_too():
     assert _gate_reads(f"bash <<A\ncat <<B\n{_PUSH}\nB\nA")[1] is False
+
+
+def test_heredocs_nested_past_the_bound_raise():
+    """`pre_tool` turns this into a refusal, as it does for nested shell code."""
+    deep = "".join(f"bash <<E{i}\n" for i in range(gate._MAX_CODE_DEPTH + 2))
+    deep += "".join(f"E{i}\n" for i in reversed(range(gate._MAX_CODE_DEPTH + 2)))
+    with pytest.raises(RecursionError):
+        gate._strip_heredocs(deep)
 
 
 def test_many_heredocs_all_come_out():

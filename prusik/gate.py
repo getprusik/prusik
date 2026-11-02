@@ -561,7 +561,7 @@ _COMMAND_STARTERS = frozenset(";&|({\n")
 _ESCAPABLE_OPERATORS = frozenset("<>;&|(){")
 _KEYWORD_BEFORE_RE = re.compile(r"(?<![\w-])(?:if|elif|else|while|until|then|do|!)$")
 _EXTGLOB_OPENERS = frozenset("?*+@!$")
-_PIPED_SHELL_RE = re.compile(r"\|\s*(?:xargs\b[^|;&\n]*)?(?:[^\s|;&]*/)?(?:ba|z|k|da)?sh\b")
+_PIPED_SHELL_RE = re.compile(r"\|\s*(?:xargs\b[^|;&\n]*)?(?:[^\s|;&]*/)?(?:ba|z|k|da)?sh(?![\w.-])")
 _REEXEC_RE = re.compile(rf"(?<![\w:.-])(?:eval|trap)\b|{_PIPED_SHELL_RE.pattern}")
 _ARITHMETIC_RE = re.compile(r"\$?\(\([^;&|()]*\)\)")
 _TEST_RE = re.compile(r"\[\[[^\n]*?\]\]")
@@ -1425,9 +1425,10 @@ def is_command_denied(cmd: str, phase_spec: dict) -> bool:
 
 _HEREDOC_OPERATOR_RE = re.compile(r"(?<!<)<<(-?)(?!<)")
 _LINE_END_RE = re.compile(r"(?<!\\)\n")
+_PIPELINE_END_RE = re.compile(r"\|\||;|(?<![|<>])&(?!>)")
 
 
-def _strip_heredocs(cmd: str) -> str:
+def _strip_heredocs(cmd: str, depth: int = 0) -> str:
     """Take out what bash treats as heredoc data, before anything reads `cmd` as commands.
 
     Prose in a body must not trip a check, but only what bash leaves unrun is data. So `<<` opens
@@ -1437,8 +1438,11 @@ def _strip_heredocs(cmd: str) -> str:
 
     A body's quotes would shift how the text after it reads, so the mask is taken again after each
     line of operators, and text before the first operator is never read from a body. A heredoc
-    with no closing line stays, and scans as code.
+    with no closing line stays, and scans as code. Heredocs nested past `_MAX_CODE_DEPTH` raise,
+    which `pre_tool` turns into a refusal.
     """
+    if depth > _MAX_CODE_DEPTH:
+        raise RecursionError(f"heredocs nested past {_MAX_CODE_DEPTH} levels")
     start = 0
     while cmd.find("<<", start) >= 0:
         literal = _quoted_text_mask(cmd)
@@ -1449,16 +1453,17 @@ def _strip_heredocs(cmd: str) -> str:
         if line_end < 0:
             return cmd
         on_line = [m for m in operators if m.start() < line_end]
-        cmd, start = _take_bodies(cmd, on_line, line_end, literal)
+        cmd, start = _take_bodies(cmd, on_line, line_end, literal, depth)
     return cmd
 
 
-def _take_bodies(cmd: str, operators: list[re.Match[str]], line_end: int,
-                 literal: bytearray) -> tuple[str, int]:
+def _take_bodies(cmd: str, operators: list[re.Match[str]], line_end: int, literal: bytearray,
+                 depth: int) -> tuple[str, int]:
     """`cmd` with `operators`, all on the line ending at `line_end`, and their bodies taken out,
     and the index to go on from. Bodies follow the line in order, and what a body leaves goes back
     after the line, where it is no argument of the command and an operator on this line can't
-    take it for its own body. It is scanned again, as it can open heredocs of its own."""
+    take it for its own body. Its own heredocs are stripped apart from the rest, since one can't
+    close past the body that holds it, and a substitution runs before a shell reads the body."""
     starts = _command_starts(cmd, literal, _case_labels(cmd, literal))
     line: list[str] = []
     kept: list[str] = []
@@ -1474,23 +1479,26 @@ def _take_bodies(cmd: str, operators: list[re.Match[str]], line_end: int,
         line.append(cmd[copied:operator.start()])
         copied = word_end
         body = cmd[body_start:closing.start()]
+        delimiter = cmd[operator.end():word_end].replace("\\\n", "")
+        if not set(delimiter) & set("'\"\\"):
+            kept += [_strip_heredocs(f"{span}\n", depth + 1) for span in _substitutions(body)]
         if _shell_reads_body(cmd, operator.start(), line_end, starts, literal):
-            kept.append(body)
-        elif not set(cmd[operator.end():word_end]) & set("'\"\\"):
-            kept += [f"{span}\n" for span in _substitutions(body)]
+            kept.append(_strip_heredocs(body, depth + 1))
         body_start = closing.end() + 1
     if body_start == line_end + 1:
         return cmd, body_start
-    head = "".join(line) + cmd[copied:line_end + 1]
-    return head + "".join(kept) + cmd[body_start:], len(head)
+    head = "".join(line) + cmd[copied:line_end + 1] + "".join(kept)
+    return head + cmd[body_start:], len(head)
 
 
 def _shell_reads_body(cmd: str, operator: int, line_end: int, starts: set[int],
                       literal: bytearray) -> bool:
-    """True if the heredoc at `operator` feeds a shell: its own command is one, or the line pipes
-    it to one. `bash script.sh <<EOF` counts, as telling it apart means parsing each shell's
+    """True if the heredoc at `operator` feeds a shell: its own command is one, or its pipeline
+    ends in one. `bash script.sh <<EOF` counts, as telling it apart means parsing each shell's
     flags, and a false refusal costs a turn."""
-    if any(not literal[m.start()] for m in _PIPED_SHELL_RE.finditer(cmd, operator, line_end)):
+    pipeline_end = next((m.start() for m in _PIPELINE_END_RE.finditer(cmd, operator, line_end)
+                         if not literal[m.start()]), line_end)
+    if any(not literal[m.start()] for m in _PIPED_SHELL_RE.finditer(cmd, operator, pipeline_end)):
         return True
     pos = max((s for s in starts if s <= operator), default=0)
     while (end := _prefix_end(cmd, pos)) is not None:
@@ -1505,7 +1513,7 @@ def _substitutions(body: str) -> list[str]:
     spans: list[str] = []
     i, n = 0, len(body)
     while i < n:
-        if body[i] == "\\":
+        if body[i] == "\\" or body.startswith("$$", i):
             i += 2
         elif body[i] == "`" or body.startswith("$(", i):
             end = _substitution_end(body, i)
