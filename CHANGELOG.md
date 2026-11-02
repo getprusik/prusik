@@ -22,7 +22,8 @@ All notable changes to **Prusik** are documented here. The format follows
   `git commit -m "a; git push b"` were refused for `git push`. They are not now.
 - **An escaped operator separates nothing.** `echo \; git push` was read as two statements, and the
   same mask now covers `\;`, `\&`, `\|`, `\(`, `\)` and `\{` for the write check too.
-- **The write check reads a backtick body.** `` echo `rm a` `` named nothing.
+- **The write check reads a backtick body.** `` echo `rm a` `` named nothing. Backticks get a scan
+  of their own, since the literal mask stops at the first one.
 
 ## [0.238.3] — The bash gate reads every statement, and its own failure refuses the call
 

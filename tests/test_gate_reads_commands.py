@@ -28,7 +28,7 @@ _STUB = """#!/bin/bash
 while [ "${1#-}" != "$1" ]; do
   case "$1" in
     -C) cd "$2" || exit 1; shift 2;;
-    -c|--git-dir|--work-tree) shift 2;;
+    -c|--git-dir|--work-tree|--attr-source) shift 2;;
     *) shift;;
   esac
 done
@@ -72,6 +72,13 @@ def shell(tmp_path):
     "bash -c 'git push'", "sh -c 'true; git push'", "sh -ec 'git push'", 'eval "git push"',
     "eval git push", "trap 'git push' EXIT", "bash -c 'bash -c \"git push\"'",
     "echo `echo \\`git push\\``", "echo $(echo $(git push))", 'bash -c "echo \\$(git push)"',
+    "echo \"`true`\"; echo 'a`b'; echo `git push`", "echo $'x'; echo 'a`b'; echo `git push`",
+    "echo ${x:-'a'}; echo 'a`b'; echo `git push`", "echo \"`true`\" '`' ; echo `git push`",
+    "echo $'a\\'`'; echo `git push`", "echo \"$(echo '`')\"; echo `git push`",
+    "echo \"it's\"; echo `git push`", "# don't\necho `git push`",
+    "echo \\\\`git push`", "echo \\\\\\\\`git push`",
+    "bash -c -x 'git push'", "bash -c -- 'git push'", "eval -- git push",
+    "trap -- 'git push' EXIT", "git --attr-source x push",
 ])
 def test_a_push_bash_runs_is_denied_and_mutates(shell, cmd):
     ran = shell(cmd)
@@ -87,6 +94,8 @@ def test_a_push_bash_runs_is_denied_and_mutates(shell, cmd):
     "cat <<'EOF'\ngit push\nEOF", "git stash-push", "gitx push", "git pushx",
     "echo 'bash -c git push'", "python3 -c 'print(1); git push'",
     "[[ a == 'git push' ]]", "echo $((1 + 2)) 'x; git push y'", "bash script.sh",
+    "echo '`git push`'", "echo \\`git push\\`", "echo 'a`'; echo 'git push`'",
+    "git status # `git push`",
 ])
 def test_text_bash_does_not_run_is_not_a_push(shell, cmd):
     assert "push" not in [sub for _dir, sub in shell(cmd)]
@@ -184,7 +193,8 @@ def test_the_lease_needs_no_literal_git_in_the_text(tmp_path, monkeypatch):
 @pytest.mark.parametrize(("cmd", "expected"), [
     ("echo `rm a`", ["a"]), ('echo "`rm a`"', ["a"]), ("x=`rm a`", ["a"]),
     ("cd d; echo `rm a`", ["d/a"]), ("echo `echo \\`rm a\\``", ["a"]),
-    ("echo '`rm a`'", []),
+    ("echo '`rm a`'", []), ("echo \\\\`rm a`", ["a"]),
+    ("echo \"`true`\"; echo 'a`b'; echo `rm a`", ["a"]),
 ])
 def test_the_write_check_reads_a_backtick_body(tmp_path, cmd, expected):
     (tmp_path / "a").write_text("x")

@@ -300,7 +300,8 @@ _MUTATING_GIT = frozenset((
 _GIT = frozenset(("git",))
 # Git's global flags that take a value: those that say where it runs, then the rest.
 _GIT_DIR_FLAGS = frozenset(("-C", "--git-dir", "--work-tree"))
-_GIT_VALUE_FLAGS = frozenset(("-c", "--namespace", "--config-env"))
+_GIT_VALUE_FLAGS = frozenset(("-c", "--namespace", "--config-env", "--attr-source",
+                              "--super-prefix"))
 
 
 def _under_worktrees(target: str) -> bool:
@@ -667,7 +668,7 @@ def _bash_write_targets(cmd: str, start: str = "") -> list[str]:
         path = _landing_path(tok, _cwd_at(cwds, pos))
         if tok not in _SKIP_TARGETS and not (verb == "rm" and _is_regenerable(path)):
             targets.append(path)
-    for pos, body in _backtick_bodies(cleaned, literal):     # the redirects above saw this text
+    for pos, body in _backtick_bodies(cleaned):     # the redirects above saw this text
         found = _bash_write_targets(body, _cwd_at(cwds, pos))
         targets += [target for target in found if target not in targets]
     return targets
@@ -742,32 +743,79 @@ def _named_commands(cmd: str, names: frozenset[str], start: str = "",
         code = _shell_code(name, argv)
         if code:
             found += _named_commands(code, names, cwd, depth + 1)
-    for pos, body in _backtick_bodies(cmd, literal):
+    for pos, body in _backtick_bodies(cmd):
         found += _named_commands(body, names, _cwd_at(cwds, pos), depth + 1)
     return found
 
 
 def _shell_code(name: str, argv: list[str]) -> str | None:
-    """The code `argv` hands a shell, if any. A flag holding `c` takes the code after it, as
-    `bash -lc` does. A script's own `-c` reads as code too, which only costs a false refusal."""
-    if name == "eval":
-        return " ".join(argv[1:])
-    if name == "trap":
-        return argv[1] if len(argv) > 1 else None
-    for i, arg in enumerate(argv[1:-1], 2):
+    """The code `argv` hands a shell, if any. A flag holding `c` takes the first word after it
+    that is no flag, as `bash -c -x code` does. A script's own `-c` reads as code too, which only
+    costs a false refusal."""
+    words = argv[1:]
+    if name in ("eval", "trap"):
+        words = words[1:] if words[:1] == ["--"] else words
+        return (" ".join(words) if name == "eval" else next(iter(words), None))
+    for i, arg in enumerate(words):
         if arg.startswith("-") and not arg.startswith("--") and "c" in arg:
-            return argv[i]
+            return next((w for w in words[i + 1:] if not w.startswith(("-", "+"))), None)
     return None
 
 
-def _backtick_bodies(cmd: str, literal: bytearray) -> list[tuple[int, str]]:
+def _backtick_bodies(cmd: str) -> list[tuple[int, str]]:
     """(position, code) of each backtick span, with one level of escapes off its own nested
-    backticks."""
+    backticks. A scan of its own, since `_literal_text_mask` stops marking at the first backtick
+    and a quoted backtick after it would shift every pair. `open_quotes` holds each `"` and `$(`
+    still open: a `'` is literal directly in a `"`, and quotes again in a `$(` inside one."""
     if "`" not in cmd:
         return []
-    ticks = [m.start() for m in _UNESCAPED_BACKTICK_RE.finditer(cmd) if not literal[m.start()]]
-    return [(opening, re.sub(r"\\([`\\$])", r"\1", cmd[opening + 1:closing]))
-            for opening, closing in zip(ticks[::2], ticks[1::2])]
+    spans: list[tuple[int, str]] = []
+    open_quotes: list[str] = []
+    i, n = 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        in_double = open_quotes[-1:] == ['"']
+        if c == "\\":
+            i += 2
+        elif c == "`":
+            end = i + 1
+            while end < n and cmd[end] != "`":
+                end += 2 if cmd[end] == "\\" else 1
+            if end < n:
+                spans.append((i, re.sub(r"\\([`\\$])", r"\1", cmd[i + 1:end])))
+            i = end + 1
+        elif cmd.startswith("$(", i):
+            open_quotes.append("(")
+            i += 2
+        elif c == '"':
+            if in_double:
+                open_quotes.pop()
+            else:
+                open_quotes.append(c)
+            i += 1
+        elif in_double:
+            i += 1
+        elif c == "(":
+            open_quotes.append(c)
+            i += 1
+        elif c == ")":
+            if open_quotes:
+                open_quotes.pop()
+            i += 1
+        elif c == "'":
+            end = cmd.find("'", i + 1)
+            i = n if end < 0 else end + 1
+        elif cmd.startswith("$'", i):
+            i += 2
+            while i < n and cmd[i] != "'":
+                i += 2 if cmd[i] == "\\" else 1
+            i += 1
+        elif c == "#" and (i == 0 or cmd[i - 1] in " \t\n;&|("):
+            end = cmd.find("\n", i)
+            i = n if end < 0 else end
+        else:
+            i += 1
+    return spans
 
 
 def _git_call(argv: list[str], cwd: str) -> tuple[list[str], str]:
