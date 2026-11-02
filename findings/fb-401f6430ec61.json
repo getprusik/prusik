@@ -9,7 +9,13 @@
   "content_hash": "401f6430ec61",
   "repro": "",
   "duplicate_of": null,
-  "thread": [],
+  "thread": [
+    {
+      "at": "2026-11-02T17:57:34.368160+00:00",
+      "role": "adopter",
+      "body": "From heredocs-read-as-bash (v0.238.5), more cases a single lexer would settle. _strip_heredocs relies on _quoted_text_mask, so a quoted << after the mask stops marking still reads as an operator. An operator in an already closed substitution opens a body: 'echo \"$(echo <<A)\"\\nrm a\\nA'. _substitution_end ends at a ')' in a comment: 'cat <<EOF\\n$(echo hi # )\\nrm a)\\nEOF'. In an unquoted body a joined line is not read: 'foo\\\\<newline>EOF' closes early, and '$\\\\<newline>(rm a)' is a joined substitution the gate misses. Retaking the mask per line is also quadratic in heredocs, 2.9s at 500, which one forward pass would remove."
+    }
+  ],
   "resolution": null,
   "verify_history": [],
   "status": "open"

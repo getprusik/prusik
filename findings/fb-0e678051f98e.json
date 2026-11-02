@@ -14,6 +14,11 @@
       "at": "2026-11-02T06:45:21.632309+00:00",
       "role": "prusik-author",
       "body": "From gate-reads-commands (0.238.4): _named_commands now serves deny_commands and the lease, and the same wrappers hide a command from it, so this finding covers them too. command, time, exec, nohup, env, sudo, xargs and find -exec all pass a phase deny of git push. Read wrappers in _command_starts or _prefix_end so the write check and _named_commands both gain them."
+    },
+    {
+      "at": "2026-11-02T17:57:34.467578+00:00",
+      "role": "adopter",
+      "body": "From heredocs-read-as-bash (v0.238.5), wrappers hide a shell from heredoc reading too: 'sudo bash <<EOF', 'env bash <<EOF', 'exec bash <<EOF', 'time bash <<EOF', 'command bash <<EOF', and on a pipe 'cat <<EOF | env bash' and '| exec sh'. _shell_reads_body should use whatever reads past wrappers when this is fixed."
     }
   ],
   "resolution": null,

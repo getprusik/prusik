@@ -1,0 +1,16 @@
+{
+  "id": "fb-386c186d88ee",
+  "created_at": "2026-11-02T17:57:34.184420+00:00",
+  "kind": "bug",
+  "severity": "low",
+  "title": "A heredoc fed to a shell inside a compound command or backtick is not read as code",
+  "detail": "From heredocs-read-as-bash (v0.238.5), checked against real bash 3.2. Each runs its body and the gate reads none of it: '{ bash; } <<EOF', 'while true; do bash; break; done <<EOF', and a shell in a backtick span, 'echo `bash <<B\\nrm a\\nB\\n`', since _command_starts has no backtick start. Data flowing into code is the same class: eval \"$(cat <<EOF ...)\", bash -c \"$(cat <<'EOF' ...)\", sh < <(cat <<EOF ...), source /dev/stdin <<EOF. _shell_reads_body only sees the operator's own command word and a pipe to a shell on its line.",
+  "feature": "heredocs-read-as-bash",
+  "content_hash": "386c186d88ee",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
