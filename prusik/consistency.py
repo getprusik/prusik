@@ -51,8 +51,8 @@ def _declared_deviations(project_root: Path, feature: str) -> set[str]:
     """File paths the builder DECLARED touching out-of-plan in
     design/<feature>/deviations.md — the sanctioned, visible record of legitimate
     mid-build drift (field finding #17). The boundary check credits these: an honest,
-    logged departure from scope is authorized; a silent one is not. Returns each path
-    token as written, read relative to the project: `_credit_deviations` matches it."""
+    logged departure from scope is authorized; a silent one is not. Returns the tokens
+    `_logged_paths` reads from the log, for `_credit_deviations` to match."""
     dev = project_root / "design" / feature / "deviations.md"
     if not dev.exists():
         return set()
@@ -67,13 +67,28 @@ def _declared_deviations(project_root: Path, feature: str) -> set[str]:
     for m in _re.finditer(r"[\w./-]+\.\w+", text):
         # strip only a leading `./` — NOT all leading dots, which would turn a
         # dotfile like `.env.test` into `env.test` and miss it (#20.1).
-        tok = _re.sub(r"^\./", "", m.group(0))
-        for base in (str(project_root), str(project_root.resolve())):
-            tok = tok.removeprefix(f"{base}/")
-        tok = _re.sub(r"^worktrees/[^/]+/", "", tok)
-        if tok:
-            out.add(tok)
+        out.update(_logged_paths(_re.sub(r"^\./", "", m.group(0)), project_root))
     return out
+
+
+def _logged_paths(token: str, project_root: Path) -> list[str]:
+    """What a logged token can mean. As written it is a partial path. A leading `/` marks a
+    path anchored at the project root, which names that path and nothing under another
+    directory: an absolute path inside the project, and a `worktrees/<role>/` path with its
+    role removed. A real `worktrees/` directory in the project keeps the written form. An
+    absolute path outside the project names nothing here."""
+    anchored = False
+    for base in (f"{project_root}/", f"{project_root.resolve()}/"):
+        if token.startswith(base):
+            token, anchored = token[len(base):], True
+            break
+    if token.startswith("/"):
+        return []
+    role_path = token.split("/", 2)
+    tokens = [f"/{token}" if anchored else token]
+    if len(role_path) == 3 and role_path[0] == "worktrees":
+        tokens.append(f"/{role_path[2]}")
+    return tokens
 
 
 def _credit_deviations(outside: set[str], declared: set[str]) -> tuple[set[str], dict[str, str]]:
@@ -82,12 +97,17 @@ def _credit_deviations(outside: set[str], declared: set[str]) -> tuple[set[str],
     equal it, so `errors/E.ts` is `src/errors/E.ts` and `x.py` is not `ax.py`. It credits
     the one path it names. A token naming several credits none, because the log has not
     said which one departed from scope (fb-82127b9f9ca9). A token equal to a whole path is
-    that path, so a file at the root can always be logged."""
+    that path, so a file at the root can always be logged, and an anchored token names
+    only that path."""
     credited: set[str] = set()
     ambiguous: dict[str, str] = {}
     for token in declared:
-        named = ([token] if token in outside
-                 else [path for path in outside if f"/{path}".endswith(f"/{token}")])
+        if token.startswith("/"):
+            named = [token[1:]] if token[1:] in outside else []
+        elif token in outside:
+            named = [token]
+        else:
+            named = [path for path in outside if f"/{path}".endswith(f"/{token}")]
         if len(named) == 1:
             credited.update(named)
         elif named:

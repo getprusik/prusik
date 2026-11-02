@@ -60,6 +60,33 @@ def test_a_token_credits_nothing_else(tmp_path, token, path):
     assert path in _flagged(tmp_path)
 
 
+@pytest.mark.parametrize("token", ["{root}/x.py", "worktrees/solo/x.py"])
+def test_an_anchored_token_names_only_that_path(tmp_path, token):
+    _project(tmp_path, f"DEV-001: {token.format(root=tmp_path)} — moved\n", ["src/x.py"])
+    assert "src/x.py" in _flagged(tmp_path)
+
+
+@pytest.mark.parametrize("token", ["{root}/x.py", "worktrees/solo/x.py"])
+def test_an_anchored_token_credits_its_root_file(tmp_path, token):
+    _project(tmp_path, f"DEV-001: {token.format(root=tmp_path)} — moved\n", ["x.py", "src/x.py"])
+    flagged = _flagged(tmp_path)
+    assert "solo/x.py" not in flagged
+    assert "src/x.py" in flagged
+
+
+def test_an_absolute_worktree_path_credits(tmp_path):
+    _project(tmp_path, f"DEV-001: {tmp_path}/worktrees/solo/web/x.py — moved\n", ["web/x.py"])
+    assert _flagged(tmp_path) == ""
+
+
+def test_a_real_worktrees_directory_keeps_its_written_path(tmp_path):
+    _project(tmp_path, "DEV-001: worktrees/a/x.py — moved\n",
+             ["worktrees/a/x.py", "worktrees/b/x.py"])
+    flagged = _flagged(tmp_path)
+    assert "solo/worktrees/a/x.py" not in flagged
+    assert "solo/worktrees/b/x.py" in flagged
+
+
 def test_a_file_with_no_token_is_a_violation(tmp_path):
     _project(tmp_path, "DEV-001: web/x.py — moved\n", ["web/x.py", "web/y.py"])
     assert "web/y.py" in _flagged(tmp_path)
