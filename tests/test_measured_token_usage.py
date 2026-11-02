@@ -28,6 +28,7 @@ import pytest
 import yaml
 
 from prusik import effort, gate, ledger, phases, platform_adapter as pa, usage, watchdog
+from tests._common import _write_retro
 
 _REPO = Path(__file__).resolve().parent.parent
 _TEMPLATE_CFG = _REPO / "prusik" / "templates" / ".claude" / "sprint-config.yaml"
@@ -490,6 +491,7 @@ def test_phase_windows_share_effort_spans():
 
 def _complete(monkeypatch, tokens=None) -> int:
     monkeypatch.setattr(gate, "_run_success_criteria", lambda *a, **k: (True, []))
+    _write_retro(ledger.project_root(), "feat")
     return gate.sprint_complete(argparse.Namespace(feature="feat", duration_min=None,
                                                    tokens=tokens, escalated=False))
 

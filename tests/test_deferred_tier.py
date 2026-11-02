@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from prusik import brief_lint, deferred_tier as dt, gate, gate_class, ledger, phases, schema
+from tests._common import _copy_sprint_config, _write_retro
 
 
 # ---- fixtures -----------------------------------------------------------------------
@@ -408,6 +409,8 @@ def _field_shaped(tmp_path, monkeypatch) -> Path:
         "feature": "feat", "mode": "solo", "reason": "t",
         "scope_summary": {"size": "M", "domains": ["backend"]},
         "brief_meta": {"type": "bug_fix", "priority": "P0"}}))
+    _copy_sprint_config(r)
+    _write_retro(r, "feat")
     phases.set_sprint_state({"phase": "integrating", "feature": "feat"})
     ledger.append("sprint_started", feature="feat")
     _enter_integrating()

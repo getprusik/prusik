@@ -2231,6 +2231,38 @@ def release_writer(args) -> int:
     return 0
 
 
+def _close_gate(feature: str, phase: str | None) -> int | None:
+    """The exit check on the last phase (fb-a959d1f48f12). Advance checks every other
+    phase's exit artifacts, and nothing advances out of the last one, so a sprint leaves it
+    here. Returns the rc that refuses the close, or None to proceed. A close from an
+    earlier phase is refused rather than judged on that phase's artifacts: `reviewing` can
+    be fully satisfied with no retro, and leaving it here would skip the last phase whole."""
+    config = phases.load_sprint_config() or {}
+    names = [p["name"] for p in config.get("phases", [])]
+    if not names:
+        print("No sprint-config.yaml phases found. Run 'prusik init' first.", file=sys.stderr)
+        return 1
+    last = names[-1]
+    if phase != last:
+        print(f"[prusik-gate] Cannot close '{feature}' from phase '{phase}': a sprint closes "
+              f"from its last phase, '{last}'. Advance to it, then retry.", file=sys.stderr)
+        ledger.append("advance_blocked", from_phase=phase, to_phase="sprint_complete",
+                      feature=feature, gate_class=gate_class.CLOSE_BEFORE_LAST_PHASE,
+                      reason=f"close before last phase: {phase} (last is {last})")
+        return 2
+    missing = _unsatisfied_exit_artifacts(phases.get_phase_spec(config, last) or {}, feature)
+    if missing:
+        print(f"[prusik-gate] Cannot close '{feature}': unmet exit artifacts:", file=sys.stderr)
+        for m in missing:
+            print(f"  - {m}", file=sys.stderr)
+        print("Produce them, then retry. The sprint stays open.", file=sys.stderr)
+        ledger.append("advance_blocked", from_phase=phase, to_phase="sprint_complete",
+                      feature=feature, gate_class=gate_class.UNMET_EXIT_ARTIFACTS,
+                      missing=missing)
+        return 2
+    return None
+
+
 def sprint_complete(args) -> int:
     """Close the sprint: record predicted-vs-actual and clear state."""
     feature = args.feature
@@ -2240,6 +2272,10 @@ def sprint_complete(args) -> int:
         print(f"[prusik-gate] No active sprint for feature '{feature}' "
               f"(current state: {state})", file=sys.stderr)
         return 1
+
+    refused = _close_gate(feature, state.get("phase"))
+    if refused is not None:
+        return refused
 
     # v0.9.0 — verify each declared success criterion before recording
     # sprint_complete. If any criterion FAILED, refuse the close. The

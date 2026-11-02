@@ -29,6 +29,7 @@ import yaml
 from prusik import __main__ as cli
 from prusik import (agents_doctor, effort, gate, ledger, model_tier, phases,
                     platform_adapter as pa, report, schema, usage)
+from tests._common import _write_retro
 
 _REPO = Path(__file__).resolve().parent.parent
 _TEMPLATES = _REPO / "prusik" / "templates" / ".claude"
@@ -1053,6 +1054,7 @@ def test_breakdown_carries_by_role_model(proj, tmp_path):
 
 def _complete(monkeypatch) -> int:
     monkeypatch.setattr(gate, "_run_success_criteria", lambda *a, **k: (True, []))
+    _write_retro(ledger.project_root(), _FEATURE)
     return gate.sprint_complete(argparse.Namespace(feature=_FEATURE, duration_min=None,
                                                    tokens=None, escalated=False))
 

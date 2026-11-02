@@ -3,6 +3,23 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.238.2] — A sprint closes only from its last phase, with that phase's exit artifacts
+
+- **A close checks the last phase's exit artifacts (fb-a959d1f48f12).** Only the Stop hook read them,
+  and a close clears the state it reads, so a close in the same turn as the advance skipped the
+  check. `gate sprint-complete` now uses the rule advance uses, before anything else runs. A missing
+  retro or a missing required section returns rc 2, names it, and leaves the sprint open.
+- **A close from an earlier phase is refused.** `reviewing` can be fully satisfied with no retro, so
+  a sprint must reach its last phase, read from the config.
+- **Expect this to fire on retros with freeform headings.** Of 172 field closes, 115 pass and 57
+  would be refused: 6 with no retro and 51 whose retro lacks a required section, often `## Outcome`
+  in place of `## What happened`. The sections were always required. Fix the headings and retry, or
+  change `required_sections` in your sprint config. There is no override flag.
+- **Refused closes are measured.** A later close now resolves a block on the close, including
+  deferred-tier blocks, which stayed unresolved before. The new gate class is
+  `close_before_last_phase`.
+- **Proof.** The replay is in `reports/close-requires-exit-artifacts/field-replay.txt`.
+
 ## [0.238.1] — A logged deviation credits the one file it names
 
 - **A token credits by path, not by file name (fb-82127b9f9ca9).** `DEV-001: api/util.py` also credited

@@ -195,6 +195,7 @@ def _phase_gate_enforced(records: list[dict]) -> set[str]:
 
       - `advance_blocked` (feature F, → phase Y)  enforced by a later `phase_advance`
         (F, → Y) — the exit criterion the advance demanded was produced, then it advanced.
+        A block on the close (Y = `sprint_complete`) is enforced by a later `sprint_complete`.
       - `sprint_start_blocked` / `sprint_init_blocked` (F) enforced by a later
         `sprint_started` (F) — the missing brief-critique / map / discovery was produced,
         then the sprint started.
@@ -214,6 +215,9 @@ def _phase_gate_enforced(records: list[dict]) -> set[str]:
             pending_start.setdefault(r.get("feature"), []).append(catch_id(r))
         elif ev == "phase_advance":
             for cid in pending_advance.pop((r.get("feature"), r.get("to_phase")), []):
+                enforced.add(cid)
+        elif ev == "sprint_complete":
+            for cid in pending_advance.pop((r.get("feature"), "sprint_complete"), []):
                 enforced.add(cid)
         elif ev == "sprint_started":
             for cid in pending_start.pop(r.get("feature"), []):

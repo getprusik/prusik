@@ -60,6 +60,13 @@ def _copy_sprint_config(tmp):
     )
 
 
+def _write_retro(root, feature):
+    """The last phase's exit artifact, so a test's sprint can really close."""
+    path = root / "design" / feature / "retro.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("## What happened\nx\n## What surprised\ny\n## Updates to CLAUDE.md\nnone\n")
+
+
 def _wt_file(tmp, role, rel, content):
     """Write a file under worktrees/<role>/<rel>. Used by tests that
     exercise worktree-relative paths (gate / reviewer / etc.)."""

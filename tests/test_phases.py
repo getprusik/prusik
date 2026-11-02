@@ -15,6 +15,7 @@ by domain to keep individual files navigable.
 # F401 individual unused-name warnings would obscure the rest.
 from tests._common import *  # noqa: F401,F403,E402
 from tests._common import (  # noqa: F401,E402
+    _write_retro,
     argparse, contextlib, io, json, os, re, shutil, subprocess, sys,
     tempfile, time, Path,
     schema, phases, triage, discovery, gate, watchdog, issues,
@@ -848,7 +849,8 @@ def test_sprint_complete_derives_duration_from_ledger_when_flag_missing():
             "scope_summary": {"size": "S", "domains": ["backend"]},
             "brief_meta": {"type": "bug_fix", "priority": "P2"},
         }))
-        phases.set_sprint_state({"phase": "reviewing", "feature": "feat"})
+        phases.set_sprint_state({"phase": "integrating", "feature": "feat"})
+        _write_retro(tmp, "feat")
         # Seed an old sprint_started timestamp so duration is measurable
         from prusik.ledger import ledger_path
         from datetime import datetime as _dt, timezone as _tz, timedelta as _td
@@ -885,7 +887,8 @@ def test_sprint_complete_records_predicted_actual():
             "brief_meta": {"type": "bug_fix", "priority": "P2"},
         }))
         # Set state and seed a sprint_started event
-        phases.set_sprint_state({"phase": "reviewing", "feature": "feat"})
+        phases.set_sprint_state({"phase": "integrating", "feature": "feat"})
+        _write_retro(tmp, "feat")
         from prusik.ledger import append as _append
         _append("sprint_started", feature="feat")
         args = argparse.Namespace(feature="feat", duration_min=47, tokens=123000, escalated=False)
@@ -1635,7 +1638,8 @@ def test_v0111_s_sprint_complete_reaps_open_fix_round():
             "scope_summary": {"size": "S", "domains": ["backend"]},
             "brief_meta": {"type": "bug_fix", "priority": "P2"},
         }))
-        phases.set_sprint_state({"phase": "reviewing", "feature": "feat"})
+        phases.set_sprint_state({"phase": "integrating", "feature": "feat"})
+        _write_retro(tmp, "feat")
         assert kit_fix_round.start("feat", root=tmp) == 0
         assert kit_fix_round.is_active(tmp)
         rc = gate.sprint_complete(argparse.Namespace(

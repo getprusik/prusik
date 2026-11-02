@@ -20,4 +20,4 @@ After running, prusik:
 - Clears `.sprint/state.json` (no active sprint)
 - `prusik digest` next time will pick up the outcome and update prediction-error stats
 
-The retro.md from the `integrating` phase should already be written before this command runs.
+A sprint closes only from its last phase, with that phase's exit artifacts in place. Advance to `integrating`, write retro.md with its required sections, then run this command. Otherwise it returns rc 2, names what is missing, and the sprint stays open.
