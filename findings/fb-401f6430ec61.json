@@ -1,0 +1,16 @@
+{
+  "id": "fb-401f6430ec61",
+  "created_at": "2026-11-02T06:28:21.633515+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "where the literal mask gives up, quoted prose reads as a command and is refused",
+  "detail": "Sentinel on 0.238.4. The mask stops at $' , a backtick in double quotes, or a complex ${, and text after it scans as code. So echo $'a; git push' and echo eval; echo 'a; git push' are newly refused for git push in a denying phase, where the old split also refused some but not all of them. It fails closed by design and none appeared in the replay over 63,763 commands, so it is a false refusal to fix only on demand. The sound fix is one lexer in place of a mask that gives up.",
+  "feature": "gate-reads-commands",
+  "content_hash": "401f6430ec61",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

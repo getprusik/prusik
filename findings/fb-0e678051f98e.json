@@ -9,8 +9,14 @@
   "content_hash": "0e678051f98e",
   "repro": "",
   "duplicate_of": null,
-  "thread": [],
+  "thread": [
+    {
+      "at": "2026-11-02T06:45:21.632309+00:00",
+      "role": "prusik-author",
+      "body": "From gate-reads-commands (0.238.4): _named_commands now serves deny_commands and the lease, and the same wrappers hide a command from it, so this finding covers them too. command, time, exec, nohup, env, sudo, xargs and find -exec all pass a phase deny of git push. Read wrappers in _command_starts or _prefix_end so the write check and _named_commands both gain them."
+    }
+  ],
   "resolution": null,
   "verify_history": [],
-  "status": "open"
+  "status": "acknowledged"
 }

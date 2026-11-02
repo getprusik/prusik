@@ -1,0 +1,16 @@
+{
+  "id": "fb-b298c5270e7a",
+  "created_at": "2026-11-02T06:28:21.550288+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "bash gate misses commands inside [[ ]], after an array prefix, and judges pipeline and trap cwd wrongly",
+  "detail": "Sentinel on 0.238.4, none introduced by it. [[ -n $(git push) ]] and a backtick there run the command, but _literal_text_mask covers [[ ]] whole, so no reader sees it, and the same holds for rm. a=(1 2) git push is missed. cd worktrees/solo | git commit and cd worktrees/solo & git commit run git in the shared tree, but _cwd_scopes moves the cd anyway, so the lease reads them as concurrent. cd worktrees/solo; trap 'git commit' EXIT; cd ../.. is judged at the trap's definition, not where it fires. Over-refusals: cd -P x and cd -- x read the flag as the directory, so cd -- worktrees/solo && git commit counts as shared.",
+  "feature": "gate-reads-commands",
+  "content_hash": "b298c5270e7a",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
