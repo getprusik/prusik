@@ -3,6 +3,25 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.238.5] — heredocs are read as bash reads them
+
+- **Only a real `<<` opens a heredoc (fb-ccd55bc92cb0).** The stripper was a regex with no idea of
+  quoting. `echo "use <<EOF in docs"` or `echo $((1<<2))` opened a body, so every line up to a
+  look-alike delimiter went unread, and an `rm` there named nothing. It now reads `<<` only where
+  the quoting mask leaves it as code, and `\<<EOF` is a redirect. Where the mask stops marking, a
+  later quoted `<<` still reads as an operator, which fb-401f6430ec61 tracks.
+- **An unquoted body keeps its substitutions.** `$(rm a)` or `` `git push` `` in a `cat <<EOF` body
+  run in bash, and now read as commands, with or without quotes around them in the body.
+- **This is the change most likely to add a refusal.** A body handed to a shell is code now:
+  `bash <<EOF`, `sh -s <<'EOF'`, `<<EOF bash` and `cat <<EOF | sh`, for bash, sh, zsh, ksh and dash
+  on any path. `bash script.sh <<EOF` reads as code too, though it runs no body. Over 5,472 real
+  heredoc commands from local transcripts, no verdict changed.
+- **The delimiter is bash's.** The closing line matches exactly, with leading tabs only for `<<-`.
+  `<<'END OF'`, `<<a-b`, `<<a.b` and `<<\EOF` work, and `<<\EOF` or `<<E'O'F` keep a body literal.
+  A heredoc with no closing line stays code.
+- **`bash -c` code has its heredocs stripped.** `bash -c 'cat <<EOF\ngit push\nEOF'` was refused for
+  `git push`. It is not now. `eval` and `trap` text still reads as code.
+
 ## [0.238.4] — deny_commands and the writer lease read commands where bash runs them
 
 - **One reader of what a command line runs (fb-7610468920d4).** `_command_denied` and
