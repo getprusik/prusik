@@ -1,0 +1,16 @@
+{
+  "id": "fb-7610468920d4",
+  "created_at": "2026-11-02T04:27:25.494276+00:00",
+  "kind": "bug",
+  "severity": "high",
+  "title": "deny_commands and the writer lease miss a command that is not first in a naive split",
+  "detail": "_command_denied and _shared_tree_git_mutation split on ; && || | newline and compare the first tokens, so '(git push)', 'if git push; then x; fi', '>o git push', 'X=1 git push', '! git push', '{ git push; }' and 'case x in x) git push;; esac' all pass both a phase deny and the shared-tree lease check. Measured on 0.238.2. They should read statements through _command_starts, the one source of command position, once fb-961eaed62314 lands.",
+  "feature": "gate-reads-every-statement",
+  "content_hash": "7610468920d4",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

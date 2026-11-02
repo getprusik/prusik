@@ -1,0 +1,16 @@
+{
+  "id": "fb-d325f0be82a2",
+  "created_at": "2026-11-02T04:22:20.644169+00:00",
+  "kind": "bug",
+  "severity": "med",
+  "title": "_FILE_VERB_RE and _C_PAYLOAD_RE are quadratic, and a slow hook passes the tool call",
+  "detail": "_FILE_VERB_RE can start at every char of a run of / or ~ or ./ because its lookbehind allows them: 48KB of / takes 26s in _may_write, which runs on every Bash call, and the 15s hook timeout then lets the call through ungated. _C_PAYLOAD_RE takes 5s on 'python ' repeated to 56KB. Measured on 0.238.2 by sweeping the gate's entry points.",
+  "feature": null,
+  "content_hash": "d325f0be82a2",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

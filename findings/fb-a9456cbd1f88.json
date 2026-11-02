@@ -1,0 +1,16 @@
+{
+  "id": "fb-a9456cbd1f88",
+  "created_at": "2026-11-02T04:31:35.784246+00:00",
+  "kind": "bug",
+  "severity": "high",
+  "title": "_strip_heredocs discards the rest of the opening line, so cat <<EOF > out names no target",
+  "detail": "_HEREDOC_RE removes from << through the closing delimiter, including everything after the marker on its own line. 'cat <<EOF > out', 'cat <<EOF; rm a', 'cat <<EOF && rm a', 'cat <<EOF | tee x' and '<<EOF rm a' all reach the gate with that text gone, for the write scan, deny_commands and the lease check alike. Only the body is data. A second heredoc on one line also leaves its body as commands. Measured on 0.238.2.",
+  "feature": "gate-reads-every-statement",
+  "content_hash": "a9456cbd1f88",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

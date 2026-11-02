@@ -1,0 +1,16 @@
+{
+  "id": "fb-ccd55bc92cb0",
+  "created_at": "2026-11-02T04:45:49.093913+00:00",
+  "kind": "bug",
+  "severity": "med",
+  "title": "_strip_heredocs treats << in quotes and arithmetic as a heredoc, and reads no command in a heredoc body",
+  "detail": "Sentinel on 0.238.3. Each deletes a in real bash and the gate names nothing: 'echo \"use <<EOF in docs\"\\nrm a\\nEOF', 'echo $((1<<2))\\nrm a\\n2', and $(rm a) or a backtick inside an unquoted heredoc body. Same on 0.238.2. The stripper is quote-blind, so it should run over _literal_text_mask, and an unquoted body should keep its substitutions.",
+  "feature": "gate-reads-every-statement",
+  "content_hash": "ccd55bc92cb0",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
