@@ -10,7 +10,22 @@
   "repro": "prusik feedback list",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": ".venv/bin/python -m pytest tests/test_feedback_says_something.py -q",
+    "fixed_in": "0.238.6",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-11T06:18:24.988894+00:00",
+      "exit": 0,
+      "executed_count": 12,
+      "verdict": true,
+      "why": "12 test(s) executed, exit 0",
+      "worktree_hash": "79bb156-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
