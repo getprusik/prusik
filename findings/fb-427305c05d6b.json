@@ -1,0 +1,16 @@
+{
+  "id": "fb-427305c05d6b",
+  "created_at": "2026-11-11T09:13:11.512442+00:00",
+  "kind": "friction",
+  "severity": "low",
+  "title": "gate fix-round status rejects --feature while start and end require it",
+  "detail": "Seen 2026-11-11 by a regression-sentinel in the capture-refuses-zero-count sprint: its role file tells it to check fix-round status, it passed --feature as start and end require, argparse rejected it, and it did not retry. status should accept --feature (and may ignore it) so the three subcommands take the same arguments.",
+  "feature": null,
+  "content_hash": "427305c05d6b",
+  "repro": "prusik gate fix-round status --feature x",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

@@ -1,0 +1,16 @@
+{
+  "id": "fb-6d839b8318ed",
+  "created_at": "2026-11-11T09:13:11.442388+00:00",
+  "kind": "friction",
+  "severity": "low",
+  "title": "prusik status ticks an exit artifact that advance would refuse",
+  "detail": "phases.status marks an exit artifact present when the file exists. advance runs each artifact's validator (execution_evidence, brief_schema and the rest), so status can show every artifact ticked and advance still refuse. Reported in fb-5d7b7cae0f30 and left out of v0.238.7. The advance check cannot be reused as is: gate._evidence_unsatisfied appends ledger events on every call, so a read-only status would write to the ledger. Needs the check split from its ledger writes first.",
+  "feature": null,
+  "content_hash": "6d839b8318ed",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
