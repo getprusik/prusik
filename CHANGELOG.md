@@ -3,6 +3,22 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.238.8] — three small frictions: negative CSS utilities, the lease hint, fix-round status
+
+- **A leading hyphen is not a naming convention (fb-cba134e72aef).** The cross-builder CSS advisory
+  reported `-mr-2` as a variant of `mr-2` and `-rotate-90` of `rotate-90`. Those are negative
+  utilities, generated at build time and defined in no CSS source. A used class that starts with
+  `-` is no longer compared. The seam the check exists for, `client-table` against
+  `client__table`, is still reported. The advisory still reads whole worktrees, not the sprint's
+  diff.
+- **The lease refusal says how to hand off (fb-3e80f782a066).** `prusik gate release-writer && git
+  push` was refused with a hint that named release-writer and did not say why it had not worked.
+  The gate judges a whole command before any of it runs, so the release had not happened yet. Every
+  lease refusal now says release-writer runs as its own command, and a refused command that
+  contains it is told to run the release alone and then the rest. The decision is unchanged.
+- **`fix-round status` takes `--feature` (fb-427305c05d6b).** `start` and `end` require it, so a
+  reviewer passed it to `status` and argparse refused. It is accepted and changes nothing.
+
 ## [0.238.7] — a capture that counted nothing is refused, not recorded
 
 - **A zero-count green run no longer poisons the evidence file (fb-5d7b7cae0f30).** `prusik gate

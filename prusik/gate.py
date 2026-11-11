@@ -133,7 +133,7 @@ def _pre_tool_decision(event) -> str | None:
                           gate_class=gate_class.WRITER_LEASE,
                           reason="shared-tree writer lease held by another session",
                           holder=(prior or {}).get("session"))
-            return main_writer.deny_message(prior or {})
+            return main_writer.deny_message(prior or {}, event.command or "")
         if action in ("acquired", "stolen_stale"):
             ledger.append(f"writer_lease_{action}", session=event.session,
                           prior_holder=(prior or {}).get("session"))

@@ -261,6 +261,12 @@ def css_drift(root: Path) -> list[dict]:
     for u, locs in sorted(used.items()):
         if u in defined:                       # used matches a real definition
             continue
+        if u.startswith("-"):
+            # fb-cba134e72aef: `-mr-2` was reported as a variant of `mr-2`. The seam this
+            # check names is a separator INSIDE a name (`__` vs `-` vs `_`). A leading
+            # hyphen is a negative-value utility, generated at build time and defined in
+            # no CSS source, so it is not the same concept under another convention.
+            continue
         norm = _norm_tokens(u)
         variants = sorted(c for c in by_norm.get(norm, set()) if c != u)
         if norm and variants:

@@ -199,9 +199,14 @@ def main():
     p_fr_cls.add_argument("--pre-existing", type=int, default=0,
                           help="Residual failures that pre-date this sprint (inherited)")
     p_fr_cls.add_argument("--note", default="", help="Optional context")
-    frsub.add_parser("status",
-                      help="Print active fix-round metadata or '(no active fix-round)'. "
-                           "Used by reviewer agents to decide narrow-vs-full mode (v0.8.7).")
+    p_fr_status = frsub.add_parser(
+        "status",
+        help="Print active fix-round metadata or '(no active fix-round)'. "
+             "Used by reviewer agents to decide narrow-vs-full mode (v0.8.7).")
+    # fb-427305c05d6b: start and end require --feature, so a reviewer passed it here and
+    # argparse refused it. Accepted for symmetry; the active round is whichever is open.
+    p_fr_status.add_argument("--feature", type=_slug, default=None,
+                              help="Accepted for symmetry with start/end; not used.")
     # v0.73.0 — known-failure baselines (field finding #4): tolerate a git-stash-PROVEN
     # pre-existing flake without ever laundering a new failure.
     p_bl = gsub.add_parser("baseline",

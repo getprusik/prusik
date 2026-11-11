@@ -90,7 +90,7 @@ def release(root: Path) -> dict | None:
     return lease
 
 
-def deny_message(holder: dict) -> str:
+def deny_message(holder: dict, command: str = "") -> str:
     ses = (holder.get("session") or "?")[:12]
     ctx = ""
     if holder.get("feature") or holder.get("phase"):
@@ -102,4 +102,16 @@ def deny_message(holder: dict) -> str:
             f"(fb-0b9d0a6d1ce6).\n"
             f"  → Work in an isolated worktree instead (worktrees/<role>/…), or — "
             f"ONLY if the other session is finished — hand off with "
-            f"`prusik gate release-writer`.")
+            f"`prusik gate release-writer`, run as its own command."
+            f"{_release_chained_note(command)}")
+
+
+def _release_chained_note(command: str) -> str:
+    """fb-3e80f782a066: `prusik gate release-writer && git push` was refused with a hint
+    that named release-writer and did not say why it had not worked. The gate judges a
+    whole command before any of it runs, so the release in it had not happened yet."""
+    if "gate release-writer" not in " ".join((command or "").split()):
+        return ""
+    return ("\n  → This command already contains `gate release-writer`, but a command is "
+            "judged whole before any of it runs, so the lease was still held when it was "
+            "checked. Run `prusik gate release-writer` alone first, then the rest.")
