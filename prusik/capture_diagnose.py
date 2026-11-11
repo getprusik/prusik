@@ -199,7 +199,9 @@ def _nothing_counted(r: CaptureResult) -> NonEvidence | None:
     # --kind lint). It is refused here instead, and the file is left as it was. Still
     # fail-closed: with no other entry the advance gate finds no evidence. A non-zero
     # exit is a real failure and is recorded.
-    if not (r.exit_code == 0 and r.value <= 0):
+    # kind=policy is the one kind with no count by nature: capture runs only the project's
+    # declared command for it, and the advance gate never takes it as a phase's proof.
+    if r.kind == "policy" or not (r.exit_code == 0 and r.value <= 0):
         return None
     return NonEvidence(
         "nothing_counted",

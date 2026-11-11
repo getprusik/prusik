@@ -148,7 +148,17 @@ def test_policy_kind_runs_the_declared_command_and_records_it(project, capfd):
     entry = schema.load_evidence(_ev(project))[0]
     assert entry["command"] == "echo policy-clean"
     assert entry["exit_code"] == 0
-    assert entry["nonempty_primitive"] == {"kind": "policy", "value": 1}
+    assert entry["nonempty_primitive"] == {"kind": "policy", "value": 0}   # no count made up
+    assert _non_evidence_modes(project) == []
+
+
+def test_policy_alone_never_satisfies_the_phase(project):
+    """The adversarial case: a reviewer that skips the suite and captures only policy."""
+    _declare_policy(project)
+    assert _policy() == 0
+    reason = gate._evidence_unsatisfied(REL, FEATURE, project)
+    assert reason and "only evidence is the policy command" in reason
+    assert _capture("echo '3 passed'") == 0                 # the suite makes it whole
     assert gate._evidence_unsatisfied(REL, FEATURE, project) is None
 
 
@@ -163,8 +173,10 @@ def test_policy_entry_sits_beside_a_tests_entry(project):
 
 def test_policy_kind_accepts_the_declared_command_spelled_out(project):
     _declare_policy(project, "echo policy-clean")
-    assert _policy("echo policy-clean") == 0
-    assert len(schema.load_evidence(_ev(project))) == 1
+    assert _policy("  echo policy-clean  ") == 0
+    entries = schema.load_evidence(_ev(project))
+    assert [(e["command"], e["nonempty_primitive"]) for e in entries] == [
+        ("echo policy-clean", {"kind": "policy", "value": 0})]
 
 
 @pytest.mark.parametrize("given", ["true", "echo policy-clean && true", "echo other"])
@@ -197,6 +209,9 @@ def test_failing_policy_run_is_recorded_and_refused_at_advance(project):
     assert _policy() == 3
     entry = schema.load_evidence(_ev(project))[0]
     assert entry["exit_code"] == 3
+    reason = gate._evidence_unsatisfied(REL, FEATURE, project)
+    assert reason and "exit_code=3" in reason
+    assert _capture("echo '3 passed'") == 0                 # a green suite does not rescue it
     reason = gate._evidence_unsatisfied(REL, FEATURE, project)
     assert reason and "exit_code=3" in reason
 

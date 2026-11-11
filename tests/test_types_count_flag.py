@@ -54,7 +54,7 @@ def test_clean_tsc_counts_on_first_capture(tmp_path, monkeypatch):
     assert "--extendedDiagnostics" in entry["command"]      # the augmentation is auditable
 
 
-def test_silent_tsc_without_augmentation_would_be_zero(tmp_path, monkeypatch):
+def test_silent_tsc_without_augmentation_would_be_zero(tmp_path, monkeypatch, capsys):
     """Control: the SAME emulator, but kind=lint (no augmentation) → the flag is
     never appended, the emulator stays silent, and the primitive is 0 — proving it
     is the types-augmentation, not the emulator, that produces the count."""
@@ -67,3 +67,6 @@ def test_silent_tsc_without_augmentation_would_be_zero(tmp_path, monkeypatch):
     # fb-5d7b7cae0f30 a zero-count green run is refused at capture, not recorded as 0.
     assert rc != 0
     assert not ev.exists()
+    err = capsys.readouterr().err
+    assert "lint=0" in err                                  # refused for counting nothing
+    assert "appended --extendedDiagnostics" not in err      # lint is not augmented

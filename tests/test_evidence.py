@@ -70,6 +70,10 @@ def test_v0120_capture_all_skip_yields_zero_executed():
         # fb-5d7b7cae0f30: the all-skip run is refused at capture, never recorded
         assert rc != 0
         assert not (tmp / "reports" / "feat" / "regression.evidence.json").exists()
+        refused = [json.loads(line) for line in
+                   (tmp / ".sprint" / "ledger.jsonl").read_text().splitlines()
+                   if '"capture_non_evidence"' in line]
+        assert [r["mode"] for r in refused] == ["nothing_counted"]
     finally:
         shutil.rmtree(tmp)
 
@@ -97,6 +101,10 @@ def test_v0120_gate_blocks_zero_executed_pass():
         # The kind-aware message for an entry already in a file is held in
         # test_capture_refuses_zero_count.py and test_false_clean_diagnosis.py.
         assert any("no execution-evidence" in m for m in missing), missing
+        refused = [line for line in
+                   (tmp / ".sprint" / "ledger.jsonl").read_text().splitlines()
+                   if '"capture_non_evidence"' in line and '"nothing_counted"' in line]
+        assert len(refused) == 1        # blocked because the all-skip run was refused
     finally:
         shutil.rmtree(tmp)
 

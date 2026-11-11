@@ -19,10 +19,12 @@ All notable changes to **Prusik** are documented here. The format follows
 - **The project's policy command has its own kind.** The sentinel's role file told it to wrap
   `project_policy.command` in `--kind tests`. A policy pipeline has an exit code and no count, so
   that instruction was the poisoning capture. `prusik gate capture --kind policy` now runs the
-  command declared under `project_policy` in sprint-config and records its exit code. It takes
-  the command from the config, never from the caller: `--kind policy -- true` is refused with
-  exit 2, as is `--kind policy` with no enabled `project_policy` block. The role file's step 6
-  names it. A policy entry is not yet required at advance.
+  command declared under `project_policy` in sprint-config and records its exit code, with no
+  count made up for it. It takes the command from the config, never from the caller:
+  `--kind policy -- true` is refused with exit 2, as is `--kind policy` with no enabled
+  `project_policy` block. At advance a failing policy entry refuses the phase, and a phase whose
+  only evidence is policy entries is refused too: a policy run can block, never be the proof.
+  The role file's step 6 names it. A policy entry is not yet required at advance.
 - **Any other command with nothing to count does not belong in capture.** An audit or a one-off
   script is not execution evidence. The refusal says so.
 - **A failing run is still recorded.** A non-zero exit with a zero count is a real failure.

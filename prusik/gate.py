@@ -3804,8 +3804,8 @@ def _declared_policy_command(root: Path, given: list[str]) -> tuple[str, str | N
 
     A policy pipeline (pre-commit, lint-staged, a project script) has an exit code and no
     count, so under --kind tests or lint it recorded a zero and condemned the evidence file
-    (fb-5d7b7cae0f30). Its evidence is that the project's OWN declared command ran and
-    exited 0. So the command comes from `project_policy` in sprint-config, never from the
+    (fb-5d7b7cae0f30). What a policy entry records is that the project's OWN declared
+    command ran, and its exit code. So the command comes from `project_policy` in sprint-config, never from the
     caller: `--kind policy -- true` would otherwise record a pass for any command at all."""
     policy = (phases.load_sprint_config(root) or {}).get("project_policy")
     declared = policy.get("command") if isinstance(policy, dict) else None
@@ -3919,9 +3919,10 @@ def capture(args) -> int:
 
     kind = args.kind
     if kind == "policy":
-        # A policy pipeline has no count of its own. What is counted is the one declared
-        # command, when it ran to an exit code (a timeout or a failed spawn did not).
-        value = 1 if exit_code >= 0 else 0
+        # A policy pipeline has an exit code and no count, and none is made up for it. The
+        # advance gate reads a policy entry for its exit code alone, and never as the proof
+        # that anything was counted.
+        value = 0
     else:
         value = _parse_nonempty_primitive(kind, combined, cmd_str)
 
@@ -4048,7 +4049,7 @@ def capture(args) -> int:
     import os as _os
     _os.replace(tmp, ev_path)
 
-    ok = exit_code == 0 and value > 0
+    ok = exit_code == 0 and (value > 0 or kind == "policy")
     ledger.append("reviewer_execution_verified", feature=args.feature,
                    phase=args.phase, exit_code=exit_code,
                    nonempty=value, kind=kind, ok=ok)
@@ -4427,6 +4428,10 @@ def _evidence_unsatisfied(rel_path: str, feature: str | None,
                            declared=cov["declared"], proven=cov["proven"],
                            domain=cov["domain"], source=cov["source"])
             continue   # accepted as a proven, bounded, declared baseline
+        if np.get("kind") == "policy":
+            # The declared policy command exited 0 (a non-zero exit returned above). It
+            # carries no count and supplies none: see the counted-entry check below.
+            continue
         if not isinstance(np.get("value"), int) or np.get("value") <= 0:
             kind = np.get("kind")
             base = (f"phase {e.get('phase')!r} PASS but {kind}={np.get('value')} — "
@@ -4457,6 +4462,14 @@ def _evidence_unsatisfied(rel_path: str, feature: str | None,
                         f"(known_failures_count=0) WITHOUT declared "
                         f"domain+source — false-clean class: empty baseline "
                         f"from structurally-blind context (#13 [00:13])")
+    entries = schema.load_evidence(abs_path)
+    if all(e.get("nonempty_primitive", {}).get("kind") == "policy" for e in entries):
+        # A policy run proves the project's pipeline exited 0, not that the suite or the
+        # linter ran. It can add a refusal to a phase, never be the phase's whole proof.
+        return (f"phase {phase!r} PASS but its only evidence is the policy command — "
+                f"that proves the declared pipeline exited 0, not that anything was "
+                f"counted. Capture this phase's suite as well (`prusik gate capture "
+                f"--feature {feature} --phase {phase} --kind <tests|lint|types> -- <cmd>`).")
     ledger.append("reviewer_execution_verified", feature=feature,
                    phase=phase, ok=True,
                    nonempty=sum(e.get("nonempty_primitive", {}).get("value", 0)
