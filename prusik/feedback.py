@@ -286,10 +286,22 @@ def run(args) -> int:
               "`prusik feedback \"scoped coverage false-fails\" --kind bug`",
               file=sys.stderr)
         return 2
+    detail = getattr(args, "detail", "") or ""
+    repro = getattr(args, "repro", "") or ""
+    if len(args.title.split()) == 1 and not detail.strip() and not repro.strip():
+        # fb-84cc77a2bbc4: the positional is a title OR a verb, so a mistyped verb
+        # (`prusik feedback list`) was filed as an empty finding with rc=0. One word
+        # with no detail says nothing: refuse, and name what was probably meant.
+        verbs = " | ".join(sorted(_TICKET_VERBS))
+        print(f"[prusik-feedback] not filed: {args.title.strip()!r} is one word with "
+              f"no --detail or --repro, and it is not a ticket verb ({verbs}). "
+              f"To list findings: `prusik feedback --list`. To file one, give a "
+              f"sentence, or add --detail.", file=sys.stderr)
+        return 2
     rec = file_feedback(root, args.kind, args.title,
-                        detail=getattr(args, "detail", "") or "",
+                        detail=detail,
                         severity=getattr(args, "severity", None),
-                        repro=getattr(args, "repro", "") or "")
+                        repro=repro)
     print(f"[prusik-feedback] filed {rec['id']} ({rec['kind']}) — "
           f"ticket findings/{rec['id']}.json opened; rides the next export to HQ.")
     return 0

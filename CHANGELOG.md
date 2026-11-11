@@ -3,6 +3,23 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.238.6] — a finding must say something, and the README says what is true
+
+- **A mistyped verb no longer opens a ticket (fb-84cc77a2bbc4).** `prusik feedback list` was filed
+  as an empty finding titled "list", rc=0, because any word that is not a ticket verb was taken as
+  a title. A one-word title with no `--detail` and no `--repro` is now refused with rc=2 and writes
+  nothing; the message names `--list` and the verbs. A title of two or more words, or one word with
+  detail or a repro, files as before.
+- **The README's numbers were stale, and are corrected.** The field record said 43 filed, 43
+  closed, zero open. On 2026-11-11 it is 74 filed by two design-partner products, 67
+  verified-closed, 7 open, and the line now carries its date. Pinned findings were stated as 98
+  and are 123; tests as 1,900+ and are 2,800+.
+- **The Action example pins a release, not `@main`.** It names `getprusik/prusik@v0.238.6`.
+- **Two README claims are now held by tests.** The pinned-findings count must equal the ids in
+  `_closures.json` and appear once, and the Action pin must equal `v` + `__version__`, so a release
+  cannot leave either behind. The field record has no source inside the engine and stays a dated
+  snapshot.
+
 ## [0.238.5] — heredocs are read as bash reads them
 
 - **Only a real `<<` opens a heredoc (fb-ccd55bc92cb0).** The stripper was a regex with no idea of

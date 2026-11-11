@@ -15,7 +15,7 @@ AI agents now write code faster than anyone can review it — and they routinely
 | A fix ships, then quietly regresses | Closed findings re-verify — a regression **auto-reopens the ticket** |
 | "Done" = a persuasive summary | "Done" = captured evidence in an append-only ledger you can hand an auditor |
 
-Free, Apache-2.0, **no telemetry, no account, no phone-home** — a verification tool you don't have to trust blindly would be a contradiction. The one network call it makes on its own is an update check against public GitHub and PyPI; see [SECURITY.md](SECURITY.md). The `prove` / `scan` / `feedback` layer works with **any** agent or CI; the full phase-gated harness targets Claude Code today. Backed by [1,900+ tests](tests/), including [regression tests pinned to 98 findings](prusik/_closures.json), each one fixed and proof-closed ([CI](https://github.com/getprusik/prusik/actions/workflows/ci.yml)).
+Free, Apache-2.0, **no telemetry, no account, no phone-home** — a verification tool you don't have to trust blindly would be a contradiction. The one network call it makes on its own is an update check against public GitHub and PyPI; see [SECURITY.md](SECURITY.md). The `prove` / `scan` / `feedback` layer works with **any** agent or CI; the full phase-gated harness targets Claude Code today. Backed by [2,800+ tests](tests/), including [regression tests pinned to 123 findings](prusik/_closures.json), each one fixed and proof-closed ([CI](https://github.com/getprusik/prusik/actions/workflows/ci.yml)).
 
 ## Prove your agent's tests actually ran (30 seconds, zero config)
 
@@ -58,7 +58,7 @@ The verdict counts tests **executed** (passed + failed), not tests *discovered* 
 The repo doubles as a composite Action — `prove` as a PR gate with no workflow scripting:
 
 ```yaml
-- uses: getprusik/prusik@main
+- uses: getprusik/prusik@v0.238.6
   with:
     source: prove
     command: "pytest -q"
@@ -89,7 +89,7 @@ flowchart LR
 
 File a finding with `prusik feedback`. It becomes a git-tracked ticket whose closure is **derived from its verify history** — a fix counts as done only when a verify command runs green *in your repository*, with real tests executed. There is no stored status flag to drift: state is recomputed from the verify history on every read, so a ticket cannot sit closed against a red verify. Engine fixes backed by a shipped regression test close by proof-transfer on `prusik update` (and go red again on a downgrade). If a closed finding regresses, it reopens itself. Nobody's word is ever the record.
 
-Field record to date: **43 findings filed by design-partner products, 43 verified-closed in the field, zero open** — including same-day cycles from field incident to shipped fix to proof-closed ticket.
+Field record as of 2026-11-11: **74 findings filed by two design-partner products, 67 verified-closed in the field, 7 open** — including same-day cycles from field incident to shipped fix to proof-closed ticket.
 
 ## The full harness
 
@@ -254,7 +254,7 @@ If it only makes sense across many repos, or requires shared infrastructure or p
 
 ## Self-hosting
 
-Prusik develops itself with prusik: the repo's own `.claude/` wires the same hooks, the same gates, the same ledger. The regression tests pinned to 98 findings in this suite are the moat that closed real adopter tickets — the loop in this README is the loop that built it.
+Prusik develops itself with prusik: the repo's own `.claude/` wires the same hooks, the same gates, the same ledger. The regression tests pinned to findings in this suite are the moat that closed real adopter tickets — the loop in this README is the loop that built it.
 
 <details>
 <summary><b>Repository layout</b></summary>
@@ -265,7 +265,7 @@ prusik/                    — engine
   issue_plugins/           — per-tracker sync
   templates/               — copied into target projects by `prusik init`
 benchmarks/ examples/      — sample-repo fixtures for detectors + evals
-tests/                     — 1,900+ tests incl. regression tests pinned to 98 findings
+tests/                     — 2,800+ tests incl. regression tests pinned to findings
 .claude/                   — self-host: prusik's own harness config
 ```
 
