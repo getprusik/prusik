@@ -1,0 +1,16 @@
+{
+  "id": "fb-aa7a6121fcee",
+  "created_at": "2026-11-11T05:38:46.438146+00:00",
+  "kind": "request",
+  "severity": "med",
+  "title": "no check compares what a command actually changed against the phase's writable set",
+  "detail": "Verified 2026-11-11 in v0.238.6: writable-path enforcement is entirely PreToolUse (Write/Edit path, and the bash reader's prediction of a command's targets). post_tool (gate.py) only runs the convergence-stall detector. consistency.sprint_changed_files reads worktree diffs and feeds absence, blast_plan, map-reverify, shared_infra and ui_coverage; none of them judges a changed path against phases.is_path_writable, and none looks at the main tree. So a write the bash reader cannot name (eval of a runtime value, python -c, a script file, any verb not yet read) lands unseen and stays unseen. Proposal to evaluate, not a decision: snapshot the main tree's dirty set at phase entry and after Bash calls, and report or refuse at phase advance any changed path outside the writable set. Limits to state up front: it detects, it does not prevent, so the pre-tool reader must stay for irreversible commands (rm outside scope, git push, deny_commands); it sees only paths inside the repo; a per-call git status has a hot-path cost that needs a budget. Bears on how far to take fb-401f6430ec61, fb-0e678051f98e, fb-331f8487c548, fb-b298c5270e7a, fb-386c186d88ee: the reader cannot be complete, and today nothing catches what it misses.",
+  "feature": null,
+  "content_hash": "aa7a6121fcee",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
