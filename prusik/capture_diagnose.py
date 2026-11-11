@@ -175,6 +175,44 @@ def _worktree_changed_mid_run(r: CaptureResult) -> NonEvidence | None:
     )
 
 
+def zero_count_hint(kind: str) -> str:
+    """What to do about an exit-0 run that counted nothing, per kind. One source for the
+    capture refusal below and the advance gate's message on an older or hand-written
+    entry (fb-b587d8d9b71c set the wording, fb-5d7b7cae0f30 moved it here)."""
+    if kind == "types":
+        return ("If the typecheck is genuinely clean it ran SILENTLY with no "
+                "count — re-capture with a files-counting flag (tsc: "
+                "`--extendedDiagnostics`; mypy prints its own count) so a clean "
+                "run is distinguishable from a no-op.")
+    if kind == "tests":
+        return ("0 tests executed — a wrong path, an auto-skip, or no "
+                "collection. Point the command at real tests and re-capture.")
+    return ("Re-capture a command that does real work, with a runner that "
+            "is LOUD on an empty scope (ruff/eslint count files).")
+
+
+def _nothing_counted(r: CaptureResult) -> NonEvidence | None:
+    # Exit 0 with a count of 0 proves nothing ran, and an unparseable count is 0 too. It
+    # used to be recorded and refused at advance, where it condemned the whole evidence
+    # file: a re-capture only appends, so the one way out was `--reset` and re-running
+    # every suite (fb-5d7b7cae0f30: a policy script under --kind tests, an audit under
+    # --kind lint). It is refused here instead, and the file is left as it was. Still
+    # fail-closed: with no other entry the advance gate finds no evidence. A non-zero
+    # exit is a real failure and is recorded.
+    if not (r.exit_code == 0 and r.value <= 0):
+        return None
+    return NonEvidence(
+        "nothing_counted",
+        f"exit 0 but {r.kind}=0 — nothing measurable ran, so this is not execution "
+        f"evidence and no entry was recorded; evidence already captured is untouched. "
+        f"{zero_count_hint(r.kind)} The project's policy pipeline has its own kind: "
+        f"`--kind policy` runs `project_policy.command` from sprint-config. Any other "
+        f"command with nothing to count (an audit, a script) is not execution evidence: "
+        f"run it outside capture.",
+        1,
+    )
+
+
 # The registered non-evidence modes, in match order. Modes can overlap (a mid-run tree
 # change can coincide with any other); the FIRST match is the one reported, so a mode whose
 # remedy must come first sits earlier. APPEND new detectors here.
@@ -183,6 +221,7 @@ _DETECTORS = (
     _cache_replay,
     _stale_bundler_cache,
     _worktree_changed_mid_run,
+    _nothing_counted,
 )
 
 # Stable names of every registered mode — the completeness test pins this to _DETECTORS
@@ -193,6 +232,7 @@ KNOWN_MODES = (
     "cache_replay",
     "stale_bundler_cache",
     "worktree_changed_mid_run",
+    "nothing_counted",
 )
 
 

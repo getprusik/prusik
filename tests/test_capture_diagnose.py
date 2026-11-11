@@ -48,11 +48,15 @@ def test_clean_run_is_evidence():
     assert cd.diagnose(_res()) is None                       # exit 0, value 5 → record it
 
 
-def test_zero_count_without_a_known_mode_is_not_refused_here():
-    # A plain tests=0 (wrong path / auto-skip) is NOT a capture-time non-evidence mode —
-    # it's recorded and diagnosed kind-aware at the ADVANCE gate. The classifier must not
-    # swallow it (that would change where the diagnosis lives).
-    assert cd.diagnose(_res(value=0, output="no tests ran")) is None
+def test_zero_count_green_run_is_refused_here():
+    # This pinned the opposite until fb-5d7b7cae0f30: a plain tests=0 was recorded and
+    # diagnosed at the ADVANCE gate, where it condemned the whole evidence file and a
+    # re-capture could only append. It is refused at capture; the hint text is shared.
+    v = cd.diagnose(_res(value=0, output="no tests ran"))
+    assert v is not None and v.mode == "nothing_counted" and v.exit_code != 0
+    assert cd.zero_count_hint("tests") in v.remedy
+    # adversarial: a failing run with no count is a real failure, and is recorded
+    assert cd.diagnose(_res(value=0, exit_code=2, output="collection error")) is None
 
 
 # ---- per-mode detectors ----------------------------------------------------------

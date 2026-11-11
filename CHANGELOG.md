@@ -3,6 +3,32 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.238.7] — a capture that counted nothing is refused, not recorded
+
+- **A zero-count green run no longer poisons the evidence file (fb-5d7b7cae0f30).** `prusik gate
+  capture` recorded an exit-0 run that counted nothing (`tests=0`, `lint=0`), and the advance gate
+  then rejected the whole file for it. A re-capture only appends, so the one way out was `--reset`
+  and re-running every suite. In the field this was a policy script captured under `--kind tests`
+  and a security audit under `--kind lint`. Capture now refuses such a run with a non-zero exit,
+  records nothing, logs `capture_non_evidence` with mode `nothing_counted`, and leaves evidence
+  already in the file untouched.
+- **This adds a refusal at capture and removes one at advance.** A reviewer whose command counts
+  nothing now sees the refusal when it runs, not at the next advance. With no other entry the
+  advance gate still finds no evidence, so nothing passes that did not pass before. A file from an
+  older version that holds a zero-count entry is still refused at advance.
+- **The project's policy command has its own kind.** The sentinel's role file told it to wrap
+  `project_policy.command` in `--kind tests`. A policy pipeline has an exit code and no count, so
+  that instruction was the poisoning capture. `prusik gate capture --kind policy` now runs the
+  command declared under `project_policy` in sprint-config and records its exit code. It takes
+  the command from the config, never from the caller: `--kind policy -- true` is refused with
+  exit 2, as is `--kind policy` with no enabled `project_policy` block. The role file's step 6
+  names it. A policy entry is not yet required at advance.
+- **Any other command with nothing to count does not belong in capture.** An audit or a one-off
+  script is not execution evidence. The refusal says so.
+- **A failing run is still recorded.** A non-zero exit with a zero count is a real failure.
+- **One source for the remedy.** The per-kind hint lives in `capture_diagnose.zero_count_hint` and
+  is used by both the capture refusal and the advance message.
+
 ## [0.238.6] — a finding must say something, and the README says what is true
 
 - **A mistyped verb no longer opens a ticket (fb-84cc77a2bbc4).** `prusik feedback list` was filed

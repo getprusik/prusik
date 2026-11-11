@@ -130,9 +130,11 @@ def main():
     p_cap.add_argument("--phase", required=True,
                         help="reviewer phase, e.g. regression | conventions")
     p_cap.add_argument("--kind", required=True,
-                        choices=["tests", "lint", "types"],
+                        choices=["tests", "lint", "types", "policy"],
                         help="primitive parser: tests=executed count "
-                             "(strong); lint/types=tool-completed signal")
+                             "(strong); lint/types=tool-completed signal; "
+                             "policy=runs project_policy.command from sprint-config "
+                             "(no command after --) and records its exit code")
     p_cap.add_argument("--baseline-domain", default=None,
                         help="v0.18.0 — declare the domain this baseline covers "
                              "(e.g. 'integration+behavior'). Required by the gate "

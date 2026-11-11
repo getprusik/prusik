@@ -119,11 +119,21 @@ the dominant per-rewind cost (full suite + cold-start mypy). Only proceed
 when it exits nonzero (code was rebuilt, or never passed).
 
 **Execution-evidence — run EVERY suite THROUGH prusik capture wrapper (v0.12.0, F):**
-Do not run the suite bare. Wrap each invocation (step 4 general suite, step 5
-behavior suite, step 6 project-policy) so prusik captures the real exit code
-and the executed-test count from pytest's OWN output:
+Do not run the suite bare. Wrap each test invocation (step 4 general suite, step 5
+behavior suite) so prusik captures the real exit code and the executed-test count
+from pytest's OWN output:
 
     prusik gate capture --feature {feature} --phase regression --kind tests -- <your full test command>
+
+**Step 6's project-policy command goes through `--kind policy`, with NO command.** A
+policy pipeline has an exit code and no test count, so under `--kind tests` it counts
+nothing and capture refuses it. `--kind policy` reads `project_policy.command` from
+sprint-config, runs it, and records its exit code:
+
+    prusik gate capture --feature {feature} --phase regression --kind policy
+
+Any other command with nothing to count (an audit, a one-off script) is not execution
+evidence: run it bare and report what it printed.
 
 It streams the real output, exits with the suite's own code (so your PASS/FAIL
 judgement is unchanged), and writes `reports/{feature}/regression.evidence.json`.

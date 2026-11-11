@@ -3799,6 +3799,31 @@ def mark_ci_observed(args) -> int:
     return 0
 
 
+def _declared_policy_command(root: Path, given: list[str]) -> tuple[str, str | None]:
+    """The command `--kind policy` runs, and a refusal when there is none to run.
+
+    A policy pipeline (pre-commit, lint-staged, a project script) has an exit code and no
+    count, so under --kind tests or lint it recorded a zero and condemned the evidence file
+    (fb-5d7b7cae0f30). Its evidence is that the project's OWN declared command ran and
+    exited 0. So the command comes from `project_policy` in sprint-config, never from the
+    caller: `--kind policy -- true` would otherwise record a pass for any command at all."""
+    policy = (phases.load_sprint_config(root) or {}).get("project_policy")
+    declared = policy.get("command") if isinstance(policy, dict) else None
+    if not (isinstance(policy, dict) and policy.get("enabled") is True
+            and isinstance(declared, str) and declared.strip()):
+        return "", ("--kind policy runs `project_policy.command` from "
+                    ".claude/sprint-config.yaml, and no enabled project_policy block "
+                    "with a command is declared there. Nothing was run or recorded.")
+    declared = declared.strip()
+    asked = (given[0] if len(given) == 1 else shlex.join(given)).strip() if given else ""
+    if asked and asked != declared:
+        return "", (f"--kind policy runs only the declared `project_policy.command` "
+                    f"({declared!r}); it was given {asked!r}. Nothing was run or "
+                    f"recorded. Drop the command after `--`, or capture this one under "
+                    f"the kind that counts what it runs (tests, lint or types).")
+    return declared, None
+
+
 def capture(args) -> int:
     """Run a reviewer command, record prusik-captured execution evidence, and
     exit with the command's own exit code (transparent to pass/fail).
@@ -3812,6 +3837,14 @@ def capture(args) -> int:
     cmd = list(args.command or [])
     if cmd and cmd[0] == "--":
         cmd = cmd[1:]
+    if args.kind == "policy" and (cmd or not getattr(args, "reset", False)):
+        # kind=policy takes its command from sprint-config, so none need be given. A
+        # bare `--reset` keeps its meaning for every kind: clear, record nothing.
+        declared, refusal = _declared_policy_command(root, cmd)
+        if refusal:
+            print(f"[prusik-gate] capture: {refusal}", file=sys.stderr)
+            return 2
+        cmd = [declared]
     if not cmd:
         # fb-9a095c7674f2: a standalone `--reset` is a CLEAR — discard the phase's
         # prior evidence and record NOTHING, so an agent never fakes a clear with a
@@ -3832,7 +3865,8 @@ def capture(args) -> int:
         print("[prusik-gate] capture: no command given after `--`",
               file=sys.stderr)
         return 2
-    misuse = _shell_wrapper_misuse(cmd)
+    # The declared policy command is the project's own; only a caller's command is checked.
+    misuse = None if args.kind == "policy" else _shell_wrapper_misuse(cmd)
     if misuse:
         print(misuse, file=sys.stderr)
         return 2
@@ -3884,7 +3918,12 @@ def capture(args) -> int:
     sys.stdout.write(combined)
 
     kind = args.kind
-    value = _parse_nonempty_primitive(kind, combined, cmd_str)
+    if kind == "policy":
+        # A policy pipeline has no count of its own. What is counted is the one declared
+        # command, when it ran to an exit code (a timeout or a failed spawn did not).
+        value = 1 if exit_code >= 0 else 0
+    else:
+        value = _parse_nonempty_primitive(kind, combined, cmd_str)
 
     # Is this real execution evidence, or a non-evidence artifact (the tool never ran / a
     # cache replay / …)? ONE registered classifier owns every known mode — see
@@ -4396,18 +4435,8 @@ def _evidence_unsatisfied(rel_path: str, feature: str | None,
             # fb-b587d8d9b71c — make the honest path easy: a genuinely-clean run that
             # produced NO count (silent tsc, wrong test path) reads identically to a
             # no-op, so steer the fix per kind instead of a flat "nothing executed".
-            if kind == "types":
-                hint = (" If the typecheck is genuinely clean it ran SILENTLY with no "
-                        "count — re-capture with a files-counting flag (tsc: "
-                        "`--extendedDiagnostics`; mypy prints its own count) so a clean "
-                        "run is distinguishable from a no-op.")
-            elif kind == "tests":
-                hint = (" 0 tests executed — a wrong path, an auto-skip, or no "
-                        "collection. Point the command at real tests and re-capture.")
-            else:
-                hint = (" Re-capture a command that does real work, with a runner that "
-                        "is LOUD on an empty scope (ruff/eslint count files).")
-            return base + hint
+            from prusik import capture_diagnose
+            return f"{base} {capture_diagnose.zero_count_hint(kind)}"
         # v0.18.0 F §3.5 companion #1: empty baseline without declared
         # scope is itself a false-clean (the #13 [00:13] class — empty
         # known_failures declared from a structurally-blind context).
