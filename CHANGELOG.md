@@ -3,6 +3,61 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.239.0] — One bash reader
+
+- **One parser reads every Bash command (fb-401f6430ec61, fb-386c186d88ee, fb-b298c5270e7a).** The
+  write check, `deny_commands`, the lease, the briefing recorder and the legacy `deny_bash` text
+  each had a partial scanner with its own idea of quoting, heredocs and nesting, and they
+  disagreed: quoted prose was refused and real code went unread. `prusik/bash_reader.py` makes one
+  forward pass and returns a tree; the scanners are gone from `gate.py` (`_quoted_text_mask`,
+  `_literal_text_mask`, `_backtick_bodies`, `_strip_heredocs` and the rest, 43 names in all, which a
+  test asserts absent). A command is parsed once per hook call. The reader imports `re` only, so
+  the hook's import budget does not move, and it raises only past 32 levels of nested code, which
+  the hook already turns into a refusal. Compound commands nest on an explicit stack, so
+  `"(" * 48000` costs nothing.
+- **Refusals added**, each code bash runs: a substitution inside `[[ ]]`, `(( ))` or `$(( ))`; a
+  command after an array prefix (`a=(1 2) git push`); the literal code of `bash -c`, `eval` and
+  `trap` for the write check, as it already was for `deny_commands`; a heredoc body when a shell
+  reads it through a compound (`{ bash; } <<EOF`, `while ...; do bash; done <<EOF`), through
+  `eval "$(cat <<EOF ...)"`, `sh < <(cat <<EOF ...)` or `source /dev/stdin <<EOF`, or when a shell
+  is anywhere later in the pipeline (`cat <<EOF | { cat; } | sh`); the literal words of a stage
+  piped into a shell (`echo 'rm a' | sh`); `time`, `!` and `coproc` no longer hide the command
+  after them. A `cd` in one stage of a pipeline or in a backgrounded command moves nothing after
+  it (so `cd worktrees/solo | git commit` is judged where it runs), and `cd -P`, `cd -L` and
+  `cd --` land in their directory.
+- **Refusals dropped**, each text bash does not run: quoted text after `$'`, a backtick or a
+  `${x:-"..."}` (`echo $'a; git push'`); text in a command that holds `eval`, `trap` or `| sh`
+  and is not itself code; keywords as arguments (`echo do git push`); `eval "cat <<EOF\ngit
+  push\nEOF"` and the same under `trap`; and the four pipe shapes the old scan read as code on
+  purpose, `cat <<EOF | sh.py`, `| bash-completion`, `|| sh` and `; echo x | sh`. A quoted `tee`,
+  `sed` or `perl` is still not a writer, and `tee`, `sed` and `perl` are still read at any word
+  that starts outside a quote (`sudo tee f`).
+- **Trap code is read from every directory it may run in.** The brief said code given to `trap`
+  runs in a directory the gate cannot name. The gate can name them: a trap runs at the end of the
+  script or subshell that set it, so its code is read once from each distinct directory in force
+  between the `trap` and that end. `cd worktrees/solo; trap 'git commit' EXIT; cd ../..` is judged
+  at both, and `cd worktrees/solo && trap 'git commit' EXIT` only in the worktree. This is more
+  precise than "the shared tree", and it still refuses what can reach it.
+- **Heredocs come from the same pass.** An operator opens a body only where the reader reads one,
+  at any point in the command; `echo "$(echo <<A)"` followed by `rm a` runs `rm a` and the gate
+  now reads it; a `)` in a comment closes no substitution; in an unquoted body a backslash-newline
+  joins lines before the delimiter is matched and before substitutions are found. Five hundred
+  heredocs in one command are judged in 6 ms (2.9 s before).
+- **Two over-reads, on purpose.** A function body is read where it is defined, called or not
+  (`f() { rm a; }`), since a call can come from anywhere; and `bash script.sh <<EOF` still reads the
+  body as code, since telling it from `bash <<EOF` means parsing each shell's flags. Syntax bash
+  rejects is read on: the text after an unterminated quote or substitution is also read as code.
+- **`deny_bash` patterns see the same text, with one exception.** A heredoc body inside a backtick
+  span is read from its own string and so stays in the text those patterns match; it can only
+  over-match. The four pipe shapes above become data and are cut; a body on a compound or under a
+  code runner becomes code and stays.
+- **Field replay.** 81,142 unique Bash commands from local transcripts, judged by v0.238.8 and by
+  this release on `git push`, `git merge`, the lease and the write targets: no command raises, the
+  four judgments take 7.0 s against 46.0 s, no push, merge or lease verdict changes, and every
+  write-target difference is code in `bash -c` or `trap` now read, quoted text no longer read as a
+  redirect, or a `${v// /_}` no longer split at its space. 130 findings now carry a regression test (127 before); the README count and
+  the Action pin follow.
+
 ## [0.238.8] — three small frictions: negative CSS utilities, the lease hint, fix-round status
 
 - **A leading hyphen is not a naming convention (fb-cba134e72aef).** The cross-builder CSS advisory
