@@ -189,6 +189,35 @@ _RUNS = [
     'echo $"$(RUN)"',
     "time $(RUN)",
     "export A=$(RUN)",
+    # An opener in a subscript that never closes is text, and the command after the `=` runs.
+    "x[ $( ]=1 RUN",
+    "x[ $(( ]=1 RUN",
+    "x[ ${ ]=1 RUN",
+    # A `for` whose body is a brace group.
+    "for i in 1; { RUN; }",
+    "for ((;;)) { RUN; break; }",
+    "true; for i in 1; { RUN; }",
+    "true\nfor i in 1; { RUN; }",
+    "for i in 1; { for j in 1; { RUN; }; }",
+    "for i in 1; do for j in 1; { RUN; }; done",
+    "for i in 1\n{ RUN; }",
+    "for ((;;)) { for ((;;)) { RUN; break; }; break; }",
+    "for ((;;))\n{ RUN; break; }",
+    "for i in 1; { RUN; } | cat",
+    "{ for i in 1; { RUN; }; }",
+    # An operator inside an array literal is a syntax error, and the next line still runs.
+    "a=( &\nRUN",
+    "a=( ;\nRUN",
+    "a=( |\nRUN",
+    "a=( ||\nRUN",
+    "a=( &&\nRUN",
+    "a=( (\nRUN",
+    "a=( ((\nRUN",
+    "a=( ;;\nRUN",
+    "a=( <<<\nRUN",
+    "a=( <<E\nRUN",
+    "a=( > o\nRUN",
+    "a=( a=(\nRUN",
     # A command name split by quoting is still the command.
     ("r''m a", "g''it push"),
     ('rm"" a', 'git"" push'),
@@ -694,3 +723,32 @@ def test_a_subscript_past_its_bound_still_runs_its_substitution():
 
 def test_an_unmatched_extglob_group_past_its_bound_is_read_as_code():
     assert "a" in gate._bash_write_targets("echo *(" + "x" * 600 + ") ; rm a")
+
+
+# --- a malformed header hides nothing -------------------------------------------------------------
+@pytest.mark.parametrize("header", ["for", "case", "select", "[[", "((", "function", "if", "while",
+                                    "until", "case x in", "for i in", "for ((;;))"])
+@pytest.mark.parametrize("tail", ["; RUN", "\nRUN", " & RUN", " | RUN", " || RUN", " && RUN"])
+@pytest.mark.parametrize("lead", ["", "coproc "])
+def test_a_header_with_no_body_never_hides_the_command_after_it(header, tail, lead):
+    """Gate only: bash rejects these headers (and 3.2 runs `coproc` as a plain command name while
+    bash 5 does not), so no one bash result exists. The command after the operator is read."""
+    rm, push = (f"{lead}{header}{tail}".replace("RUN", run) for run in (_RM, _PUSH))
+    assert "a" in gate._bash_write_targets(rm)
+    assert gate._command_denied(push, _PUSH)
+
+
+@pytest.mark.parametrize("command", [
+    "coproc NAME { rm a; }", "coproc { rm a; }", "coproc rm a", "coproc NAME ( rm a )",
+])
+def test_coproc_is_read_for_both_bash_versions(command):
+    """Gate only: bash 5 runs the group or the command, bash 3.2 a command named `coproc`. The gate
+    reads a superset of both."""
+    assert "a" in gate._bash_write_targets(command)
+
+
+@pytest.mark.parametrize("command", ["for i; { rm a; }", "select i in 1; { rm a; break; }"])
+def test_a_brace_body_that_bash_never_runs_is_still_read(command):
+    """Over-read: an empty `for i;` list or a `select` with no input runs no iteration, but the body
+    is code the gate reads where it stands."""
+    assert "a" in gate._bash_write_targets(command)

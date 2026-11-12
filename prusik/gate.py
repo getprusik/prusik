@@ -744,9 +744,11 @@ def _shell_after(pipeline: bash_reader.Pipeline) -> tuple[bool, ...]:
     so a long pipeline is read once."""
     flags: list[bool] = []
     later = False
-    for stage in reversed(pipeline.stages):
+    stages = pipeline.stages
+    for index in range(len(stages) - 1, -1, -1):
         flags.append(later)
-        later = later or _runs_shell(stage)
+        if index:                   # the first stage has nothing before it to be read for
+            later = later or _runs_shell(stages[index])
     return tuple(reversed(flags))
 
 

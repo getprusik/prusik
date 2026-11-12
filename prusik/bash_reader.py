@@ -45,6 +45,7 @@ _JOINED_LINE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
 _ASSIGNMENT = re.compile(r"([A-Za-z_]\w*)(\+?)=")
 _SUBSCRIPTED = re.compile(r"([A-Za-z_]\w*)\[")
 _SUBSCRIPT_PLAIN = re.compile(r"[^\[\]\\'\"`$\n]+")
+_LITERAL_SUBSCRIPT = re.compile(rf"[^\n]{{0,{_MAX_SUBSCRIPT}}}?\](\+?)=")
 _ASSIGN_OP = re.compile(r"(\+?)=")
 _REDIRECT = re.compile(r"(?:[0-9]+|\{[A-Za-z_]\w*\})?(&>>|&>|>>|>\||>&|<>|<<<|<<-|<<|<&|>|<)")
 _COPY = re.compile(rf"(?:[0-9]+-?|-){_NOT_DELIMITER}")
@@ -56,6 +57,7 @@ _IN = re.compile(rf"in{_NOT_DELIMITER}")
 _ESAC = re.compile(rf"esac{_NOT_DELIMITER}")
 _DO = re.compile(rf"do{_NOT_DELIMITER}")
 _TEST_END = re.compile(rf"\]\]{_NOT_DELIMITER}")
+_COPROC_NAME = re.compile(r"[ \t]+[A-Za-z_]\w*(?=[ \t]*[({])")
 _TIME_FLAG = re.compile(rf"-p{_NOT_DELIMITER}")
 _EMPTY_PARENS = re.compile(r"\([ \t]*\)")
 
@@ -239,7 +241,7 @@ def _odd_backslashes(line: str) -> bool:
 
 
 class _Parser:
-    __slots__ = ("text", "n", "i", "depth", "pending", "unclosed", "sub", "heads")
+    __slots__ = ("text", "n", "i", "depth", "pending", "unclosed", "sub", "heads", "last_close")
 
     def __init__(self, text: str, depth: int) -> None:
         self.text = text
@@ -248,6 +250,7 @@ class _Parser:
         self.depth = depth
         self.pending: list[tuple[Heredoc, str, bool]] = []
         self.unclosed: list[Heredoc] = []
+        self.last_close = text.rfind("))")   # no arithmetic closes past it, so a miss is O(1)
         self.sub = False             # reading the commands of a `$( )`: a `)` can end them
         # Where an assignment's head was read, and what it was, so a head that fails (`a[$(` with no
         # `]=`) is read once however deep it nests.
@@ -480,20 +483,21 @@ class _Parser:
 
     def _arith_word(self, i: int) -> Word | None:
         """The expression of the `((` at `i`, as one word holding its code, with `self.i` past the
-        `))`; an unclosed one runs to the end of the text. None if the first unmatched `)` is not
-        doubled, so the text is nested subshells and `self.i` is unchanged."""
+        `))`. None if it does not close, or its first unmatched `)` is not doubled: the text is then
+        read as commands (nested subshells), and `self.i` is unchanged."""
+        if self.last_close < i + 2:
+            return None                     # no `))` after the opener, so it cannot close
         found: list[Script] = []
         end = self._arith_end(i + 2, found)
         if end < 0:
             return None
-        closed = end >= i + 4 and self.text[end - 2:end] == "))"
         self.i = end
-        return Word(i + 2, self.text[i + 2:end - 2 if closed else end], True, found, end)
+        return Word(i + 2, self.text[i + 2:end - 2], True, found, end)
 
     def _arith_end(self, i: int, scripts: list[Script]) -> int:
         """Index past the `))` closing an arithmetic expression that starts at `i`, the code in it
         added to `scripts`. -1 if its first unmatched `)` is not doubled (so it was nested
-        subshells); the end of the text if it never closes."""
+        subshells) or if it never closes, so the text after the opener is read as commands."""
         text, n = self.text, self.n
         depth = 0
         while i < n:
@@ -526,7 +530,7 @@ class _Parser:
             else:
                 end = text.find("'", i + 1)
                 i = n if end < 0 else end + 1
-        return n
+        return -1
 
     # --- heredocs -----------------------------------------------------------------------------
     def _newline(self) -> None:
@@ -641,6 +645,15 @@ class _Parser:
                 op = _ASSIGN_OP.match(text, end) if end >= 0 else None
                 if op:
                     head = (op.end(), sub[1], bool(op[1]), True, scripts)
+                else:
+                    # An opener in the subscript that never closes (`x[ $( ]=1 rm a`) is text, as
+                    # bash reads it, and the command after the `=` still runs. The subscript is
+                    # also read as code, so nothing in it is lost.
+                    closing = _LITERAL_SUBSCRIPT.match(text, sub.end())
+                    if closing:
+                        bracket = closing.end() - len(closing[1]) - 2
+                        literal = [self._code(text[sub.end():bracket])]
+                        head = (closing.end(), sub[1], bool(closing[1]), True, literal)
         self.heads[i] = head
         return head
 
@@ -705,6 +718,8 @@ class _Parser:
             elif c == ")":
                 self.i = j + 1
                 break
+            elif c in ";&|<>(":
+                break                   # bash rejects the literal here; what follows is commands
             else:
                 word = self._word()
                 if self.i == j:
@@ -872,13 +887,22 @@ class _Parser:
         if reserved:
             self.i = reserved.end()
             if word in _SKIPPED_WORDS:
-                if word != "!":
+                if word == "coproc":
+                    named = _COPROC_NAME.match(text, self.i)    # `coproc NAME { ...; }` (bash 5)
+                    if named:
+                        self.i = named.end()
+                elif word != "!":
                     j = self._skip()
                     if _TIME_FLAG.match(text, j):
                         self.i = j + 2
                 return
             if word in _CLOSERS:
                 self._close_with(ctx, word)
+                return
+            if word == "{" and top is not None and top.kind in ("for", "select") and top.skip \
+                    and not top.phase:
+                top.skip = False            # `for i in 1; { ...; }`: a brace group is the body
+                top.phase = "brace"
                 return
             self._open(ctx, word, i)
             return
@@ -910,10 +934,13 @@ class _Parser:
             if self.i > start:
                 comp.words.append(subject)
             self._after_blanks_and_newlines()
+            frame = _Frame("case", comp)
             if _IN.match(text, self.i):
                 self.i += 2
-            frame = _Frame("case", comp)
-            frame.phase = "pattern"
+                frame.phase = "pattern"
+            else:
+                frame.phase = "body"        # no `in`: what follows is commands, not patterns
+                frame.skip = True
             self._push(ctx, frame)
         elif word == "function":
             self._skip()
@@ -947,7 +974,8 @@ class _Parser:
             if expression is not None:
                 comp.words.append(expression)
         else:
-            name = self._word()
+            reserved = _RESERVED.match(text, j)
+            name = self._word() if reserved is None else Word(j, "", True, [], j)
             comp.name = name.text or None
             if name.scripts:
                 comp.words.append(name)             # `for $(rm a) in x` runs the substitution
@@ -959,6 +987,9 @@ class _Parser:
                     k = self._skip()
                     if k >= self.n or text[k] in "\n;)#":
                         break
+                    body = _RESERVED.match(text, k)
+                    if body is not None and body.group() in ("do", "{"):
+                        break               # the body starts here, whatever precedes it
                     word = self._word()
                     if self.i == k:
                         break
@@ -973,9 +1004,12 @@ class _Parser:
         """`[[ ... ]]`: its operands are words whose substitutions run."""
         text, n = self.text, self.n
         comp = Compound(pos, "test")
+        opened = self.i
         while True:
             j = self._skip()
             if j >= n:
+                self.i = opened             # never closed: its text is commands, not operands
+                comp.words = []
                 break
             c = text[j]
             if c == "\n":
@@ -983,7 +1017,9 @@ class _Parser:
             elif _TEST_END.match(text, j):
                 self.i = j + 2
                 break
-            elif c in "()<>&|;":
+            elif c in ";&|" and text[j:j + 2] not in ("&&", "||"):
+                break                       # no `]]` before a list operator: the test ends here
+            elif c in "()<>&|":
                 self.i = j + (2 if text[j:j + 2] in ("&&", "||") else 1)
             else:
                 word = self._word()
@@ -1024,9 +1060,10 @@ class _Parser:
     def _end_body(self, ctx: _Ctx, frame: _Frame) -> None:
         """The list being read is a body of the compound on `frame`."""
         self._flush(ctx)
-        if frame.skip:
-            frame.skip = False
+        if frame.skip and not ctx.pipes:
+            frame.skip = False              # a header holds no list: nothing to keep
         elif frame.comp is not None:
+            frame.skip = False
             frame.comp.bodies.append(Script(ctx.pipes, self.text))
         ctx.pipes, ctx.stages = [], []
 
@@ -1098,6 +1135,8 @@ class _Parser:
         kind = top.kind
         if kind == "if":
             ends, closes = word in ("then", "elif", "else", "fi"), word == "fi"
+        elif kind in ("for", "select") and top.phase == "brace":
+            ends = closes = word == "}"
         elif kind in ("while", "until", "for", "select"):
             ends, closes = word in ("do", "done"), word == "done"
         elif kind == "group":
@@ -1123,7 +1162,7 @@ class _Parser:
         assert frame.comp is not None
         frame.comp.bodies.append(Script(ctx.pipes, self.text))
         ctx.pipes, ctx.stages = [], []
-        frame.phase = "pattern"
+        frame.phase = "body" if frame.skip else "pattern"
 
     def _pattern(self, ctx: _Ctx, frame: _Frame) -> None:
         """Read what stands between the arms of a `case`: the next arm's patterns up to their
@@ -1148,6 +1187,7 @@ class _Parser:
             self.i = i + 4
             self._close(ctx, frame)
             return
+        begin, known = i, len(frame.comp.words)
         if c == "(":
             self.i = i + 1
         while True:
@@ -1163,7 +1203,11 @@ class _Parser:
             elif c == ")":
                 self.i = k + 1
                 break
-            elif k >= n:
+            elif k >= n or c in ";&\n<>":
+                # No `)` closes these patterns, so they were commands: read them as such.
+                del frame.comp.words[known:]
+                self.i = begin
+                frame.skip = True
                 break
             elif not moved:
                 self.i = k + 1
