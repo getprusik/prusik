@@ -10,7 +10,22 @@
   "repro": "prusik gate fix-round status --feature x",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": ".venv/bin/python -m pytest tests/test_three_small_frictions.py -q",
+    "fixed_in": "0.238.8",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-12T10:13:00.646584+00:00",
+      "exit": 0,
+      "executed_count": 9,
+      "verdict": true,
+      "why": "9 test(s) executed, exit 0",
+      "worktree_hash": "95d59b4-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
