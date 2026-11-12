@@ -30,7 +30,7 @@ _DENY_KEY = "hookSpecificOutput"
 
 
 def _targets(cmd, start=""):
-    return gate._bash_write_targets(gate._strip_heredocs(cmd), start)
+    return gate._bash_write_targets(cmd, start)
 
 
 @pytest.mark.parametrize("cmd", [
@@ -87,8 +87,7 @@ def test_a_heredoc_in_a_substitution_keeps_its_prose_out():
 
 
 def test_a_command_hidden_on_the_opening_line_is_denied():
-    assert gate._command_denied(gate._strip_heredocs("cat <<EOF; git push\nbody\nEOF"),
-                                "git push")
+    assert gate._command_denied("cat <<EOF; git push\nbody\nEOF", "git push")
 
 
 @pytest.mark.parametrize("cmd", [

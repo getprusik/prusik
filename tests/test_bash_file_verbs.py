@@ -21,7 +21,7 @@ _HAS_TRUNCATE = shutil.which("truncate") is not None
 
 
 def _targets(cmd, start=""):
-    return gate._bash_write_targets(gate._strip_heredocs(cmd), start)
+    return gate._bash_write_targets(cmd, start)
 
 
 def _snapshot(root):
@@ -360,19 +360,13 @@ def test_install_bsd_suffix_flag_takes_its_value():
 @pytest.mark.parametrize("build", [lambda n: "rm a; " * n, lambda n: "a=1; " * n,
                                    lambda n: "echo x > f; " * n])
 def test_cost_grows_linearly_with_the_command(build):
-    calls = []
-    original = gate._at_command_position
+    def cost(n):
+        began = time.perf_counter()
+        gate._bash_write_targets(build(n))
+        return time.perf_counter() - began
 
-    def counted(cmd, i):
-        calls.append(i)
-        return original(cmd, i)
-
-    gate._at_command_position = counted
-    try:
-        gate._bash_write_targets(build(4000))
-    finally:
-        gate._at_command_position = original
-    assert len(calls) < 4000 * 8
+    small = max(cost(4000), 0.005)
+    assert cost(16000) < small * 4 * 3          # four times the text, at most three times linear
 
 
 @pytest.mark.parametrize("cmd", [
@@ -514,7 +508,7 @@ def _no_scan(*_a, **_k):
 
 @pytest.mark.parametrize("cmd", ["ls -la", "git status", "pytest -q tests/test_x.py", "pwd"])
 def test_command_naming_no_writer_returns_before_any_scan(cmd, monkeypatch):
-    monkeypatch.setattr(gate, "_literal_text_mask", _no_scan)
+    monkeypatch.setattr(gate, "_parsed", _no_scan)
     monkeypatch.setattr(gate, "_shell_start", _no_scan)
     assert gate._bash_write_targets(cmd) == []
     assert gate._event_write_targets(ToolEvent(tool="Bash", command=cmd, cwd="/a"), cmd) == []

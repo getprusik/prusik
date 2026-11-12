@@ -110,11 +110,11 @@ def test_a_real_write_in_bash_is_always_named(cmd, tmp_path):
 def test_a_command_with_no_operator_skips_the_scan(monkeypatch):
     def fail(_cmd):
         raise AssertionError("scanned a command that can't redirect")
-    monkeypatch.setattr(gate, "_strip_c_payloads", fail)
+    monkeypatch.setattr(gate, "_parsed", fail)
     assert gate._bash_write_targets("""git status && echo 'plain'""") == []
 
 
 def test_the_block_message_no_longer_fires_on_the_reported_command():
     # The original report: the gate blocked the bug report about itself.
     cmd = """prusik feedback "x" --detail 'sed pattern ) > //'"""
-    assert gate._bash_write_targets(gate._strip_heredocs(cmd)) == []
+    assert gate._bash_write_targets(cmd) == []

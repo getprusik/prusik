@@ -123,8 +123,7 @@ def _bash_ran(tmp_path, command: str) -> tuple[bool, bool]:
 
 def _gate_reads(command: str) -> tuple[bool, bool]:
     """(the gate names `a`, the gate denies `git push`)."""
-    stripped = gate._strip_heredocs(command)
-    return "a" in gate._bash_write_targets(stripped), gate._command_denied(stripped, _PUSH)
+    return "a" in gate._bash_write_targets(command), gate._command_denied(command, _PUSH)
 
 
 def _assert_matches_bash(tmp_path, shape: str, expected: bool) -> None:
@@ -162,11 +161,10 @@ def test_a_script_argument_is_read_as_code_on_purpose():
 @pytest.mark.parametrize("line", [
     "cat <<EOF | sh.py", "cat <<EOF | bash-completion", "cat <<EOF || sh", "cat <<EOF; echo x | sh",
 ])
-def test_a_pipe_to_a_shell_on_the_line_reads_as_code_on_purpose(line):
-    """None of these feeds a shell. Telling them from `| bash-5.2` or `| { cat; } | sh` means
-    parsing names and groups, and the pattern is shared with the write check, which must not lose
-    a redirect. A false refusal costs one turn."""
-    assert _gate_reads(f"{line}\n{_PUSH}\nEOF")[1] is True
+def test_a_pipe_to_a_shell_on_the_line_that_feeds_none_reads_as_data(line):
+    """None of these feeds a shell, and the reader knows it: the stage after the pipe is not a
+    shell (`sh.py`, `bash-completion`), `||` ends the pipeline, `;` starts another."""
+    assert _gate_reads(f"{line}\n{_PUSH}\nEOF")[1] is False
 
 
 def test_a_heredoc_with_no_closing_line_stays_code():
@@ -180,30 +178,31 @@ def test_an_operator_with_no_delimiter_opens_nothing():
 
 def test_a_substitution_never_becomes_an_argument_of_the_command():
     """In `tee f <<EOF` with `$(date)` in the body, `$(date)` is not a file tee writes."""
-    assert gate._bash_write_targets(gate._strip_heredocs("tee f <<EOF\n$(date)\nEOF")) == ["f"]
+    assert gate._bash_write_targets("tee f <<EOF\n$(date)\nEOF") == ["f"]
 
 
 def test_the_body_is_gone_from_what_the_write_check_reads():
-    stripped = gate._strip_heredocs("cat > out <<'EOF'\n> not-a-target\nEOF\n")
-    assert gate._bash_write_targets(stripped) == ["out"]
-    assert "not-a-target" not in stripped and "EOF" not in stripped
+    command = "cat > out <<'EOF'\n> not-a-target\nEOF\n"
+    assert gate._bash_write_targets(command) == ["out"]
+    text = gate._deny_bash_text(command)
+    assert "not-a-target" not in text
 
 
 def test_a_commit_message_is_no_write_and_no_command():
     message = "it's \"q\" `git push` (p) > f\ngit push\n"
     command = f"git commit -m \"$(cat <<'EOF'\n{message}EOF\n)\""
     assert _gate_reads(command) == (False, False)
-    assert gate._bash_write_targets(gate._strip_heredocs(command)) == []
+    assert gate._bash_write_targets(command) == []
 
 
 @pytest.mark.parametrize("command", [
     'eval "cat <<EOF\ngit push\nEOF"',
     "trap 'cat <<EOF\ngit push\nEOF' EXIT",
 ])
-def test_text_a_shell_runs_again_stays_code(command):
-    """`_literal_text_mask` gives up on such text by design, so its heredocs read as code. A false
-    refusal here costs a turn, and reading them would change the verdict on `... | sh` too."""
-    assert gate._command_denied(gate._strip_heredocs(command), _PUSH) is True
+def test_text_a_shell_runs_again_is_read_as_the_code_it_is(command):
+    """The code `eval` and `trap` run is `cat <<EOF ...`, a command that reads its heredoc as data,
+    so the `git push` in the body is data too."""
+    assert gate._command_denied(command, _PUSH) is False
 
 
 def test_nested_heredocs_in_a_kept_body_are_stripped_too():
@@ -215,7 +214,7 @@ def test_heredocs_nested_past_the_bound_raise():
     deep = "".join(f"bash <<E{i}\n" for i in range(gate._MAX_CODE_DEPTH + 2))
     deep += "".join(f"E{i}\n" for i in reversed(range(gate._MAX_CODE_DEPTH + 2)))
     with pytest.raises(RecursionError):
-        gate._strip_heredocs(deep)
+        gate._command_denied(deep, _PUSH)
 
 
 def test_many_heredocs_all_come_out():
@@ -223,9 +222,9 @@ def test_many_heredocs_all_come_out():
     assert _gate_reads(command)[1] is False
 
 
-def test_a_command_without_the_operator_costs_no_scan(monkeypatch):
-    def _no_scan(_cmd):
-        raise AssertionError("no `<<`, so nothing to scan")
+def test_a_command_without_the_operator_costs_no_parse(monkeypatch):
+    def _no_parse(_cmd):
+        raise AssertionError("no `<<`, so nothing to parse")
 
-    monkeypatch.setattr(gate, "_quoted_text_mask", _no_scan)
-    assert gate._strip_heredocs("git status && echo hi") == "git status && echo hi"
+    monkeypatch.setattr(gate, "_parsed", _no_parse)
+    assert gate._deny_bash_text("git status && echo hi") == "git status && echo hi"

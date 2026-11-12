@@ -683,36 +683,36 @@ def test_plan_within_scope_ignores_markdown_wrappers():
 
 # ---------- deny_bash heredoc handling ----------
 
-def test_strip_heredocs_removes_single_heredoc_body():
+def test_deny_bash_text_removes_single_heredoc_body():
     cmd = """cat <<EOF >> file
 some prose mentioning git merge and git push
 EOF"""
-    assert "git merge" not in gate._strip_heredocs(cmd)
-    assert "git push" not in gate._strip_heredocs(cmd)
+    assert "git merge" not in gate._deny_bash_text(cmd)
+    assert "git push" not in gate._deny_bash_text(cmd)
 
 
-def test_strip_heredocs_preserves_commands_outside_heredoc():
+def test_deny_bash_text_preserves_commands_outside_heredoc():
     cmd = """git status
 cat <<EOF
 git merge in prose
 EOF
 git log"""
-    stripped = gate._strip_heredocs(cmd)
+    stripped = gate._deny_bash_text(cmd)
     assert "git status" in stripped
     assert "git log" in stripped
     assert "git merge in prose" not in stripped
 
 
-def test_strip_heredocs_handles_quoted_delimiter():
+def test_deny_bash_text_handles_quoted_delimiter():
     cmd = """cat <<'EOF'
 git push inside heredoc
 EOF"""
-    assert "git push" not in gate._strip_heredocs(cmd)
+    assert "git push" not in gate._deny_bash_text(cmd)
 
 
-def test_strip_heredocs_leaves_no_heredocs_alone():
+def test_deny_bash_text_leaves_no_heredocs_alone():
     cmd = "git status && git diff"
-    assert gate._strip_heredocs(cmd) == cmd
+    assert gate._deny_bash_text(cmd) == cmd
 
 
 def test_pre_tool_allows_heredoc_prose_mentioning_forbidden_command():
@@ -954,7 +954,7 @@ def test_command_denied_quoted_string_bypass():
 def test_command_denied_heredoc_prose_bypass():
     # heredoc-stripped body — engine strips BEFORE checking, but test standalone too
     cmd = "cat <<EOF >> x.md\ngit merge discussion\nEOF"
-    assert gate._command_denied(gate._strip_heredocs(cmd), "git merge") is False
+    assert gate._command_denied(cmd, "git merge") is False
 
 
 def test_command_denied_second_statement_still_caught():

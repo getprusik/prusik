@@ -99,9 +99,8 @@ def test_a_push_bash_runs_is_denied_and_mutates(shell, cmd):
 ])
 def test_text_bash_does_not_run_is_not_a_push(shell, cmd):
     assert "push" not in [sub for _dir, sub in shell(cmd)]
-    executable = gate._strip_heredocs(cmd)
-    assert not gate._command_denied(executable, "git push")
-    assert not gate._shared_tree_git_mutation(executable)
+    assert not gate._command_denied(cmd, "git push")
+    assert not gate._shared_tree_git_mutation(cmd)
 
 
 def test_a_commit_message_is_not_a_push_but_the_commit_mutates(shell):
@@ -162,10 +161,10 @@ def test_an_unset_directory_is_the_shared_tree():
     assert gate._shared_tree_git_mutation('cd "$WT"; git commit')
 
 
-def test_where_the_mask_gives_up_it_stays_closed():
-    # `$'` ends the mask, so the quoted prose after it reads as code: a false refusal, never a
-    # missed command.
-    assert gate._command_denied("echo $'x'; echo 'a; git push b'", "git push")
+def test_quoting_never_gives_up_but_a_real_command_after_it_is_read():
+    # Quoted text stays quoted after `$'`, so the prose in it is not a push; a push after it is.
+    assert not gate._command_denied("echo $'x'; echo 'a; git push b'", "git push")
+    assert gate._command_denied("echo $'x'; echo 'a; git push b'; git push", "git push")
 
 
 def test_a_name_the_command_never_set_stays_unread():
@@ -230,11 +229,11 @@ def _building_project(path):
     return path
 
 
-def _pre_tool(path, command, deadline=gate._GATE_DEADLINE_SECONDS):
+def _pre_tool(path, command, deadline=gate._GATE_DEADLINE_SECONDS, setup=""):
     payload = {"tool_name": "Bash", "tool_input": {"command": command}, "session_id": "s",
                "cwd": str(path)}
     code = (f"import sys\nfrom prusik import gate\ngate._GATE_DEADLINE_SECONDS = {deadline}\n"
-            "sys.exit(gate.pre_tool())")
+            f"{setup}sys.exit(gate.pre_tool())")
     result = subprocess.run([sys.executable, "-c", code], cwd=path, input=json.dumps(payload),
                             capture_output=True, text=True, check=False, timeout=60,
                             env={**os.environ, "PYTHONPATH": str(_ROOT)})
@@ -250,10 +249,18 @@ def test_the_real_hook_denies_the_phase_command(tmp_path, cmd):
     assert "blocks command: 'git push'" in _pre_tool(_building_project(tmp_path), cmd)
 
 
-@pytest.mark.parametrize("cmd", ["eval " * 9_600 + "git push", "do git " * 6_800 + "push"],
-                         ids=["eval", "keyword"])
+@pytest.mark.parametrize("cmd", ["eval " * 9_600 + "git push"], ids=["eval"])
 def test_a_command_too_slow_to_read_is_refused(tmp_path, cmd):
     assert "gate" in _pre_tool(_building_project(tmp_path), cmd, deadline=1.0)
+
+
+def test_a_read_that_outruns_the_deadline_is_refused_on_the_deadline(tmp_path):
+    """No command shape outruns the deadline any more: `"do git " * 6800 + "push"` took 59 s and now
+    parses in milliseconds, and the `eval` shape above is refused for its depth. The mechanism is
+    kept by making the parse slow."""
+    slow = "import time\ngate._parsed = lambda cmd: time.sleep(30)\n"
+    reason = _pre_tool(_building_project(tmp_path), "git push", deadline=1.0, setup=slow)
+    assert "gate" in reason and "_GateDeadline" in reason
 
 
 def test_code_nested_too_deep_is_refused_at_once():
@@ -265,7 +272,8 @@ def test_code_nested_too_deep_is_refused_at_once():
 
 @pytest.mark.parametrize("cmd", [
     "`` " * 16_000 + "git status", "bash -c " * 6_000 + "x", "(" * 48_000 + "x", "`" * 48_000,
-], ids=["backticks", "bash-c", "parens", "ticks"])
+    "do git " * 6_800 + "push",
+], ids=["backticks", "bash-c", "parens", "ticks", "keyword"])
 def test_a_long_shape_with_no_push_stays_cheap(tmp_path, cmd):
     project = _building_project(tmp_path)
     begun = time.perf_counter()

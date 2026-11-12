@@ -24,7 +24,7 @@ def _bash(cmd, cwd):
 
 
 def _targets(cmd):
-    return gate._bash_write_targets(gate._strip_heredocs(cmd))
+    return gate._bash_write_targets(cmd)
 
 
 # ---- in-place editors ------------------------------------------------------------------
@@ -324,5 +324,5 @@ def test_a_resolved_refusal_keeps_its_worktree_route(gated):
 def test_a_command_that_can_not_write_skips_the_scan(monkeypatch):
     def fail(_cmd):
         raise AssertionError("scanned a command that can't write")
-    monkeypatch.setattr(gate, "_strip_c_payloads", fail)
+    monkeypatch.setattr(gate, "_parsed", fail)
     assert gate._bash_write_targets("git status && ls -la") == []
