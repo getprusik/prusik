@@ -32,6 +32,11 @@ All notable changes to **Prusik** are documented here. The format follows
   purpose, `cat <<EOF | sh.py`, `| bash-completion`, `|| sh` and `; echo x | sh`. A quoted `tee`,
   `sed` or `perl` is still not a writer, and `tee`, `sed` and `perl` are still read at any word
   that starts outside a quote (`sudo tee f`).
+- **A name split by quoting is still read, and so is a subscript.** The write check's cheap
+  pre-check looked for `rm`, `tee` and the rest in the raw text, so `r''m a`, `"rm" a`, `r\m a` and
+  `$'rm' a` named nothing. It now looks at the text with `'`, `"` and `\` deleted, which can only add
+  hits. (An ANSI-C escape that spells a name, `$'\x72m'`, stays out of reach.) A substitution in an
+  array subscript (`a[$(git push)]=1`) is read like any other word.
 - **Trap code is read from every directory it may run in.** The brief said code given to `trap`
   runs in a directory the gate cannot name. The gate can name them: a trap runs at the end of the
   script or subshell that set it, so its code is read once from each distinct directory in force

@@ -597,10 +597,17 @@ def _event_write_targets(event, executable: str) -> list[str]:
     return _bash_write_targets(executable, _shell_start(getattr(event, "cwd", None)))
 
 
+_UNQUOTE = str.maketrans("", "", "'\"\\")
+
+
 def _may_write(cmd: str) -> bool:
-    """False if the text names no writer at all, so it costs no parse. Read on the raw text, with
-    backslash-newlines joined (`r\\<newline>m a` is `rm a`)."""
-    text = cmd.replace("\\\n", "") if "\\\n" in cmd else cmd
+    """False if the text names no writer at all, so it costs no parse. A sound over-approximation
+    on the raw text: it looks for the writer hints and file verbs with backslash-newlines removed
+    and the quoting characters `'`, `"` and `\\` deleted, so a name split by quoting (`r''m a`,
+    `"rm" a`, `r\\m a`, `$'rm' a`) still reaches the parse. Deleting characters can only add hits,
+    never lose one. An ANSI-C escape that spells a name (`$'\\x72m'`) is out of reach and stays
+    unread."""
+    text = cmd.replace("\\\n", "").translate(_UNQUOTE)
     return any(hint in text for hint in _WRITE_HINTS) or _FILE_VERB_RE.search(text) is not None
 
 

@@ -156,6 +156,51 @@ _RUNS = [
     "trap 'RUN' EXIT",
     "eval -- RUN",
     "trap -- 'RUN' EXIT",
+    # Code in an array subscript or literal, on an assignment alone or after `export`/`local`.
+    "a[$(RUN)]=1",
+    "echo hi; a[$(RUN)]=1",
+    "a[$(RUN)]+=1",
+    "x[ $(RUN) ]=1",
+    "a[`RUN`]=1",
+    'a["$(RUN)"]=1',
+    "a[b[$(RUN)]]=1",
+    "x=1 a[$(RUN)]=1",
+    "a[ x ]=$(RUN)",
+    "a=( $(RUN) )",
+    "a=( [$(RUN)]=x )",
+    "a=( [1]=$(RUN) )",
+    "export A[$(RUN)]=1",
+    "local A[$(RUN)]=1",
+    "readonly A[$(RUN)]=1",
+    "declare -a b=( $(RUN) )",
+    # Code in the expansions, arithmetic and operands that carry a word.
+    "echo ${a[$(RUN)]}",
+    "echo ${x:-$(RUN)}",
+    "echo $(( a[$(RUN)] ))",
+    "(( a[$(RUN)]++ ))",
+    "for (( $(RUN); 0; )); do :; done",
+    "[[ x =~ $(RUN) ]]",
+    "[[ $(RUN) ]]",
+    "case $(RUN) in x) ;; esac",
+    "case x in $(RUN)) ;; esac",
+    "case x in $(RUN)|y) ;; esac",
+    "for i in $(RUN); do :; done",
+    "select i in $(RUN); do break; done </dev/null",
+    "echo > $(RUN)",
+    "echo x 2> $(RUN)",
+    "echo {fd}> $(RUN)",
+    "cat <<< $(RUN)",
+    'echo $"$(RUN)"',
+    "time $(RUN)",
+    "export A=$(RUN)",
+    # A command name split by quoting is still the command.
+    ("r''m a", "g''it push"),
+    ('rm"" a', 'git"" push'),
+    ("r\\m a", "g\\it push"),
+    ("$'rm' a", "$'git' push"),
+    ('"rm" a', '"git" push'),
+    ("'r'm a", "'g'it push"),
+    ('eval "r"m a', 'eval "g"it push'),
     # A quoted `<<` after each point the old mask stopped opens nothing: bash runs the next line.
     "echo $'x' '<<EOF'\nRUN\nEOF",
     'echo "`date`" \'<<EOF\'\nRUN\nEOF',
@@ -618,3 +663,9 @@ def test_the_walk_visits_every_command_in_source_order_without_recursion():
 def test_a_reserved_word_with_no_place_is_dropped_at_command_position():
     assert [w.text for w in _first("then git push").words] == ["git", "push"]
     assert [w.text for w in _first("echo do git push").words] == ["echo", "do", "git", "push"]
+
+
+def test_an_ansi_c_escape_that_spells_a_name_stays_unread():
+    """Out of reach, stated: `$'\\x72m' a` removes `a` in bash, but the escape is decoded at run
+    time and the reader keeps its text, so no verb is named."""
+    assert gate._bash_write_targets("$'\\x72m' a") == []

@@ -37,7 +37,10 @@ _BACKTICK_ESCAPE = re.compile(r"\\([`\\$])")
 _BACKTICK_ESCAPE_DQ = re.compile(r'\\([`\\$"])')
 _ANSI_BODY = re.compile(r"[^'\\]*(?:\\.[^'\\]*)*", re.S)
 _JOINED_LINE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
-_ASSIGNMENT = re.compile(rf"[A-Za-z_]\w*(?:\[[^\]\n]{{0,{_MAX_SUBSCRIPT}}}\])?\+?=")
+_ASSIGNMENT = re.compile(r"([A-Za-z_]\w*)(\+?)=")
+_SUBSCRIPTED = re.compile(r"([A-Za-z_]\w*)\[")
+_SUBSCRIPT_PLAIN = re.compile(r"[^\[\]\\'\"`$\n]+")
+_ASSIGN_OP = re.compile(r"(\+?)=")
 _REDIRECT = re.compile(r"(?:[0-9]+|\{[A-Za-z_]\w*\})?(&>>|&>|>>|>\||>&|<>|<<<|<<-|<<|<&|>|<)")
 _COPY = re.compile(rf"(?:[0-9]+-?|-){_NOT_DELIMITER}")
 _RESERVED = re.compile(
@@ -214,7 +217,7 @@ def _odd_backslashes(line: str) -> bool:
 
 
 class _Parser:
-    __slots__ = ("text", "n", "i", "depth", "pending", "unclosed", "sub")
+    __slots__ = ("text", "n", "i", "depth", "pending", "unclosed", "sub", "heads")
 
     def __init__(self, text: str, depth: int) -> None:
         self.text = text
@@ -224,6 +227,9 @@ class _Parser:
         self.pending: list[tuple[Heredoc, str, bool]] = []
         self.unclosed: list[Heredoc] = []
         self.sub = False             # reading the commands of a `$( )`: a `)` can end them
+        # Where an assignment's head was read, and what it was, so a head that fails (`a[$(` with no
+        # `]=`) is read once however deep it nests.
+        self.heads: dict[int, tuple[int, str, bool, bool, list[Script]] | None] = {}
 
     def script(self) -> Script:
         return self._list(False)
@@ -578,16 +584,73 @@ class _Parser:
         word = self._word()
         return Redirect(pos, op, word if self.i > start else None, None)
 
-    def _assignment(self, m: re.Match[str]) -> Assignment:
+    def _head(self, i: int) -> tuple[int, str, bool, bool, list[Script]] | None:
+        """The head of an assignment at `i`: (index past its `=`, name, `+=`, subscripted, the code in
+        its subscript), or None if no assignment starts here. A subscript is read as a word is, so
+        `a[$(rm a)]=1` runs the substitution."""
+        if i in self.heads:
+            return self.heads[i]
+        text = self.text
+        head: tuple[int, str, bool, bool, list[Script]] | None = None
+        m = _ASSIGNMENT.match(text, i)
+        if m:
+            head = (m.end(), m[1], bool(m[2]), False, [])
+        else:
+            sub = _SUBSCRIPTED.match(text, i)
+            if sub:
+                scripts: list[Script] = []
+                end = self._subscript_end(sub.end(), scripts)
+                op = _ASSIGN_OP.match(text, end) if end >= 0 else None
+                if op:
+                    head = (op.end(), sub[1], bool(op[1]), True, scripts)
+        self.heads[i] = head
+        return head
+
+    def _subscript_end(self, i: int, scripts: list[Script]) -> int:
+        """Index past the `]` closing a subscript whose `[` ends at `i`, or -1. Quotes and
+        substitutions inside are read; a subscript holds no newline."""
+        text, n = self.text, self.n
+        start, depth = i, 1
+        while i < n:
+            if not scripts and i - start > _MAX_SUBSCRIPT:
+                return -1
+            m = _SUBSCRIPT_PLAIN.match(text, i)
+            if m:
+                i = m.end()
+                continue
+            c = text[i]
+            if c == "]":
+                depth -= 1
+                i += 1
+                if depth == 0:
+                    return i
+            elif c == "[":
+                depth += 1
+                i += 1
+            elif c == "\\":
+                i += 2
+            elif c == "$":
+                i = self._dollar(i, [], scripts, True)
+            elif c == "`":
+                i = self._backtick(i, [], scripts, True)
+            elif c == '"':
+                i = self._dquote(i, [], scripts)
+            elif c == "'":
+                end = text.find("'", i + 1)
+                i = n if end < 0 else end + 1
+            else:
+                return -1
+        return -1
+
+    def _assignment(self, head: tuple[int, str, bool, bool, list[Script]]) -> Assignment:
         text, n = self.text, self.n
         pos = self.i
-        raw = m.group()
-        append = raw.endswith("+=")
-        array = "[" in raw
-        name = raw[:raw.index("[")] if array else raw[:len(raw) - (2 if append else 1)]
-        self.i = m.end()
+        after, name, append, array, subscript = head
+        self.i = after
         if text[self.i:self.i + 1] != "(":
-            return Assignment(pos, name, append, array, self._word())
+            value = self._word()
+            value.scripts = subscript + value.scripts
+            return Assignment(pos, name, append, array, value)
         start = self.i
         self.i += 1
         scripts: list[Script] = []
@@ -609,7 +672,8 @@ class _Parser:
                 if self.i == j:
                     self.i = j + 1
                 scripts += word.scripts
-        return Assignment(pos, name, append, True, Word(start, text[start:self.i], True, scripts, self.i))
+        return Assignment(pos, name, append, True,
+                          Word(start, text[start:self.i], True, subscript + scripts, self.i))
 
     def _simple(self, ctx: _Ctx) -> None:
         text, n = self.text, self.n
@@ -640,9 +704,9 @@ class _Parser:
                     redirects.append(self._redirect(m))
                     continue
             if not words:
-                am = _ASSIGNMENT.match(text, i)
-                if am:
-                    assignments.append(self._assignment(am))
+                head = self._head(i)
+                if head:
+                    assignments.append(self._assignment(head))
                     continue
             word = self._word()
             if self.i == i:
@@ -825,7 +889,9 @@ class _Parser:
             m = _EMPTY_PARENS.match(text, j)
             if m:
                 self.i = m.end()
-            self._push_function(ctx, pos, name.text if self.i > start else None)
+            frame = self._push_function(ctx, pos, name.text if self.i > start else None)
+            if name.scripts and frame.comp is not None:
+                frame.comp.words.append(name)       # `function $(rm a) { :; }` runs the substitution
         else:
             self._test(ctx, pos)
 
@@ -853,6 +919,8 @@ class _Parser:
         else:
             name = self._word()
             comp.name = name.text or None
+            if name.scripts:
+                comp.words.append(name)             # `for $(rm a) in x` runs the substitution
             saved = self.i
             self._after_blanks_and_newlines()
             if _IN.match(text, self.i):
@@ -895,10 +963,11 @@ class _Parser:
                 comp.words.append(word)
         self._finish(ctx, comp)
 
-    def _push_function(self, ctx: _Ctx, pos: int, name: str | None) -> None:
+    def _push_function(self, ctx: _Ctx, pos: int, name: str | None) -> _Frame:
         frame = _Frame("function", Compound(pos, "function", name))
         frame.phase = "await"
         self._push(ctx, frame)
+        return frame
 
     def _abandon_function(self, ctx: _Ctx, frame: _Frame) -> None:
         """A function header with no compound command after it: it holds nothing."""
