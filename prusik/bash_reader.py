@@ -23,7 +23,7 @@ QUOTED_DOLLAR = "\x01"              # `"$S"`: expands to one word
 
 _MAX_SUBSCRIPT = 256                # bounds an assignment's subscript
 _MAX_GLOB_GROUP = 512               # bounds the look-ahead for an extglob group's `)`
-_NOT_DELIMITER = r"(?![^\s;&|()<>])"
+_NOT_DELIMITER = r"(?![^\s;&|()<>\\]|\\[^\n])"
 
 _BLANKS = re.compile(r"(?:[ \t]|\\\n)+")
 _PLAIN = re.compile(r"[^ \t\n;&|()<>\\'\"`$]+")
@@ -58,13 +58,14 @@ _END_OF_CASE_ARM = (";;&", ";;", ";&")
 
 
 class Word:
-    __slots__ = ("pos", "text", "bare", "scripts")
+    __slots__ = ("pos", "text", "bare", "scripts", "end")
 
-    def __init__(self, pos: int, text: str, bare: bool, scripts: list[Script]) -> None:
+    def __init__(self, pos: int, text: str, bare: bool, scripts: list[Script], end: int) -> None:
         self.pos = pos
         self.text = text
         self.bare = bare
         self.scripts = scripts
+        self.end = end              # where the word stops in the text it was read from
 
 
 class Heredoc:
@@ -213,7 +214,7 @@ def _odd_backslashes(line: str) -> bool:
 
 
 class _Parser:
-    __slots__ = ("text", "n", "i", "depth", "pending", "unclosed")
+    __slots__ = ("text", "n", "i", "depth", "pending", "unclosed", "sub")
 
     def __init__(self, text: str, depth: int) -> None:
         self.text = text
@@ -222,6 +223,7 @@ class _Parser:
         self.depth = depth
         self.pending: list[tuple[Heredoc, str, bool]] = []
         self.unclosed: list[Heredoc] = []
+        self.sub = False             # reading the commands of a `$( )`: a `)` can end them
 
     def script(self) -> Script:
         return self._list(False)
@@ -304,7 +306,7 @@ class _Parser:
         joined = "".join(out)
         quoted_first = text.startswith(("'", '"', '$"', "$'"), start)
         marked_first = joined[:1] in (LITERAL_DOLLAR, QUOTED_DOLLAR) and joined != ""
-        return Word(start, joined, not (quoted_first or marked_first), scripts)
+        return Word(start, joined, not (quoted_first or marked_first), scripts, i)
 
     def _group_end(self, i: int) -> int:
         """Index past the `)` closing the extglob group opened at `i`, or -1. An extglob group
@@ -320,7 +322,7 @@ class _Parser:
                 depth -= 1
                 if depth == 0:
                     return i + 1
-            elif c in " \t\n;&|<>`$'\"":
+            elif c in " \t\n;&<>":
                 return -1
             elif c == "\\":
                 i += 1
@@ -561,7 +563,7 @@ class _Parser:
             word = self._word()
             if self.i == start:
                 return Redirect(pos, op, None, None)
-            raw = text[start:self.i]
+            raw = text[start:self.i].replace("\\\n", "")
             heredoc = Heredoc(any(ch in raw for ch in "'\"\\"))
             delimiter = word.text.replace(LITERAL_DOLLAR, "$").replace(QUOTED_DOLLAR, "$")
             self.pending.append((heredoc, delimiter, op == "<<-"))
@@ -607,7 +609,7 @@ class _Parser:
                 if self.i == j:
                     self.i = j + 1
                 scripts += word.scripts
-        return Assignment(pos, name, append, True, Word(start, text[start:self.i], True, scripts))
+        return Assignment(pos, name, append, True, Word(start, text[start:self.i], True, scripts, self.i))
 
     def _simple(self, ctx: _Ctx) -> None:
         text, n = self.text, self.n
@@ -620,10 +622,14 @@ class _Parser:
             if i >= n:
                 break
             c = text[i]
-            if c in "\n;|)(":
+            if c in "\n;|(" or (c == ")" and self._closes(ctx)):
                 break
             if c == "&" and text[i + 1:i + 2] != ">":
                 break
+            if c == ")":
+                words.append(Word(i, ")", True, [], i + 1))
+                self.i = i + 1
+                continue
             if c == "#":
                 end = text.find("\n", i)
                 self.i = n if end < 0 else end
@@ -665,6 +671,7 @@ class _Parser:
         substitution. Heredocs still pending at the end get an empty body, as in bash."""
         text, n = self.text, self.n
         outer, self.pending = self.pending, []
+        outer_sub, self.sub = self.sub, sub
         ctx = _Ctx()
         while True:
             if self.unclosed:
@@ -713,14 +720,14 @@ class _Parser:
                 else:
                     self.i = i + (2 if text[i + 1:i + 2] == "&" else 1)
                     ctx.after_pipe = True
-            elif c == ")":
+            elif c == ")" and self._closes(ctx):
                 self.i = i + 1
                 top = self._real_top(ctx)
                 if top is not None and top.kind == "subshell":
                     self._peel(ctx)
                     self._end_body(ctx, top)
                     self._close(ctx, top)
-                elif sub:
+                else:
                     break
             else:
                 self._command(ctx, i)
@@ -728,12 +735,21 @@ class _Parser:
         for heredoc, _delimiter, _dash in self.pending:
             heredoc.span = (self.i, self.i)
         self.pending = outer
+        self.sub = outer_sub
         return Script(ctx.pipes, text)
+
+    def _closes(self, ctx: _Ctx) -> bool:
+        """True if a `)` here ends something: a subshell, or the substitution being read. Any
+        other `)` has no place, and is a word."""
+        top = self._real_top(ctx)
+        return self.sub or (top is not None and top.kind == "subshell")
 
     def _command(self, ctx: _Ctx, i: int) -> None:
         """Read the construct that starts at `i`, a command position: a compound command, a
         function, a reserved word, or a simple command."""
         text = self.text
+        if ctx.stages and not ctx.after_pipe:
+            self._flush(ctx)           # a command after a compound, with no operator between
         top = ctx.stack[-1] if ctx.stack else None
         reserved = _RESERVED.match(text, i)
         word = reserved.group() if reserved else ""
@@ -748,7 +764,7 @@ class _Parser:
                     closed = end >= i + 4 and text[end - 2:end] == "))"
                     comp = Compound(i, "arith")
                     comp.words.append(Word(i + 2, text[i + 2:end - 2 if closed else end], True,
-                                           found))
+                                           found, end))
                     self.i = end
                     self._finish(ctx, comp)
                     return
@@ -831,7 +847,8 @@ class _Parser:
             end = self._arith_end(j + 2, found)
             if end >= 0:
                 closed = end >= j + 4 and text[end - 2:end] == "))"
-                comp.words.append(Word(j + 2, text[j + 2:end - 2 if closed else end], True, found))
+                comp.words.append(Word(j + 2, text[j + 2:end - 2 if closed else end], True, found,
+                                       end))
                 self.i = end
         else:
             name = self._word()

@@ -8,6 +8,7 @@ stdout JSON / exit code to match the Claude Code hook contract.
 from __future__ import annotations
 
 import _signal  # type: ignore[import-not-found]  # no stub; `signal` is over the hook budget
+import functools
 import hashlib
 import json
 import os
@@ -19,7 +20,9 @@ from pathlib import Path
 # Only what the per-tool-call hooks run (platform plan P0). schema / consistency /
 # discovery are imported inside the functions that use them — re-adding them here costs
 # every adopter ~12ms per tool call (pinned: tests/test_hook_hot_path.py).
-from prusik import gate_class, ledger, phases
+from prusik import bash_reader, gate_class, ledger, phases
+from prusik.bash_reader import LITERAL_DOLLAR as _LITERAL_DOLLAR
+from prusik.bash_reader import QUOTED_DOLLAR as _QUOTED_DOLLAR
 
 
 def _read_stdin_json() -> dict:
@@ -269,7 +272,7 @@ def _record_briefing_for_event(event, active_feature: str | None) -> None:
     # other Bash call skips the redirect scan entirely.
     if command and "briefs" in command:
         try:
-            targets += _event_write_targets(event, _strip_heredocs(command))
+            targets += _event_write_targets(event, command)
         except Exception as exc:  # noqa: BLE001
             briefing_failed("bash_redirect", exc)
     if targets:
@@ -330,11 +333,10 @@ def _mutates_shared_tree(event) -> bool:
         if not _under_worktrees(target):
             return True
     if event.command:
-        executable = _strip_heredocs(event.command)
-        for target in _event_write_targets(event, executable):
+        for target in _event_write_targets(event, event.command):
             if not _under_worktrees(target):
                 return True
-        if _shared_tree_git_mutation(executable, _shell_start(event.cwd)):
+        if _shared_tree_git_mutation(event.command, _shell_start(event.cwd)):
             return True
     return False
 
@@ -369,13 +371,12 @@ def _gate_decision(event, config: dict, phase: str, feature) -> str | None:
 
     if event.command is not None:
         cmd = event.command
-        executable = _strip_heredocs(cmd)
         phase_spec = phases.get_phase_spec(config, phase) or {}
 
         # v0.3.8: Bash also writes files, and was bypassing the writable-path
         # check entirely (that check only covered Write/Edit/NotebookEdit).
         # Scan the command's write targets and apply is_path_writable to each.
-        for target in _event_write_targets(event, executable):
+        for target in _event_write_targets(event, cmd):
             ok, reason = phases.is_path_writable(target, config, phase, feature)
             if not ok:
                 ledger.append("gate_blocked", tool=event.tool, command=cmd,
@@ -388,7 +389,7 @@ def _gate_decision(event, config: dict, phase: str, feature) -> str | None:
         # Preferred: deny_commands — token-based match. Immune to prose
         # inside heredocs or strings because we check command-position only.
         for denied in phase_spec.get("deny_commands", []):
-            if _command_denied(executable, denied):
+            if _command_denied(cmd, denied):
                 ledger.append("gate_blocked", tool=event.tool, command=cmd,
                               phase=phase, feature=feature,
                               gate_class=gate_class.DENY_COMMAND,
@@ -398,7 +399,7 @@ def _gate_decision(event, config: dict, phase: str, feature) -> str | None:
         # Legacy: deny_bash — raw regex. Kept for back-compat with configs
         # authored before v0.3.5.
         for pattern in phase_spec.get("deny_bash", []):
-            if re.search(pattern, executable):
+            if re.search(pattern, _deny_bash_text(cmd)):
                 ledger.append("gate_blocked", tool=event.tool, command=cmd,
                               phase=phase, feature=feature,
                               gate_class=gate_class.DENY_COMMAND,
@@ -515,34 +516,23 @@ def _worktree_redirect_hint(target: str, config: dict, phase: str,
 
 # Under the host's 15s hook timeout, with room to write the deny.
 _GATE_DEADLINE_SECONDS = 12.0
-# Every operator bash opens a file for writing with, written as bash reads it: no separator
-# is needed before one (`cat> f`). The target is read by `_shell_word`, never by this regex.
-# `>&` with a digit or `-` after it duplicates a descriptor and writes no file.
-_REDIRECT_RE = re.compile(r"&>>?|[0-9]*(?:>>|>\||>&(?![0-9-])|>|<>)")
-# Any redirect that can precede a command word. A descriptor copy takes no word of its own.
-_PREFIX_REDIRECT_RE = re.compile(
-    rf"(?P<copy>[0-9]*[<>]&(?:[0-9]+-?|-)(?=[ \t\\\n;&|]|$))|\{{\w+\}}(?:>>|>|<)"
-    rf"|{_REDIRECT_RE.pattern}|[0-9]*(?:<<<|<<-?|<&|<)")
-_WRITER_RE = re.compile(r"(?<![\w.-])(tee|sed|perl)(?=[ \t\\])")
-# Unlike tee or sed, these words are routine arguments (`git rm`, `pip install`), so each must
-# stand at command position, optionally under a path (`/bin/rm`). The lookbehind holds every
-# character of that path, so a run of them has one start and the scan stays linear.
+# The operators bash opens a file for writing with. `>&` with a digit or `-` after it duplicates a
+# descriptor and writes no file, and the reader gives it no target.
+_WRITE_OPS = frozenset((">", ">>", ">|", "&>", "&>>", ">&", "<>"))
+# `tee`, `sed` and `perl` are read at any word of a command that starts outside a quote (`sudo tee
+# f`). Unlike them, the file verbs are routine arguments (`git rm`, `pip install`), so each is read
+# at the command word only.
+_WRITERS = frozenset(("tee", "sed", "perl"))
+_FILE_VERBS = frozenset(("cp", "mv", "rm", "truncate", "dd", "touch", "install"))
+# Only `_may_write` uses this: a text with none of these needs no parse for the write check.
 _FILE_VERB_RE = re.compile(
     r"(?<![\w./~-])(?:[\w./~-]*/)?(cp|mv|rm|truncate|dd|touch|install)(?=[ \t\\])")
 _MAX_SUBSCRIPT = 256          # bounds a scan that otherwise runs to the end of the line
-_ENV_WORD_RE = re.compile(rf"[A-Za-z_]\w*(?:\[[^\]\n]{{0,{_MAX_SUBSCRIPT}}}\])?\+?=")
-_STATEMENT_START_RE = re.compile(
-    r"[;&|({]|(?<!\\)\n|(?<![\w-])(?:if|elif|else|while|until|then|do|!)(?=[ \t]|\\\n)")
-_CASE_TOKEN_RE = re.compile(r"(?<![\w.-])(?:case|esac|in)(?![\w.-])|;;&?|;&|[()]")
-_ASSIGNMENT_RE = re.compile(
-    r"(?<![\w$.=/-])(?:(?:export|readonly|local|declare|typeset)[ \t]+)?([A-Za-z_]\w*)(\+?)=")
 _REBINDER_RE = re.compile(
     r"(?<![\w.-])(?:(?:for|select)[ \t]+(\w+)|(?:read|unset|mapfile|readarray|getopts|printf)"
     r"[ \t]([^;&|\n]*))")
-# `_shell_word` writes each `$` as one of these, so the quoting that decides what it means
-# survives the quotes coming off. `_expand` turns both back into `$`.
-_LITERAL_DOLLAR = "\x00"       # `'$S'` or `\$S`: no expansion at all
-_QUOTED_DOLLAR = "\x01"        # `"$S"`: expands to one word
+# The reader writes each `$` as one of these, so the quoting that decides what it means survives
+# the quotes coming off. `_expand` turns both back into `$`.
 _VARIABLE_RE = re.compile(rf"([${_QUOTED_DOLLAR}])(?:\{{(\w+)\}}|(\w+))")
 _SPLITS_RE = re.compile(r"[\s*?\[]")
 # Text that can rebind a name where this reading can't see it, as the run of `S=` forms below
@@ -556,22 +546,9 @@ _OPAQUE_CODE_RE = re.compile(
 _MUTATION_RE = re.compile(
     rf"(?<!\w)([A-Za-z_]\w*)(?:\[[^\]\n]{{0,{_MAX_SUBSCRIPT}}}\])?[ \t]*(?:[-+*/%:]?=|\+\+|--)"
     rf"|(?<!\w)([A-Za-z_]\w*)(?=\[[^\]\n]{{{_MAX_SUBSCRIPT + 1}}})")
-_CWD_RE = re.compile(r"[()]|\b(?:cd|pushd|popd)(?:[ \t]+|(?=[;&|)\n]|$))")
-_COMMAND_STARTERS = frozenset(";&|({\n")
-_ESCAPABLE_OPERATORS = frozenset("<>;&|(){")
-_KEYWORD_BEFORE_RE = re.compile(r"(?<![\w-])(?:if|elif|else|while|until|then|do|!)$")
-_EXTGLOB_OPENERS = frozenset("?*+@!$")
-_PIPED_SHELL_RE = re.compile(r"\|\s*(?:xargs\b[^|;&\n]*)?(?:[^\s|;&]*/)?(?:ba|z|k|da)?sh\b")
-_REEXEC_RE = re.compile(rf"(?<![\w:.-])(?:eval|trap)\b|{_PIPED_SHELL_RE.pattern}")
-_ARITHMETIC_RE = re.compile(r"\$?\(\([^;&|()]*\)\)")
-_TEST_RE = re.compile(r"\[\[[^\n]*?\]\]")
-_PARAMETER_RE = re.compile(r"""\$\{[^{}'"`$]*\}""")
-_UNESCAPED_BACKTICK_RE = re.compile(r"(?<!\\)`")
-_INNER_QUOTE_RE = re.compile(r"""(?<!\\)['"`]""")
 _SKIP_TARGETS = {"/dev/null", "/dev/stderr", "/dev/stdout",
                  "/dev/tty", "/dev/zero"}
 _WRITE_HINTS = (">", "tee", "sed", "perl")
-_WORD_END = frozenset(" \t\n;&|<>()")
 # The flags that take a script, and the other flags that take a value, per in-place editor.
 _INPLACE_FLAGS = {"sed": ("ef", ""), "perl": ("eE", "IMmF")}
 # The short and long flags that take a value, per file verb, across BSD and GNU. `-t` is GNU's
@@ -585,7 +562,15 @@ _VERB_VALUE_LONG = frozenset(("--date", "--group", "--mode", "--owner", "--refer
 # Commands whose argument is shell code, so what they run is read as well.
 _SHELLS = frozenset(("bash", "sh", "zsh", "ksh", "dash"))
 _CODE_RUNNERS = _SHELLS | {"eval", "trap"}
+_SOURCERS = frozenset(("source", "."))
 _MAX_CODE_DEPTH = 32
+# The override `_code_of` gives code that runs later, which the walk reads from each directory in
+# force until its scope ends.
+_DEFERRED = "deferred"
+_DIRECTORY_VERBS = frozenset(("cd", "pushd", "popd"))
+_CD_FLAGS = frozenset(("-L", "-P", "-e", "-@"))
+_DECLARERS = frozenset(("export", "readonly", "local", "declare", "typeset"))
+_DECLARED_RE = re.compile(r"([A-Za-z_]\w*)(\+?)=")
 # Targets only the running shell can name. `$` marks them as unresolved.
 _FROM_STDIN = "$(stdin)"
 _FROM_FIND = "$({})"
@@ -613,65 +598,306 @@ def _event_write_targets(event, executable: str) -> list[str]:
 
 
 def _may_write(cmd: str) -> bool:
-    return any(hint in cmd for hint in _WRITE_HINTS) or _FILE_VERB_RE.search(cmd) is not None
+    """False if the text names no writer at all, so it costs no parse. Read on the raw text, with
+    backslash-newlines joined (`r\\<newline>m a` is `rm a`)."""
+    text = cmd.replace("\\\n", "") if "\\\n" in cmd else cmd
+    return any(hint in text for hint in _WRITE_HINTS) or _FILE_VERB_RE.search(text) is not None
+
+
+@functools.lru_cache(maxsize=16)
+def _parsed(cmd: str) -> bash_reader.Script:
+    """The tree of `cmd`, parsed once however many checks read it. It is never mutated."""
+    return bash_reader.parse(cmd)
+
+
+def _stage_scripts(stage) -> list[bash_reader.Script]:
+    """The code nested in a stage's own words, assignments and redirects, in order: substitutions,
+    process substitutions, and the code in a heredoc body (an unclosed one is read as code)."""
+    scripts: list[bash_reader.Script] = []
+    for assignment in getattr(stage, "assignments", ()):
+        scripts += assignment.value.scripts
+    for word in stage.words:
+        scripts += word.scripts
+    for redirect in stage.redirects:
+        if redirect.target is not None:
+            scripts += redirect.target.scripts
+        if redirect.heredoc is not None:
+            scripts += redirect.heredoc.scripts
+    return scripts
+
+
+def _stage_name(stage, bindings: dict[str, tuple[int, str]]) -> str:
+    """The command a simple stage runs: its first word expanded, on any path."""
+    return os.path.basename(_expand(stage.words[0].text, stage.pos, bindings)) if stage.words else ""
+
+
+def _arguments(simple: bash_reader.Simple, after: int = 1) -> list[bash_reader.Word]:
+    """The words of `simple` from index `after` on, leaving out each process substitution
+    (`>(cat)`): it is a file the shell opens, no argument a command's flags or operands are read
+    from."""
+    return [w for w in simple.words[after:] if not (w.bare and w.text[:2] in ("<(", ">("))]
+
+
+def _simples_of(stage) -> list[bash_reader.Simple]:
+    """Every simple command in a stage: itself, or those inside a compound's bodies."""
+    if isinstance(stage, bash_reader.Simple):
+        return [stage]
+    found: list[bash_reader.Simple] = []
+    for body in stage.bodies:
+        found += [event[1] for event in bash_reader.iter_commands(body) if event[0] == "simple"]
+    return found
+
+
+def _stage_heredocs(stage) -> list[bash_reader.Heredoc]:
+    """Every heredoc redirected on a stage or on a command inside it."""
+    found = [r.heredoc for r in stage.redirects if r.heredoc is not None]
+    if not isinstance(stage, bash_reader.Simple):
+        for body in stage.bodies:
+            for event in bash_reader.iter_commands(body):
+                if event[0] in ("simple", "enter"):
+                    found += [r.heredoc for r in event[1].redirects if r.heredoc is not None]
+    return found
+
+
+def _nested_heredocs(stage) -> list[bash_reader.Heredoc]:
+    """Every heredoc nested anywhere in a stage's words and redirects (`eval "$(cat <<EOF ...)"`),
+    not counting the ones redirected on the stage itself."""
+    found: list[bash_reader.Heredoc] = []
+    todo = _stage_scripts(stage)
+    while todo:
+        script = todo.pop()
+        for event in bash_reader.iter_commands(script):
+            if event[0] in ("simple", "enter"):
+                found += [r.heredoc for r in event[1].redirects if r.heredoc is not None]
+                todo += _stage_scripts(event[1])
+    return found
+
+
+def _simple_runs_shell(simple: bash_reader.Simple) -> bool:
+    words = simple.words
+    if not words:
+        return False
+    name = os.path.basename(words[0].text)
+    return name in _SHELLS or (
+        name == "xargs" and any(os.path.basename(w.text) in _SHELLS for w in words[1:]))
+
+
+def _runs_shell(stage) -> bool:
+    """True if the stage is a shell, `xargs` naming one, or a compound holding either."""
+    return any(_simple_runs_shell(simple) for simple in _simples_of(stage))
+
+
+def _code_of(stage, pipeline: bash_reader.Pipeline, index: int,
+             bindings: dict[str, tuple[int, str]] | None = None) -> list[tuple[str, str | None]]:
+    """(code text, directory override) for everything the stage runs as code. The override is
+    `_DEFERRED` for code that runs later (a `trap`), which the walk reads from every directory in
+    force until the end of its scope, and None otherwise.
+
+    The text bash hands a shell: the literal code of `eval`, `trap` and a shell's `-c`; a heredoc
+    or here-string on a shell, `source` or `.`; every heredoc nested in the words and redirects of
+    such a command; a heredoc on a compound that runs a shell; and the heredocs and literal words
+    of a stage with a shell further down its pipeline. A heredoc body is returned as its own
+    string object, so a caller can tell which bodies are code."""
+    bindings = bindings if bindings is not None else {}
+    code: list[tuple[str, str | None]] = []
+    if isinstance(stage, bash_reader.Simple):
+        if stage.words:
+            name = _stage_name(stage, bindings)
+            if name in _SHELLS or name in _CODE_RUNNERS:
+                argv = [_expand(w.text, stage.pos, bindings)
+                        for w in (stage.words[0], *_arguments(stage))]
+                payload = _shell_code(name, argv)
+                if payload:
+                    code.append((payload, _DEFERRED if name == "trap" else None))
+            if name in _SHELLS or name in _SOURCERS or name == "eval":
+                code += _stdin_code(stage, bindings)
+                code += [(h.body, None) for h in _nested_heredocs(stage)]
+    elif any(r.op in ("<<", "<<-", "<<<") for r in stage.redirects) and _runs_shell(stage):
+        code += _stdin_code(stage, bindings)
+    if _shell_after(pipeline)[index]:
+        code += [(h.body, None) for h in _stage_heredocs(stage)]
+        for simple in _simples_of(stage):
+            args = [_expand(w.text, simple.pos, bindings) for w in _arguments(simple)]
+            code += [(arg, None) for arg in args]
+            if len(args) > 1:
+                code.append((" ".join(args), None))
+    return code
+
+
+@functools.lru_cache(maxsize=64)
+def _shell_after(pipeline: bash_reader.Pipeline) -> tuple[bool, ...]:
+    """For each stage of the pipeline, whether a later stage runs a shell. One pass from the end,
+    so a long pipeline is read once."""
+    flags: list[bool] = []
+    later = False
+    for stage in reversed(pipeline.stages):
+        flags.append(later)
+        later = later or _runs_shell(stage)
+    return tuple(reversed(flags))
+
+
+def _stdin_code(stage, bindings: dict[str, tuple[int, str]]) -> list[tuple[str, str | None]]:
+    """The heredoc bodies and here-strings redirected onto a stage's input."""
+    code: list[tuple[str, str | None]] = []
+    for redirect in stage.redirects:
+        if redirect.heredoc is not None:
+            code.append((redirect.heredoc.body, None))
+        elif redirect.op == "<<<" and redirect.target is not None:
+            code.append((_expand(redirect.target.text, getattr(stage, "pos", 0), bindings), None))
+    return code
+
+
+def _walk(script: bash_reader.Script, cwd: str, depth: int,
+          bindings: dict[str, tuple[int, str]] | None = None):
+    """Yield `(stage, cwd, bindings)` for every simple command and compound command in `script`,
+    in order, with the directory in force. Every nested script and every piece of code a stage
+    runs is walked too. A subshell, a stage of a multi-stage pipeline, a nested script and a
+    backgrounded pipeline restore the directory when they end; `cd`, `pushd` and `popd` move it,
+    and a directory they can't name is unresolved. Past `_MAX_CODE_DEPTH` code strings it raises."""
+    if depth > _MAX_CODE_DEPTH:
+        raise RecursionError(f"shell code nested past {_MAX_CODE_DEPTH} levels")
+    if bindings is None:
+        bindings = _literal_bindings(script)
+    text = script.text
+    pushed: list[str] = []
+    scopes: list[list[tuple[str, list[str]]]] = [[]]   # a trap's code and each directory it may run in
+    marks: list[tuple[bool, str, tuple[str, ...]]] = []
+    started: dict[int, tuple[str, tuple[str, ...]]] = {}
+    for event in bash_reader.iter_commands(script):
+        kind = event[0]
+        if kind == "pipeline":
+            saved = started.pop(id(event[1]), None)
+            if saved and event[1].background:
+                cwd, pushed = saved[0], list(saved[1])
+            continue
+        if kind == "leave":
+            restore, saved_cwd, saved_pushed = marks.pop()
+            if restore:
+                for code, directories in scopes.pop():
+                    for directory in directories:
+                        yield from _walk(_parsed(code), directory, depth + 1)
+                cwd, pushed = saved_cwd, list(saved_pushed)
+                _note_directory(scopes[-1], cwd)
+            continue
+        stage, pipeline, index = event[1], event[2], event[3]
+        before = (cwd, tuple(pushed))
+        if index == 0 and pipeline.background:
+            started[id(pipeline)] = before
+        multi = len(pipeline.stages) > 1
+        if kind == "enter":
+            restore = stage.kind == "subshell" or multi
+            marks.append((restore, cwd, tuple(pushed)))
+            if restore:
+                scopes.append([])
+        for sub in _stage_scripts(stage):
+            if sub.text is text:
+                yield from _walk(sub, cwd, depth, bindings)
+            else:
+                yield from _walk(sub, cwd, depth + 1)
+        yield stage, cwd, bindings
+        for code, override in _code_of(stage, pipeline, index, bindings):
+            if override == _DEFERRED:
+                scopes[-1].append((code, [cwd]))
+            else:
+                yield from _walk(_parsed(code), cwd, depth + 1)
+        if kind == "simple":
+            cwd = _moved_directory(stage, cwd, pushed, bindings)
+            if multi:
+                cwd, pushed = before[0], list(before[1])
+            _note_directory(scopes[-1], cwd)
+    for code, directories in scopes[0]:
+        for directory in directories:
+            yield from _walk(_parsed(code), directory, depth + 1)
+
+
+def _note_directory(traps: list[tuple[str, list[str]]], cwd: str) -> None:
+    for _code, directories in traps:
+        if cwd not in directories:
+            directories.append(cwd)
+
+
+def _moved_directory(simple: bash_reader.Simple, cwd: str, pushed: list[str],
+                     bindings: dict[str, tuple[int, str]]) -> str:
+    """The directory in force after `simple`: `cd`, `pushd` and `popd` move it, anything else
+    leaves it. `pushed` is the `pushd` stack, changed in place."""
+    if not simple.words or simple.words[0].text not in _DIRECTORY_VERBS:
+        return cwd
+    verb = simple.words[0].text
+    args = [_expand(w.text, simple.pos, bindings) for w in _arguments(simple)]
+    if verb == "cd":
+        while args and args[0] in _CD_FLAGS:
+            args.pop(0)
+        if args[:1] == ["--"]:
+            args.pop(0)
+    word = args[0] if args else None
+    if verb == "popd":
+        return pushed.pop() if pushed else "$OLDPWD"
+    if word.startswith(("-", "+")) if word else verb == "pushd":
+        return "$OLDPWD"
+    if verb == "pushd":
+        pushed.append(cwd)
+    return _landing_path(word or "~", cwd)
+
+
+@functools.lru_cache(maxsize=16)
+def _stages(cmd: str, start: str) -> tuple[tuple, ...]:
+    """The walk of `cmd` from `start`, kept so the write check, the denials and the lease read one
+    walk of one parse."""
+    return tuple(_walk(_parsed(cmd), start, 0))
 
 
 def _bash_write_targets(cmd: str, start: str = "") -> list[str]:
     """The files a bash command writes, at the path each lands on, as far as its text says.
     Relative paths start at `start`, itself relative to the project root.
 
-    Covers redirects, `tee`, the in-place editors `sed -i` and `perl -i`, and the file verbs
-    in `_FILE_VERB_RE`. Called on heredoc-stripped input, so heredoc prose names nothing.
-
-    `-c "..."` payloads go first (v0.3.11): their `>` and `>=` are code, and they stay out of
-    reach. An operator in literal text is not a redirect (fb-48a328898d07); see
-    `_literal_text_mask`. A path-likeness filter drops what survives when the mask gives up.
+    Covers redirects (on simple commands and on compounds), `tee`, the in-place editors `sed -i`
+    and `perl -i`, and the file verbs in `_FILE_VERBS`. The command is read from its tree, so
+    heredoc prose, quoted text and a `>` in `python -c "1 > 2"` name nothing, while code bash runs
+    from a string (`bash -c`, `eval`, `trap`, a heredoc on a shell) is read as code. A path-likeness
+    filter drops what survives.
 
     `$NAME` resolves when the command itself assigned it; see `_literal_bindings`. Any other
     target holding a `$` or a backtick comes back unexpanded and fails closed; see
-    `_is_unresolved`. `find -exec`, `xargs` and `sudo` hide a file verb from this reading.
+    `_is_unresolved`. `find -exec`, `xargs` and `sudo` hide a file verb from this reading, though
+    `tee`, `sed` and `perl` are read at any word that starts outside a quote.
     """
     if not _may_write(cmd):
         return []
-    cleaned = _strip_c_payloads(cmd)
-    literal = _literal_text_mask(cleaned)
-    labels = _case_labels(cleaned, literal)
-    starts = _command_starts(cleaned, literal, labels)
-    bindings = _literal_bindings(cleaned, literal, starts, labels)
-    cwds = _cwd_scopes(cleaned, literal, start, bindings, labels, starts)
-    named: list[tuple[int, str]] = []
-    verb_files: list[tuple[int, str, str]] = []
-    for m in _REDIRECT_RE.finditer(cleaned):
-        if not literal[m.start()]:
-            named += [(m.start(), word) for word in _redirect_words(cleaned, m.end())]
-    for m in _WRITER_RE.finditer(cleaned):
-        if not literal[m.start()]:
-            args = _command_args(cleaned, m.end(), literal)
-            files = ([a for a in args if not a.startswith("-")] if m[1] == "tee"
-                     else _inplace_files(m[1], args))
-            named += [(m.start(), f) for f in files]
-    for m in _FILE_VERB_RE.finditer(cleaned):
-        if not literal[m.start()] and m.start() in starts:
-            args = _command_args(cleaned, m.end(), literal)
+    redirected: list[str] = []
+    written: list[str] = []
+    changed: list[str] = []
+    for stage, cwd, bindings in _stages(cmd, start):
+        for redirect in stage.redirects:
+            if redirect.target is not None and redirect.op in _WRITE_OPS:
+                _name_target(redirected, _expand(redirect.target.text, redirect.pos, bindings), cwd)
+        if not isinstance(stage, bash_reader.Simple) or not stage.words:
+            continue
+        words = stage.words
+        for j, word in enumerate(words):
+            writer = os.path.basename(word.text)
+            if word.bare and writer in _WRITERS:
+                args = [w.text for w in _arguments(stage, j + 1)]
+                files = ([a for a in args if not a.startswith("-")] if writer == "tee"
+                         else _inplace_files(writer, args))
+                for file in files:
+                    _name_target(written, _expand(file, stage.pos, bindings), cwd)
+        verb = _stage_name(stage, bindings)
+        if verb in _FILE_VERBS:
+            raw = [w.text for w in _arguments(stage)]
             # Expanded first: a value can be a flag, which changes what the operands mean.
-            words = [_expand(a, m.start(), bindings) for a in args]
-            files = _file_verb_targets(m[1], words)
-            split = {w for a, w in zip(args, words)
-                     if _splits_when_used(a, m.start(), bindings)}
-            verb_files += [(m.start(), m[1], f) for f in [*files, *sorted(split - set(files))]]
-    targets: list[str] = []
-    for pos, raw in named:
-        tok = _expand(raw, pos, bindings)
-        if tok not in _SKIP_TARGETS and (_is_unresolved(tok) or _looks_like_file_target(tok)):
-            targets.append(_landing_path(tok, _cwd_at(cwds, pos)))
-    for pos, verb, tok in verb_files:     # an operand is a path, so no path-likeness filter
-        path = _landing_path(tok, _cwd_at(cwds, pos))
-        if tok not in _SKIP_TARGETS and not (verb == "rm" and _is_regenerable(path)):
-            targets.append(path)
-    for pos, body in _backtick_bodies(cleaned):     # the redirects above saw this text
-        found = _bash_write_targets(body, _cwd_at(cwds, pos))
-        targets += [target for target in found if target not in targets]
-    return targets
+            args = [_expand(a, stage.pos, bindings) for a in raw]
+            files = _file_verb_targets(verb, args)
+            split = {w for a, w in zip(raw, args) if _splits_when_used(a, stage.pos, bindings)}
+            for tok in [*files, *sorted(split - set(files))]:   # an operand is a path: no filter
+                path = _landing_path(tok, cwd)
+                if tok not in _SKIP_TARGETS and not (verb == "rm" and _is_regenerable(path)):
+                    changed.append(path)
+    return list(dict.fromkeys([*redirected, *written, *changed]))
+
+
+def _name_target(targets: list[str], tok: str, cwd: str) -> None:
+    if tok not in _SKIP_TARGETS and (_is_unresolved(tok) or _looks_like_file_target(tok)):
+        targets.append(_landing_path(tok, cwd))
 
 
 def _is_regenerable(path: str) -> bool:
@@ -680,72 +906,152 @@ def _is_regenerable(path: str) -> bool:
     return not _is_unresolved(path) and not _REGENERABLE_DIRS.isdisjoint(path.split("/"))
 
 
-def _command_starts(cmd: str, literal: bytearray, labels: set[int]) -> set[int]:
-    """Where each statement's first word begins, and each word after its `VAR=x` prefixes and
-    redirects. One forward pass, so a separator in literal text splits nothing and a long
-    statement stays linear."""
-    starts: set[int] = set()
-    boundaries = [m.end() for m in _STATEMENT_START_RE.finditer(cmd) if not literal[m.start()]]
-    boundaries += [i + 1 for i in labels if cmd[i] == ")"]
-    for i in [0, *boundaries]:
-        i = _skip_blanks(cmd, i)
-        while i not in starts:
-            starts.add(i)
-            end = None if i >= len(cmd) or literal[i] else _prefix_end(cmd, i)
-            if end is None:
-                break
-            i = _skip_blanks(cmd, end)
-    return starts
-
-
-def _prefix_end(cmd: str, i: int) -> int | None:
-    """The index past the `VAR=x` or redirect at `i`, or None if a command word starts here."""
-    env = _ENV_WORD_RE.match(cmd, i)
-    if env:
-        return env.end() if cmd[env.end():env.end() + 1] in _WORD_END else _shell_word(
-            cmd, env.end())[1]
-    redirect = _PREFIX_REDIRECT_RE.match(cmd, i)
-    if not redirect:
-        return None
-    if redirect["copy"]:
-        return redirect.end()
-    word, end = _shell_word(cmd, redirect.end())
-    return None if word is None else end
-
-
-def _named_commands(cmd: str, names: frozenset[str], start: str = "",
-                    depth: int = 0) -> list[tuple[list[str], str]]:
+def _named_commands(cmd: str, names: frozenset[str], start: str = "") -> list[tuple[list[str], str]]:
     """Each command `cmd` runs under one of `names`, on any path, as (argv, the directory it runs
-    in), its words expanded. Called on heredoc-stripped input. Reads `bash -c`, `eval`, `trap` and
-    backtick bodies too. Only a named command's argv is read, so a line of keywords stays linear.
+    in), its words expanded. Reads what the tree holds: every command in a compound, a
+    substitution or a backtick, and the code of `bash -c`, `eval`, `trap` and heredocs a shell
+    reads.
 
     A name the command line never set stays unread: `$G push` could be anything, and refusing it
     would refuse `$PYTHON -m pytest`. The same goes for a substitution before the command word.
     `sudo`, `env` and the like hide a command from this reading. Code nested past
     `_MAX_CODE_DEPTH` raises, which `pre_tool` turns into a refusal."""
-    if depth > _MAX_CODE_DEPTH:
-        raise RecursionError(f"shell code nested past {_MAX_CODE_DEPTH} levels")
-    literal = _literal_text_mask(cmd)
-    labels = _case_labels(cmd, literal)
-    starts = _command_starts(cmd, literal, labels)
-    bindings = _literal_bindings(cmd, literal, starts, labels)
-    cwds = _cwd_scopes(cmd, literal, start, bindings, labels, starts)
     found: list[tuple[list[str], str]] = []
-    for pos in sorted(starts):
-        word = _shell_word(cmd, pos)[0] if cmd[pos:pos + 1] not in ("", "#") else None
-        name = os.path.basename(_expand(word, pos, bindings)) if word else ""
-        if name not in names and name not in _CODE_RUNNERS:
-            continue
-        argv = [_expand(a, pos, bindings) for a in _command_args(cmd, pos, literal)]
-        cwd = _cwd_at(cwds, pos)
-        if name in names:
+    for stage, cwd, bindings in _stages(cmd, start):
+        if isinstance(stage, bash_reader.Simple) and _stage_name(stage, bindings) in names:
+            argv = [_expand(w.text, stage.pos, bindings)
+                    for w in (stage.words[0], *_arguments(stage))]
             found.append((argv, cwd))
-        code = _shell_code(name, argv)
-        if code:
-            found += _named_commands(_strip_heredocs(code), names, cwd, depth + 1)
-    for pos, body in _backtick_bodies(cmd):
-        found += _named_commands(body, names, _cwd_at(cwds, pos), depth + 1)
     return found
+
+
+def _deny_bash_text(cmd: str) -> str:
+    """`cmd` as the legacy `deny_bash` patterns read it: with the span of every closed heredoc
+    removed, so prose in a body trips nothing, unless a shell reads the body, which then stays
+    as the text it runs (with its own data heredocs cut). An unquoted body's `$( )` and backtick
+    spans stay, appended where the body was, since they run. A heredoc inside a backtick span is
+    read from its own string, so it stays. A command with no `<<` is returned as it is."""
+    return cmd if "<<" not in cmd else _cut_text(cmd, 0, False)
+
+
+def _cut_text(cmd: str, depth: int, programs: bool) -> str:
+    """`cmd` with its heredoc data cut out, as `_deny_bash_text` says. With `programs`, the
+    program string of a `-c` flag goes too (`python3 -c "S=1"`): it is code of another process,
+    which can't rebind a name here."""
+    if depth > _MAX_CODE_DEPTH:
+        raise RecursionError(f"heredocs nested past {_MAX_CODE_DEPTH} levels")
+    script = _parsed(cmd)
+    cuts: list[tuple[int, int, str]] = []
+    todo = [script]
+    while todo:
+        for event in bash_reader.iter_commands(todo.pop()):
+            if event[0] not in ("simple", "enter"):
+                continue
+            stage, pipeline, index = event[1], event[2], event[3]
+            if programs and isinstance(stage, bash_reader.Simple):
+                program = _program_word(stage)
+                if program is not None:
+                    cuts.append((program.pos, program.end, ""))
+            read = {id(code) for code, _ in _code_of(stage, pipeline, index)}
+            for redirect in stage.redirects:
+                heredoc = redirect.heredoc
+                if heredoc is None or not heredoc.closed:
+                    continue
+                kept = [] if heredoc.quoted else [
+                    _cut_text(f"{span}\n", depth + 1, programs) for span in heredoc.spans]
+                if id(heredoc.body) in read:
+                    kept.append(_cut_text(heredoc.body, depth + 1, programs))
+                cuts.append((heredoc.span[0], heredoc.span[1], "".join(kept)))
+            todo += [s for s in _stage_scripts(stage) if s.text is script.text]
+    if not cuts:
+        return cmd
+    cuts.sort()
+    pieces: list[str] = []
+    at = 0
+    for begin, end, replacement in cuts:
+        if begin >= at:
+            pieces += [cmd[at:begin], replacement]
+            at = end
+    return "".join(pieces) + cmd[at:]
+
+
+def _program_word(simple: bash_reader.Simple) -> bash_reader.Word | None:
+    """The word that is the program string of a `-c` flag (`bash -c 'S=1'`, `python3 -c "..."`):
+    the first word after the flag that is no flag itself."""
+    words = simple.words
+    for i, word in enumerate(words[1:], 1):
+        if word.text.startswith("-") and not word.text.startswith("--") and "c" in word.text:
+            return next((w for w in words[i + 1:] if not w.text.startswith(("-", "+"))), None)
+    return None
+
+
+def _literal_bindings(script: bash_reader.Script) -> dict[str, tuple[int, str]]:
+    """{name: (position, value)} for each variable the command assigns exactly once, at the
+    top level, so a use after it reads that value. Anything that could leave the name holding
+    another value leaves it out, and its uses fail closed: a second binder (`for`, `read`,
+    `+=`, `unset`), a subshell, a pipeline or a background command, a `X=a cmd` prefix, which
+    never reaches the next statement, or any second place the text could change it. Code the gate
+    can't read (`eval`, `source`) leaves every name out. The raw-text rules read the text with
+    heredoc data and `-c` program strings cut out, so prose in a body or the code of another
+    process spoils nothing.
+
+    An assignment inside `if` or after `&&` counts as taken."""
+    if "=" not in script.text or "$" not in script.text:
+        return {}
+    cmd = _cut_text(script.text, 0, True)
+    if _OPAQUE_CODE_RE.search(cmd):
+        return {}
+    bound: dict[str, tuple[int, str]] = {}
+    spoiled: set[str] = set()
+    for m in _REBINDER_RE.finditer(cmd):
+        spoiled.update(re.findall(r"[A-Za-z_]\w*", m[1] or m[2] or ""))
+    seen: set[str] = set()
+    for m in _MUTATION_RE.finditer(cmd):
+        name = m[1] or m[2]
+        (spoiled if name in seen else seen).add(name)
+
+    def bind(name: str, pos: int, value: str, extra: bool) -> None:
+        if name in bound or name in spoiled or extra:
+            spoiled.add(name)     # `bound` never holds a spoiled name, so no value copies one
+            bound.pop(name, None)
+        else:
+            bound[name] = (pos, _expand(value, pos, bound))
+
+    shared: list[bool] = []       # per open compound: does it run in a subshell of its own
+    hidden = 0
+    for event in bash_reader.iter_commands(script):
+        kind = event[0]
+        if kind == "enter":
+            subshell = (event[1].kind == "subshell" or len(event[2].stages) > 1
+                        or event[2].background)
+            shared.append(subshell)
+            hidden += subshell
+        elif kind == "leave":
+            hidden -= shared.pop()
+        elif kind == "simple":
+            simple, pipeline = event[1], event[2]
+            if hidden or len(pipeline.stages) > 1 or pipeline.background:
+                continue
+            if not simple.words:
+                for a in simple.assignments:
+                    bind(a.name, a.pos, a.value.text, a.append or a.array)
+            elif (simple.words[0].text in _DECLARERS and len(simple.words) == 2
+                  and not simple.redirects and not simple.assignments):
+                word = simple.words[1]
+                declared = _DECLARED_RE.match(word.text)
+                if declared:
+                    bind(declared[1], word.pos, word.text[declared.end():], bool(declared[2]))
+    return bound
+
+
+
+
+
+
+
+
+
+
 
 
 def _shell_code(name: str, argv: list[str]) -> str | None:
@@ -762,60 +1068,6 @@ def _shell_code(name: str, argv: list[str]) -> str | None:
     return None
 
 
-def _backtick_bodies(cmd: str) -> list[tuple[int, str]]:
-    """(position, code) of each backtick span, with one level of escapes off its own nested
-    backticks. A scan of its own, since `_literal_text_mask` stops marking at the first backtick
-    and a quoted backtick after it would shift every pair. `open_quotes` holds each `"` and `$(`
-    still open: a `'` is literal directly in a `"`, and quotes again in a `$(` inside one."""
-    if "`" not in cmd:
-        return []
-    spans: list[tuple[int, str]] = []
-    open_quotes: list[str] = []
-    i, n = 0, len(cmd)
-    while i < n:
-        c = cmd[i]
-        in_double = open_quotes[-1:] == ['"']
-        if c == "\\":
-            i += 2
-        elif c == "`":
-            end = i + 1
-            while end < n and cmd[end] != "`":
-                end += 2 if cmd[end] == "\\" else 1
-            if end < n:
-                spans.append((i, re.sub(r"\\([`\\$])", r"\1", cmd[i + 1:end])))
-            i = end + 1
-        elif cmd.startswith("$(", i):
-            open_quotes.append("(")
-            i += 2
-        elif c == '"':
-            if in_double:
-                open_quotes.pop()
-            else:
-                open_quotes.append(c)
-            i += 1
-        elif in_double:
-            i += 1
-        elif c == "(":
-            open_quotes.append(c)
-            i += 1
-        elif c == ")":
-            if open_quotes:
-                open_quotes.pop()
-            i += 1
-        elif c == "'":
-            end = cmd.find("'", i + 1)
-            i = n if end < 0 else end + 1
-        elif cmd.startswith("$'", i):
-            i += 2
-            while i < n and cmd[i] != "'":
-                i += 2 if cmd[i] == "\\" else 1
-            i += 1
-        elif c == "#" and (i == 0 or cmd[i - 1] in " \t\n;&|("):
-            end = cmd.find("\n", i)
-            i = n if end < 0 else end
-        else:
-            i += 1
-    return spans
 
 
 def _git_call(argv: list[str], cwd: str) -> tuple[list[str], str]:
@@ -835,48 +1087,6 @@ def _git_call(argv: list[str], cwd: str) -> tuple[list[str], str]:
     return argv[i:], directory
 
 
-def _case_labels(cmd: str, literal: bytearray) -> set[int]:
-    """Where each `case` label's own parens sit: the `)` that closes it, and a leading `(`. They
-    open no subshell, and code begins after the `)`. Parens in a label's extglob or `$( )`, and
-    in an arm's code, are not among them."""
-    labels: set[int] = set()
-    if "case" not in cmd:
-        return labels
-    stack: list[str] = []          # one of "subject", "label", "body" per open `case`
-    depth = 0                      # open parens inside the label being read
-    body_start = -1
-    for m in _CASE_TOKEN_RE.finditer(cmd):
-        token, pos = m[0], m.start()
-        if literal[pos]:
-            continue
-        state = stack[-1] if stack else None
-        at_start = pos == body_start or _at_command_position(cmd, pos)
-        if token == "case" and state in (None, "body") and at_start:
-            stack.append("subject")
-        elif state == "subject":
-            if token == "in":
-                stack[-1], depth = "label", 0
-        elif state == "label":
-            if token == "esac" and depth == 0:
-                stack.pop()
-            elif token == ")":
-                if depth:
-                    depth -= 1
-                else:
-                    labels.add(pos)
-                    stack[-1] = "body"
-                    body_start = _skip_blanks(cmd, m.end())
-            elif token == "(":
-                if depth or cmd[pos - 1] in _EXTGLOB_OPENERS:
-                    depth += 1
-                else:
-                    labels.add(pos)
-        elif state == "body":
-            if token.startswith(";"):
-                stack[-1], depth = "label", 0
-            elif token == "esac" and at_start:
-                stack.pop()
-    return labels
 
 
 def _file_verb_targets(verb: str, args: list[str]) -> list[str]:
@@ -940,50 +1150,10 @@ def _verb_operands(verb: str, args: list[str]) -> tuple[list[str], str | None, b
     return operands, target_dir, makes_dirs
 
 
-def _literal_bindings(cmd: str, literal: bytearray, starts: set[int],
-                      labels: set[int]) -> dict[str, tuple[int, str]]:
-    """{name: (position, value)} for each variable the command assigns exactly once, at the
-    top level, so a use after it reads that value. Anything that could leave the name holding
-    another value leaves it out, and its uses fail closed: a second binder (`for`, `read`,
-    `+=`, `unset`), a subshell, a `X=a cmd` prefix, which never reaches the next statement, or
-    any second place the text could change it. Code the gate can't read (`eval`, `source`)
-    leaves every name out.
-
-    An assignment inside `if` or after `&&` counts as taken."""
-    if "=" not in cmd or "$" not in cmd or _OPAQUE_CODE_RE.search(cmd):
-        return {}
-    bound: dict[str, tuple[int, str]] = {}
-    spoiled: set[str] = set()
-    for m in _REBINDER_RE.finditer(cmd):
-        if not literal[m.start()]:
-            spoiled.update(re.findall(r"[A-Za-z_]\w*", m[1] or m[2] or ""))
-    seen: set[str] = set()
-    for m in _MUTATION_RE.finditer(cmd):
-        name = m[1] or m[2]
-        (spoiled if name in seen else seen).add(name)
-    depth = scanned = 0
-    for m in _ASSIGNMENT_RE.finditer(cmd):
-        name = m[1]
-        if literal[m.start()] or m.start() not in starts:
-            continue
-        for pos in range(scanned, m.start()):
-            if cmd[pos] in "()" and not literal[pos] and pos not in labels:
-                depth = max(0, depth + (1 if cmd[pos] == "(" else -1))
-        scanned = m.start()
-        word, end = (("", m.end()) if cmd[m.end():m.end() + 1] in _WORD_END
-                     else _shell_word(cmd, m.end()))
-        after = _skip_blanks(cmd, end)
-        persists = after >= len(cmd) or cmd[after] in ";&|)\n#"
-        if name in bound or name in spoiled or m[2] or not persists or depth > 0:
-            spoiled.add(name)     # `bound` never holds a spoiled name, so no value copies one
-            bound.pop(name, None)
-        else:
-            bound[name] = (m.start(), _expand(word or "", m.start(), bound))
-    return bound
 
 
 def _expand(word: str, pos: int, bindings: dict[str, tuple[int, str]]) -> str:
-    """`word`, as `_shell_word` gave it, with each `$NAME` the command bound before `pos`, and
+    """`word`, as the reader gave it, with each `$NAME` the command bound before `pos`, and
     `$HOME`, filled in, and its `$`s plain again. A quoted or escaped `$` stays text. Unquoted,
     a value bash would split or glob stays unresolved, since it would not be this one word."""
 
@@ -1002,7 +1172,7 @@ def _expand(word: str, pos: int, bindings: dict[str, tuple[int, str]]) -> str:
 
 
 def _splits_when_used(word: str, pos: int, bindings: dict[str, tuple[int, str]]) -> bool:
-    """True if `word`, as `_shell_word` gave it, uses unquoted a name bound before `pos` to a
+    """True if `word`, as the reader gave it, uses unquoted a name bound before `pos` to a
     value bash would split or glob. Such a word is several words the argv reading can't see."""
     for m in _VARIABLE_RE.finditer(word):
         found = bindings.get(m[2] or m[3])
@@ -1027,168 +1197,20 @@ def _landing_path(target: str, cwd: str) -> str:
     return path if _is_unresolved(path) else os.path.normpath(path)
 
 
-def _at_command_position(cmd: str, i: int) -> bool:
-    while i > 0:
-        if cmd[i - 1] in " \t":
-            i -= 1
-        elif cmd[max(0, i - 2):i] == "\\\n":
-            i -= 2
-        else:
-            break
-    if i == 0 or cmd[i - 1] in _COMMAND_STARTERS:
-        return True
-    return _KEYWORD_BEFORE_RE.search(cmd, max(0, i - 6), i) is not None
 
 
-def _cwd_scopes(cmd: str, literal: bytearray, start: str, bindings: dict[str, tuple[int, str]],
-                labels: set[int], starts: set[int]) -> list[tuple[int, str]]:
-    """(position, directory) at each change of the `cd` in force, beginning at `start`. A `cd`
-    inside `( )` or `$( )` ends with it. `pushd` and `popd` move the same way, and a directory
-    they can't name is unresolved."""
-    scopes = [(0, start)]
-    saved: list[str] = []
-    pushed: list[str] = []
-    cwd = start
-    for m in _CWD_RE.finditer(cmd):
-        if literal[m.start()] or m.start() in labels:
-            continue
-        if m[0] == "(":
-            saved.append(cwd)
-        elif m[0] == ")":
-            if not saved:
-                continue
-            cwd = saved.pop()
-        elif m.start() in starts:
-            verb = m[0].strip()
-            word, _end = _shell_word(cmd, m.end())
-            word = _expand(word, m.start(), bindings) if word else word
-            if verb == "popd":
-                cwd = pushed.pop() if pushed else "$OLDPWD"
-            elif word.startswith(("-", "+")) if word else verb == "pushd":
-                cwd = "$OLDPWD"
-            else:
-                if verb == "pushd":
-                    pushed.append(cwd)
-                cwd = _landing_path(word or "~", cwd)
-        else:
-            continue
-        scopes.append((m.start(), cwd))
-    return scopes
 
 
-def _cwd_at(scopes: list[tuple[int, str]], pos: int) -> str:
-    return next(cwd for start, cwd in reversed(scopes) if start <= pos)
 
 
-def _skip_blanks(cmd: str, i: int) -> int:
-    while i < len(cmd):
-        if cmd[i] in " \t":
-            i += 1
-        elif cmd.startswith("\\\n", i):
-            i += 2
-        else:
-            break
-    return i
 
 
-def _shell_word(cmd: str, i: int) -> tuple[str | None, int]:
-    """The word starting at `i` after blanks, as bash reads it, and the index past it. None
-    if no word starts there. Quotes and escapes come off, and each `$` they governed is marked
-    for `_expand`, which every word bound for the gate passes through. An expansion stays as
-    text, which `_is_unresolved` then catches. An empty `""` is a word."""
-    i = start = _skip_blanks(cmd, i)
-    n = len(cmd)
-    out: list[str] = []
-    while i < n and cmd[i] not in _WORD_END:
-        c = cmd[i]
-        if c == "\\":
-            if cmd[i + 1:i + 2] != "\n":
-                out.append(cmd[i + 1:i + 2].replace("$", _LITERAL_DOLLAR))
-            i += 2
-        elif c == "'":
-            end = cmd.find("'", i + 1)
-            end = n if end < 0 else end
-            out.append(cmd[i + 1:end].replace("$", _LITERAL_DOLLAR))
-            i = end + 1
-        elif c == '"':
-            end = _double_quote_end(cmd, i) or n + 1
-            body = re.sub(r'\\(["\\$`])',
-                          lambda m: _LITERAL_DOLLAR if m[1] == "$" else m[1], cmd[i + 1:end - 1])
-            out.append(body.replace("$", _QUOTED_DOLLAR))
-            i = end
-        elif c == "`" or cmd.startswith("$(", i):
-            end = _substitution_end(cmd, i)
-            out.append(cmd[i:end])
-            i = end
-        else:
-            out.append(c)
-            i += 1
-    return ("".join(out), i) if i > start else (None, i)
 
 
-def _redirect_words(cmd: str, i: int) -> list[str]:
-    """The target at `i`, plus its head when a quote or backtick starts inside it. In text a
-    shell runs again, that quote closes the string the redirect sits in (`eval "echo > f"`),
-    so the head is the target. Elsewhere it is one more path to check, and fails closed."""
-    start = _skip_blanks(cmd, i)
-    word, end = _shell_word(cmd, start)
-    if not word:
-        return []
-    inner = _INNER_QUOTE_RE.search(cmd, start + 1, end)
-    head = _shell_word(cmd[start:inner.start()], 0)[0] if inner else None
-    if head and cmd.count("`", start, end) % 2:     # a backtick this word never closes
-        return [head]
-    return [word, head] if head else [word]
 
 
-def _substitution_end(cmd: str, start: int) -> int:
-    """Index just past the `$(...)` or backtick span at `start`, or the command's end. Quotes
-    inside `$(...)` are skipped, so a `)` in them closes nothing."""
-    if cmd[start] == "`":
-        end = cmd.find("`", start + 1)
-        return len(cmd) if end < 0 else end + 1
-    depth, i, n = 1, start + 2, len(cmd)
-    while i < n:
-        c = cmd[i]
-        if c == "\\":
-            i += 2
-            continue
-        if c == "'":
-            end = cmd.find("'", i + 1)
-            i = n if end < 0 else end + 1
-            continue
-        if c == '"':
-            i = _double_quote_end(cmd, i) or n
-            continue
-        depth += (c == "(") - (c == ")")
-        i += 1
-        if depth == 0:
-            return i
-    return n
 
 
-def _command_args(cmd: str, i: int, literal: bytearray) -> list[str]:
-    """The words of the command from `i` to the end of its statement, leaving out redirects
-    and the descriptor number before one."""
-    args: list[str] = []
-    while True:
-        i = _skip_blanks(cmd, i)
-        if i >= len(cmd) or cmd[i] in ";&|()\n" or (cmd[i] == "#" and literal[i]):
-            return args
-        if cmd.startswith(("<(", ">("), i):         # a process substitution is an argument
-            i = _substitution_end(cmd, i)
-            continue
-        if cmd[i] in "<>":
-            m = _REDIRECT_RE.match(cmd, i)
-            i = m.end() if m else i + 1
-            _word, i = _shell_word(cmd, i)
-            continue
-        word, end = _shell_word(cmd, i)
-        if word is None:
-            return args
-        if not (word.isdigit() and cmd[end:end + 1] in ("<", ">")):
-            args.append(word)
-        i = end
 
 
 def _inplace_files(editor: str, args: list[str]) -> list[str]:
@@ -1233,131 +1255,18 @@ def _inplace_files(editor: str, args: list[str]) -> list[str]:
     return files or [_FROM_STDIN]
 
 
-def _literal_text_mask(cmd: str) -> bytearray:
-    """1 at every position bash reads as literal text: quotes, escaped operators, comments,
-    arithmetic and `[[ ]]`, where `>` compares.
-
-    `$(...)` in double quotes is code again, so it is read by the same rules. The gate must
-    never lose a real redirect, so where this can't be sure it stops marking and the rest
-    of the command scans as code. That covers a backtick in double quotes, which runs a
-    command and can nest quotes; a complex `${`, `$'` and a bare backtick, whose quoting
-    rules differ; an unterminated quote; and text a shell runs again, such as `eval`,
-    `trap` or `| sh`. A false block costs a turn, and a missed
-    redirect is a write the gate never sees. Indirection (`$cmd "..."`) and a script
-    written then sourced are out of reach, as `bash -c` payloads are for the write check.
-    `_named_commands` does read those.
-    """
-    mask = _quoted_text_mask(cmd)
-    if any(not mask[m.start()] for m in _REEXEC_RE.finditer(cmd)):
-        return bytearray(len(cmd))
-    return mask
 
 
-def _quoted_text_mask(cmd: str) -> bytearray:
-    """The mask before any re-execution check: the same marks, with `eval` read as a word."""
-    mask = bytearray(len(cmd))
-    i, n = 0, len(cmd)
-    word_start = True
-    while i < n:
-        c = cmd[i]
-        at_word_start, word_start = word_start, c in " \t\n"
-        if c == "\\":
-            # Skipped so `\'` opens no quote. Only an operator is masked: `\tee` still runs tee.
-            if cmd[i + 1:i + 2] in _ESCAPABLE_OPERATORS:
-                mask[i + 1] = 1
-            i += 2
-            continue
-        if c == "`" or cmd.startswith("$'", i):
-            return mask
-        compare = None
-        if c == "$" or (at_word_start and c == "("):
-            compare = _ARITHMETIC_RE.match(cmd, i)
-        elif at_word_start and cmd.startswith("[[", i) and _at_command_position(cmd, i):
-            compare = _TEST_RE.match(cmd, i)
-        if compare:
-            mask[i:compare.end()] = b"\x01" * (compare.end() - i)
-            i = compare.end()
-            continue
-        if cmd.startswith("${", i):
-            param = _PARAMETER_RE.match(cmd, i)
-            if not param:
-                return mask
-            mask[i:param.end()] = b"\x01" * (param.end() - i)
-            i = param.end()
-            continue
-        if c == "'":
-            end = cmd.find("'", i + 1) + 1
-        elif c == '"':
-            end = _double_quote_end(cmd, i)
-            if end and _UNESCAPED_BACKTICK_RE.search(cmd, i, end):
-                return mask
-            if end:
-                _mask_double_quotes(cmd, i, end, mask)
-                i = end
-                continue
-        elif c == "#" and at_word_start:
-            newline = cmd.find("\n", i)
-            end = newline if newline >= 0 else n
-        else:
-            i += 1
-            continue
-        if not end:                               # unterminated quote
-            return mask
-        mask[i:end] = b"\x01" * (end - i)
-        i = end
-    return mask
 
 
-def _mask_double_quotes(cmd: str, start: int, end: int, mask: bytearray) -> None:
-    """Mark the double-quoted span, leaving each `$(...)` in it masked as the code it is."""
-    mask[start:end] = b"\x01" * (end - start)
-    i = start + 1
-    while i < end - 1:
-        if cmd[i] == "\\":
-            i += 2
-        elif arithmetic := _ARITHMETIC_RE.match(cmd, i):
-            i = arithmetic.end()
-        elif cmd.startswith("$(", i):
-            stop = _substitution_end(cmd, i)
-            mask[i:stop] = bytes(stop - i)
-            mask[i + 2:stop - 1] = _literal_text_mask(cmd[i + 2:stop - 1])
-            i = stop
-        else:
-            i += 1
 
 
-def _double_quote_end(cmd: str, start: int) -> int:
-    """Index just past the `"` closing the one at `start`, or 0 if it never closes. A `$(`
-    opens its own quoting, so a `"` inside one closes nothing here."""
-    i = start + 1
-    while i < len(cmd):
-        if cmd[i] == "\\":
-            i += 2
-        elif cmd[i] == '"':
-            return i + 1
-        elif cmd.startswith("$(", i):
-            i = _substitution_end(cmd, i)
-        else:
-            i += 1
-    return 0
 
 
 # Strip `python -c "<program>"` / `bash -c '<script>'` / `sh -c "..."` etc.
 # The embedded program is not shell — it won't be parsed for redirects.
-_C_PAYLOAD_RE = re.compile(
-    r"""(?:python[23]?|bash|sh|zsh|ksh|uv\s+run\s+python[23]?|uv\s+run)\s+
-        (?:[^'"\s<>;&|()`]+\s+){0,32}      # any flags before -c, bounded to stay linear
-        -c\s+
-        (?:"(?:[^"\\]|\\.)*"|'[^']*')        # the payload itself (quoted)
-    """,
-    re.VERBOSE,
-)
 
 
-def _strip_c_payloads(cmd: str) -> str:
-    """Remove `<interpreter> -c "..."` payloads so their contents don't
-    get scanned for shell redirects."""
-    return _C_PAYLOAD_RE.sub("", cmd)
 
 
 def _looks_like_file_target(tok: str) -> bool:
@@ -1423,102 +1332,14 @@ def is_command_denied(cmd: str, phase_spec: dict) -> bool:
     return any(_command_denied(cmd, d) for d in phase_spec.get("deny_commands", []))
 
 
-_HEREDOC_OPERATOR_RE = re.compile(r"(?<!<)<<(-?)(?!<)")
-_LINE_END_RE = re.compile(r"(?<!\\)\n")
 
 
-def _strip_heredocs(cmd: str, depth: int = 0) -> str:
-    """Take out what bash treats as heredoc data, before anything reads `cmd` as commands.
-
-    Prose in a body must not trip a check, but only what bash leaves unrun is data. So `<<` opens
-    a body only where `_quoted_text_mask` leaves it as code, an unquoted body keeps its
-    substitutions, and a body a shell reads stays. That mask, since the re-execution check in
-    `_literal_text_mask` would turn quoted text back into operators.
-
-    A body's quotes would shift how the text after it reads, so the mask is taken again after each
-    line of operators, and text before the first operator is never read from a body. A heredoc
-    with no closing line stays, and scans as code. Heredocs nested past `_MAX_CODE_DEPTH` raise,
-    which `pre_tool` turns into a refusal.
-    """
-    if depth > _MAX_CODE_DEPTH:
-        raise RecursionError(f"heredocs nested past {_MAX_CODE_DEPTH} levels")
-    start = 0
-    while cmd.find("<<", start) >= 0:
-        literal = _quoted_text_mask(cmd)
-        operators = [m for m in _HEREDOC_OPERATOR_RE.finditer(cmd, start)
-                     if not literal[m.start()] and not literal[m.start() + 1]]
-        line_end = next((m.start() for m in _LINE_END_RE.finditer(cmd, operators[0].end())
-                         if not literal[m.start()]), -1) if operators else -1
-        if line_end < 0:
-            return cmd
-        on_line = [m for m in operators if m.start() < line_end]
-        cmd, start = _take_bodies(cmd, on_line, line_end, literal, depth)
-    return cmd
 
 
-def _take_bodies(cmd: str, operators: list[re.Match[str]], line_end: int, literal: bytearray,
-                 depth: int) -> tuple[str, int]:
-    """`cmd` with `operators`, all on the line ending at `line_end`, and their bodies taken out,
-    and the index to go on from. Bodies follow the line in order, and what a body leaves goes back
-    after the line, where it is no argument of the command and an operator on this line can't
-    take it for its own body. Its own heredocs are stripped apart from the rest, since one can't
-    close past the body that holds it, and a substitution runs before a shell reads the body."""
-    starts = _command_starts(cmd, literal, _case_labels(cmd, literal))
-    line: list[str] = []
-    kept: list[str] = []
-    copied, body_start = operators[0].start(), line_end + 1
-    line.append(cmd[:copied])
-    for operator in operators:
-        word, word_end = _shell_word(cmd, operator.end())
-        indent = r"\t*" if operator[1] else ""
-        closing = None if word is None else re.compile(
-            rf"^{indent}{re.escape(word)}$", re.MULTILINE).search(cmd, body_start)
-        if not closing:
-            break
-        line.append(cmd[copied:operator.start()])
-        copied = word_end
-        body = cmd[body_start:closing.start()]
-        delimiter = cmd[operator.end():word_end].replace("\\\n", "")
-        if not set(delimiter) & set("'\"\\"):
-            kept += [_strip_heredocs(f"{span}\n", depth + 1) for span in _substitutions(body)]
-        if _shell_reads_body(cmd, operator.start(), line_end, starts, literal):
-            kept.append(_strip_heredocs(body, depth + 1))
-        body_start = closing.end() + 1
-    if body_start == line_end + 1:
-        return cmd, body_start
-    head = "".join(line) + cmd[copied:line_end + 1] + "".join(kept)
-    return head + cmd[body_start:], len(head)
 
 
-def _shell_reads_body(cmd: str, operator: int, line_end: int, starts: set[int],
-                      literal: bytearray) -> bool:
-    """True if the heredoc at `operator` may feed a shell: its own command is one, or a pipe to one
-    follows on the line. This errs towards code, as telling `bash script.sh <<EOF` or
-    `cat <<EOF; x | sh` apart means parsing flags and groups, and a false refusal costs a turn."""
-    if any(not literal[m.start()] for m in _PIPED_SHELL_RE.finditer(cmd, operator, line_end)):
-        return True
-    pos = max((s for s in starts if s <= operator), default=0)
-    while (end := _prefix_end(cmd, pos)) is not None:
-        pos = _skip_blanks(cmd, end)
-    word = _shell_word(cmd, pos)[0]
-    return word is not None and os.path.basename(word) in _SHELLS
 
 
-def _substitutions(body: str) -> list[str]:
-    """Each `$(...)` and backtick span in an unquoted heredoc body. Quotes are plain text there,
-    and a backslash is what keeps one from running."""
-    spans: list[str] = []
-    i, n = 0, len(body)
-    while i < n:
-        if body[i] == "\\" or body.startswith("$$", i):
-            i += 2
-        elif body[i] == "`" or body.startswith("$(", i):
-            end = _substitution_end(body, i)
-            spans.append(body[i:end])
-            i = end
-        else:
-            i += 1
-    return spans
 
 
 def stop(args=None) -> int:
