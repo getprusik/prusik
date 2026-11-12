@@ -60,8 +60,8 @@ All notable changes to **Prusik** are documented here. The format follows
   this release on `git push`, `git merge`, the lease and the write targets: no command raises, the
   four judgments take 7.0 s against 46.0 s, no push, merge or lease verdict changes, and every
   write-target difference is code in `bash -c` or `trap` now read, quoted text no longer read as a
-  redirect, or a `${v// /_}` no longer split at its space. 130 findings now carry a regression test (127 before); the README count and
-  the Action pin follow.
+  redirect, or a `${v// /_}` no longer split at its space. 130 findings now carry a regression
+  test (127 before); the README count and the Action pin follow.
 
 ## [0.238.8] — three small frictions: negative CSS utilities, the lease hint, fix-round status
 

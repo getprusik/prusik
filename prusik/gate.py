@@ -563,7 +563,7 @@ _VERB_VALUE_LONG = frozenset(("--date", "--group", "--mode", "--owner", "--refer
 _SHELLS = frozenset(("bash", "sh", "zsh", "ksh", "dash"))
 _CODE_RUNNERS = _SHELLS | {"eval", "trap"}
 _SOURCERS = frozenset(("source", "."))
-_MAX_CODE_DEPTH = 32
+_MAX_CODE_DEPTH = bash_reader.MAX_DEPTH
 # The override `_code_of` gives code that runs later, which the walk reads from each directory in
 # force until its scope ends.
 _DEFERRED = "deferred"
@@ -696,17 +696,24 @@ def _runs_shell(stage) -> bool:
 
 def _code_of(stage, pipeline: bash_reader.Pipeline, index: int,
              bindings: dict[str, tuple[int, str]] | None = None) -> list[tuple[str, str | None]]:
-    """(code text, directory override) for everything the stage runs as code. The override is
-    `_DEFERRED` for code that runs later (a `trap`), which the walk reads from every directory in
-    force until the end of its scope, and None otherwise.
+    return [(code, override) for code, override, _heredoc in _code_items(
+        stage, pipeline, index, bindings)]
+
+
+def _code_items(stage, pipeline: bash_reader.Pipeline, index: int,
+                bindings: dict[str, tuple[int, str]] | None = None,
+                ) -> list[tuple[str, str | None, bash_reader.Heredoc | None]]:
+    """(code text, directory override, heredoc) for everything the stage runs as code. The override
+    is `_DEFERRED` for code that runs later (a `trap`), which the walk reads from every directory
+    in force until the end of its scope, and None otherwise. The heredoc is the one whose body the
+    text is, or None.
 
     The text bash hands a shell: the literal code of `eval`, `trap` and a shell's `-c`; a heredoc
     or here-string on a shell, `source` or `.`; every heredoc nested in the words and redirects of
     such a command; a heredoc on a compound that runs a shell; and the heredocs and literal words
-    of a stage with a shell further down its pipeline. A heredoc body is returned as its own
-    string object, so a caller can tell which bodies are code."""
+    of a stage with a shell further down its pipeline."""
     bindings = bindings if bindings is not None else {}
-    code: list[tuple[str, str | None]] = []
+    code: list[tuple[str, str | None, bash_reader.Heredoc | None]] = []
     if isinstance(stage, bash_reader.Simple):
         if stage.words:
             name = _stage_name(stage, bindings)
@@ -715,19 +722,19 @@ def _code_of(stage, pipeline: bash_reader.Pipeline, index: int,
                         for w in (stage.words[0], *_arguments(stage))]
                 payload = _shell_code(name, argv)
                 if payload:
-                    code.append((payload, _DEFERRED if name == "trap" else None))
+                    code.append((payload, _DEFERRED if name == "trap" else None, None))
             if name in _SHELLS or name in _SOURCERS or name == "eval":
                 code += _stdin_code(stage, bindings)
-                code += [(h.body, None) for h in _nested_heredocs(stage)]
+                code += [(h.body, None, h) for h in _nested_heredocs(stage)]
     elif any(r.op in ("<<", "<<-", "<<<") for r in stage.redirects) and _runs_shell(stage):
         code += _stdin_code(stage, bindings)
     if _shell_after(pipeline)[index]:
-        code += [(h.body, None) for h in _stage_heredocs(stage)]
+        code += [(h.body, None, h) for h in _stage_heredocs(stage)]
         for simple in _simples_of(stage):
             args = [_expand(w.text, simple.pos, bindings) for w in _arguments(simple)]
-            code += [(arg, None) for arg in args]
+            code += [(arg, None, None) for arg in args]
             if len(args) > 1:
-                code.append((" ".join(args), None))
+                code.append((" ".join(args), None, None))
     return code
 
 
@@ -743,14 +750,14 @@ def _shell_after(pipeline: bash_reader.Pipeline) -> tuple[bool, ...]:
     return tuple(reversed(flags))
 
 
-def _stdin_code(stage, bindings: dict[str, tuple[int, str]]) -> list[tuple[str, str | None]]:
+def _stdin_code(stage, bindings: dict[str, tuple[int, str]]) -> list[tuple[str, str | None, bash_reader.Heredoc | None]]:
     """The heredoc bodies and here-strings redirected onto a stage's input."""
-    code: list[tuple[str, str | None]] = []
+    code: list[tuple[str, str | None, bash_reader.Heredoc | None]] = []
     for redirect in stage.redirects:
         if redirect.heredoc is not None:
-            code.append((redirect.heredoc.body, None))
+            code.append((redirect.heredoc.body, None, redirect.heredoc))
         elif redirect.op == "<<<" and redirect.target is not None:
-            code.append((_expand(redirect.target.text, getattr(stage, "pos", 0), bindings), None))
+            code.append((_expand(redirect.target.text, getattr(stage, "pos", 0), bindings), None, None))
     return code
 
 
@@ -765,7 +772,6 @@ def _walk(script: bash_reader.Script, cwd: str, depth: int,
         raise RecursionError(f"shell code nested past {_MAX_CODE_DEPTH} levels")
     if bindings is None:
         bindings = _literal_bindings(script)
-    text = script.text
     pushed: list[str] = []
     scopes: list[list[tuple[str, list[str]]]] = [[]]   # a trap's code and each directory it may run in
     marks: list[tuple[bool, str, tuple[str, ...]]] = []
@@ -797,12 +803,12 @@ def _walk(script: bash_reader.Script, cwd: str, depth: int,
             if restore:
                 scopes.append([])
         for sub in _stage_scripts(stage):
-            if sub.text is text:
+            if not sub.separate:
                 yield from _walk(sub, cwd, depth, bindings)
             else:
                 yield from _walk(sub, cwd, depth + 1)
         yield stage, cwd, bindings
-        for code, override in _code_of(stage, pipeline, index, bindings):
+        for code, override, _heredoc in _code_items(stage, pipeline, index, bindings):
             if override == _DEFERRED:
                 scopes[-1].append((code, [cwd]))
             else:
@@ -959,17 +965,17 @@ def _cut_text(cmd: str, depth: int, programs: bool) -> str:
                 program = _program_word(stage)
                 if program is not None:
                     cuts.append((program.pos, program.end, ""))
-            read = {id(code) for code, _ in _code_of(stage, pipeline, index)}
+            read = {h for _, _, h in _code_items(stage, pipeline, index) if h is not None}
             for redirect in stage.redirects:
                 heredoc = redirect.heredoc
                 if heredoc is None or not heredoc.closed:
                     continue
                 kept = [] if heredoc.quoted else [
                     _cut_text(f"{span}\n", depth + 1, programs) for span in heredoc.spans]
-                if id(heredoc.body) in read:
+                if heredoc in read:
                     kept.append(_cut_text(heredoc.body, depth + 1, programs))
                 cuts.append((heredoc.span[0], heredoc.span[1], "".join(kept)))
-            todo += [s for s in _stage_scripts(stage) if s.text is script.text]
+            todo += [s for s in _stage_scripts(stage) if not s.separate]
     if not cuts:
         return cmd
     cuts.sort()

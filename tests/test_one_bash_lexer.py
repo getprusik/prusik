@@ -17,7 +17,6 @@ moat-finding: fb-b298c5270e7a
 """
 
 import ast
-import importlib
 import os
 import stat
 import subprocess
@@ -26,15 +25,12 @@ from pathlib import Path
 
 import pytest
 
-from prusik import gate
+from prusik import bash_reader, gate
 
 _RM, _PUSH = "rm a", "git push"
-_LITERAL_DOLLAR, _QUOTED_DOLLAR = "\x00", "\x01"   # bash_reader's markers for `'$S'` and `"$S"`
+_LITERAL_DOLLAR, _QUOTED_DOLLAR = bash_reader.LITERAL_DOLLAR, bash_reader.QUOTED_DOLLAR
 
 
-def _reader():
-    """The reader module, imported when a test needs it so the others still collect without it."""
-    return importlib.import_module("prusik.bash_reader")
 _HERE = {"a", "bin", "git-calls"}
 
 
@@ -426,9 +422,16 @@ def test_the_gate_no_longer_defines_a_partial_scanner(name):
     assert not hasattr(gate, name)
 
 
-def test_the_gate_reads_through_the_reader():
-    for name in ("_parsed", "_deny_bash_text"):
-        assert callable(getattr(gate, name))
+def test_the_gate_reads_through_the_reader(monkeypatch):
+    """Every verdict comes from the reader's tree: with the parse made to fail, each check fails."""
+    def _no_parse(_cmd):
+        raise AssertionError("parsed")
+
+    monkeypatch.setattr(gate, "_parsed", _no_parse)
+    for judge in (lambda c: gate._command_denied(c, _PUSH), gate._bash_write_targets,
+                  lambda c: gate._shared_tree_git_mutation(c, ""), gate._deny_bash_text):
+        with pytest.raises(AssertionError):
+            judge("git push > fresh-reader-probe.txt <<EOF\nx\nEOF")
 
 
 def test_the_reader_imports_nothing_but_re():
@@ -447,13 +450,13 @@ def test_the_reader_imports_nothing_but_re():
 def test_one_hook_call_parses_the_command_once(monkeypatch):
     command = f"{_PUSH} origin main > out.txt\ncat <<EOF\nbody\nEOF"
     calls = []
-    real = _reader().parse
+    real = bash_reader.parse
 
     def _counted(text, *args, **kwargs):
         calls.append(text)
         return real(text, *args, **kwargs)
 
-    monkeypatch.setattr(_reader(), "parse", _counted)
+    monkeypatch.setattr(bash_reader, "parse", _counted)
     gate._parsed.cache_clear()
     gate._bash_write_targets(command)
     gate._command_denied(command, "git push")
@@ -496,7 +499,7 @@ def test_five_hundred_unclosed_operators_cost_under_200ms(command):
 
 def test_heredocs_nested_past_the_bound_raise():
     """`pre_tool` turns this into a refusal, as it does for nested shell code."""
-    n = _reader().MAX_DEPTH + 2
+    n = bash_reader.MAX_DEPTH + 2
     deep = "".join(f"bash <<E{i}\n" for i in range(n))
     deep += "".join(f"E{i}\n" for i in reversed(range(n)))
     with pytest.raises(RecursionError):
@@ -512,7 +515,7 @@ _BROKEN = [
 
 @pytest.mark.parametrize("text", _BROKEN, ids=[_id(t[:20]) or "empty" for t in _BROKEN])
 def test_broken_input_raises_nothing_and_every_judgment_returns(text):
-    _reader().parse(text)
+    bash_reader.parse(text)
     assert isinstance(gate._bash_write_targets(text), list)
     assert gate._command_denied(text, "git push") in (True, False)
     assert gate._command_denied(text, "git merge") in (True, False)
@@ -522,14 +525,14 @@ def test_broken_input_raises_nothing_and_every_judgment_returns(text):
 def test_code_nested_past_the_bound_raises_recursion_error():
     text = 'rm "$( ' * 2000
     with pytest.raises(RecursionError):
-        _reader().parse(text)
+        bash_reader.parse(text)
     with pytest.raises(RecursionError):
         gate._parsed(text)
 
 
 # --- the shape of the tree ----------------------------------------------------------------------
 def _first(text: str):
-    return _reader().parse(text).pipelines[0].stages[0]
+    return bash_reader.parse(text).pipelines[0].stages[0]
 
 
 @pytest.mark.parametrize(("text", "expected", "bare"), [
@@ -608,14 +611,14 @@ def test_a_heredoc_that_never_closes_runs_to_the_end_and_is_read_as_code():
 
 
 def test_pipeline_stages_and_background():
-    script = _reader().parse("a | b | c; d & e")
+    script = bash_reader.parse("a | b | c; d & e")
     assert [len(p.stages) for p in script.pipelines] == [3, 1, 1]
     assert [p.background for p in script.pipelines] == [False, True, False]
 
 
 @pytest.mark.parametrize("text", ["a; b", "a\nb", "a && b", "a || b"])
 def test_a_list_separator_ends_the_pipeline(text):
-    assert len(_reader().parse(text).pipelines) == 2
+    assert len(bash_reader.parse(text).pipelines) == 2
 
 
 @pytest.mark.parametrize(("text", "kind"), [
@@ -635,7 +638,7 @@ def test_a_list_separator_ends_the_pipeline(text):
         "function-keyword", "test", "arith"])
 def test_a_compound_has_its_kind(text, kind):
     stage = _first(text)
-    assert isinstance(stage, _reader().Compound)
+    assert isinstance(stage, bash_reader.Compound)
     assert stage.kind == kind
 
 
@@ -647,10 +650,10 @@ def test_a_compound_names_its_variable_or_function_and_holds_its_list():
 
 
 def test_the_walk_visits_every_command_in_source_order_without_recursion():
-    script = _reader().parse("x; if y; then { z; } fi; (w)")
+    script = bash_reader.parse("x; if y; then { z; } fi; (w)")
     names = []
     depth = 0
-    for event in _reader().iter_commands(script):
+    for event in bash_reader.iter_commands(script):
         if event[0] == "enter":
             depth += 1
         elif event[0] == "leave":
@@ -669,3 +672,25 @@ def test_an_ansi_c_escape_that_spells_a_name_stays_unread():
     """Out of reach, stated: `$'\\x72m' a` removes `a` in bash, but the escape is decoded at run
     time and the reader keeps its text, so no verb is named."""
     assert gate._bash_write_targets("$'\\x72m' a") == []
+
+
+# --- two heredocs with equal bodies are told apart ----------------------------------------------
+@pytest.mark.parametrize("command", [
+    "bash <<A; cat <<B\nrm a\nA\nrm a\nB",
+    "cat <<A; bash <<B\nrm a\nA\nrm a\nB",
+])
+def test_equal_heredoc_bodies_are_judged_one_by_one(tmp_path, command):
+    """Bash runs `rm a` once, from the body the shell reads; the other body is data. Only the shell's
+    body stays in the `deny_bash` text, so equal text in two bodies is not one verdict."""
+    assert _bash_ran(tmp_path, command)[0] is True
+    assert "a" in gate._bash_write_targets(command)
+    assert gate._deny_bash_text(command).count("rm a") == 1
+
+
+# --- the bounds fail toward reading --------------------------------------------------------------
+def test_a_subscript_past_its_bound_still_runs_its_substitution():
+    assert "a" in gate._bash_write_targets("a[" + "x" * 300 + "$(rm a)]=1")
+
+
+def test_an_unmatched_extglob_group_past_its_bound_is_read_as_code():
+    assert "a" in gate._bash_write_targets("echo *(" + "x" * 600 + ") ; rm a")

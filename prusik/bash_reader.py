@@ -21,8 +21,13 @@ MAX_DEPTH = 32                      # nested code strings; past it a parse raise
 LITERAL_DOLLAR = "\x00"             # `'$S'` or `\$S`: no expansion at all
 QUOTED_DOLLAR = "\x01"              # `"$S"`: expands to one word
 
-_MAX_SUBSCRIPT = 256                # bounds an assignment's subscript
-_MAX_GLOB_GROUP = 512               # bounds the look-ahead for an extglob group's `)`
+# Past 256 characters with no substitution seen, a `name[` is not read as an assignment head and
+# is an ordinary word, which still holds every substitution; the bound keeps a long unmatched `a[`
+# from being rescanned to the end of the text at each one.
+_MAX_SUBSCRIPT = 256
+# Past 512 characters a `*(` is not an extglob group: its `(` ends the word and the text after it is
+# read as a subshell, so its code is still read; the bound keeps an unmatched `*(` linear.
+_MAX_GLOB_GROUP = 512
 _NOT_DELIMITER = r"(?![^\s;&|()<>\\]|\\[^\n])"
 
 _BLANKS = re.compile(r"(?:[ \t]|\\\n)+")
@@ -61,6 +66,8 @@ _END_OF_CASE_ARM = (";;&", ";;", ";&")
 
 
 class Word:
+    """One word of a command: its text with quotes off, whether it starts outside a quote (`bare`), the code nested in it, and where it stands."""
+
     __slots__ = ("pos", "text", "bare", "scripts", "end")
 
     def __init__(self, pos: int, text: str, bare: bool, scripts: list[Script], end: int) -> None:
@@ -72,6 +79,8 @@ class Word:
 
 
 class Heredoc:
+    """The body of a `<<` redirect: whether its delimiter was quoted, whether it closed, where the body sits in the text, and the code in an unquoted or unclosed body."""
+
     __slots__ = ("body", "quoted", "closed", "span", "scripts", "spans")
 
     def __init__(self, quoted: bool) -> None:
@@ -84,6 +93,8 @@ class Heredoc:
 
 
 class Redirect:
+    """One redirect: its operator, its target word (None for a descriptor copy) and, for `<<`, its heredoc."""
+
     __slots__ = ("pos", "op", "target", "heredoc")
 
     def __init__(self, pos: int, op: str, target: Word | None, heredoc: Heredoc | None) -> None:
@@ -94,6 +105,8 @@ class Redirect:
 
 
 class Assignment:
+    """One `NAME=value` before a command word; `array` is set for `NAME[i]=` and `NAME=( )`, and the code in a subscript rides on `value`."""
+
     __slots__ = ("pos", "name", "append", "array", "value")
 
     def __init__(self, pos: int, name: str, append: bool, array: bool, value: Word) -> None:
@@ -105,6 +118,8 @@ class Assignment:
 
 
 class Simple:
+    """A simple command: the assignments, words and redirects it holds, any of which may be absent."""
+
     __slots__ = ("pos", "assignments", "words", "redirects")
 
     def __init__(self, pos: int, assignments: list[Assignment], words: list[Word],
@@ -116,6 +131,8 @@ class Simple:
 
 
 class Compound:
+    """A compound command of one `kind`, with its `bodies`, the words whose substitutions run, and its redirects."""
+
     __slots__ = ("pos", "kind", "name", "bodies", "words", "redirects")
 
     def __init__(self, pos: int, kind: str, name: str | None = None) -> None:
@@ -128,6 +145,8 @@ class Compound:
 
 
 class Pipeline:
+    """The stages joined by `|`, and whether `&` ended it."""
+
     __slots__ = ("stages", "background")
 
     def __init__(self, stages: list[Simple | Compound], background: bool) -> None:
@@ -136,11 +155,14 @@ class Pipeline:
 
 
 class Script:
-    __slots__ = ("pipelines", "text")
+    """A list of pipelines and the text it was read from; `separate` is set when that text is a string of its own (a backtick span, a heredoc body, code run again) and not the parent's."""
 
-    def __init__(self, pipelines: list[Pipeline], text: str) -> None:
+    __slots__ = ("pipelines", "text", "separate")
+
+    def __init__(self, pipelines: list[Pipeline], text: str, separate: bool = False) -> None:
         self.pipelines = pipelines
         self.text = text
+        self.separate = separate
 
 
 def parse(text: str, depth: int = 0) -> Script:
@@ -232,7 +254,9 @@ class _Parser:
         self.heads: dict[int, tuple[int, str, bool, bool, list[Script]] | None] = {}
 
     def script(self) -> Script:
-        return self._list(False)
+        script = self._list(False)
+        script.separate = True
+        return script
 
     # --- small helpers ----------------------------------------------------------------------
     def _skip(self) -> int:
@@ -454,6 +478,18 @@ class _Parser:
         out.append(text[i:stop])
         return stop
 
+    def _arith_word(self, i: int) -> Word | None:
+        """The expression of the `((` at `i`, as one word holding its code, with `self.i` past the
+        `))`; an unclosed one runs to the end of the text. None if the first unmatched `)` is not
+        doubled, so the text is nested subshells and `self.i` is unchanged."""
+        found: list[Script] = []
+        end = self._arith_end(i + 2, found)
+        if end < 0:
+            return None
+        closed = end >= i + 4 and self.text[end - 2:end] == "))"
+        self.i = end
+        return Word(i + 2, self.text[i + 2:end - 2 if closed else end], True, found, end)
+
     def _arith_end(self, i: int, scripts: list[Script]) -> int:
         """Index past the `))` closing an arithmetic expression that starts at `i`, the code in it
         added to `scripts`. -1 if its first unmatched `)` is not doubled (so it was nested
@@ -530,6 +566,8 @@ class _Parser:
             if not heredoc.quoted:
                 joined = _JOINED_LINE.sub(r"\1", heredoc.body)
                 heredoc.scripts, heredoc.spans = _Parser(joined, self.depth)._scan_body()
+                for script in heredoc.scripts:
+                    script.separate = True      # read from the joined body, not from this text
             p = after
         self.i = p
 
@@ -822,14 +860,10 @@ class _Parser:
             self._abandon_function(ctx, top)
         if text[i] == "(":
             if text.startswith("((", i):
-                found: list[Script] = []
-                end = self._arith_end(i + 2, found)
-                if end >= 0:
-                    closed = end >= i + 4 and text[end - 2:end] == "))"
+                expression = self._arith_word(i)
+                if expression is not None:
                     comp = Compound(i, "arith")
-                    comp.words.append(Word(i + 2, text[i + 2:end - 2 if closed else end], True,
-                                           found, end))
-                    self.i = end
+                    comp.words.append(expression)
                     self._finish(ctx, comp)
                     return
             self.i = i + 1
@@ -844,7 +878,7 @@ class _Parser:
                         self.i = j + 2
                 return
             if word in _CLOSERS:
-                self._close_with(ctx, word)     # with no place, it is dropped
+                self._close_with(ctx, word)
                 return
             self._open(ctx, word, i)
             return
@@ -909,13 +943,9 @@ class _Parser:
         comp = Compound(pos, kind)
         j = self._skip()
         if text.startswith("((", j):
-            found: list[Script] = []
-            end = self._arith_end(j + 2, found)
-            if end >= 0:
-                closed = end >= j + 4 and text[end - 2:end] == "))"
-                comp.words.append(Word(j + 2, text[j + 2:end - 2 if closed else end], True, found,
-                                       end))
-                self.i = end
+            expression = self._arith_word(j)
+            if expression is not None:
+                comp.words.append(expression)
         else:
             name = self._word()
             comp.name = name.text or None
@@ -1059,12 +1089,12 @@ class _Parser:
                 return frame
         return None
 
-    def _close_with(self, ctx: _Ctx, word: str) -> bool:
+    def _close_with(self, ctx: _Ctx, word: str) -> None:
         """Apply the closing reserved word `word` (already consumed) to the compound it closes or
-        continues. False if it has no place, which drops it."""
+        continues. With no place there, it is dropped."""
         top = self._real_top(ctx)
         if top is None:
-            return False
+            return
         kind = top.kind
         if kind == "if":
             ends, closes = word in ("then", "elif", "else", "fi"), word == "fi"
@@ -1075,9 +1105,9 @@ class _Parser:
         elif kind == "case" and top.phase == "body":
             ends = closes = word == "esac"
         else:
-            return False
+            return
         if not ends:
-            return False
+            return
         self._peel(ctx)
         if kind == "case":
             self._end_arm(ctx, top)
@@ -1085,7 +1115,7 @@ class _Parser:
             self._end_body(ctx, top)
         if closes:
             self._close(ctx, top)
-        return True
+        return
 
     def _end_arm(self, ctx: _Ctx, frame: _Frame) -> None:
         """The command list of a `case` arm ends."""
