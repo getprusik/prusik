@@ -1,0 +1,16 @@
+{
+  "id": "fb-a0dd3c924838",
+  "created_at": "2026-11-14T16:02:44.099102+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "gate misses a command whose first word expands to nothing",
+  "detail": "When a simple command's leading words expand to empty at runtime, bash runs the next word as the command: `$(:) rm a`, `$(:) 2>&1 rm a`, `$x > f rm a` (x unset) all remove a. Neither v0.238.8 nor the one-bash-lexer reader reads `rm a` there; v0.238.8 read `$(:) >! rm a` only by accident (it took `>!` as a write target). A substitution with no output, or an unset variable, cannot be resolved statically in general; candidate rule: when the command name is an unquoted expansion the gate cannot resolve, also judge the remaining words as a command (over-read, fail-closed). Found by the regression-sentinel's fuzz in fix round 4 of one-bash-lexer.",
+  "feature": "one-bash-lexer",
+  "content_hash": "a0dd3c924838",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

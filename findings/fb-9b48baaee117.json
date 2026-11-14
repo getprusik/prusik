@@ -1,0 +1,16 @@
+{
+  "id": "fb-9b48baaee117",
+  "created_at": "2026-11-14T16:23:08.493643+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "gate misses /usr/bin/time as a wrapper after a redirect or assignment",
+  "detail": "After a redirect or an assignment, 'time' is not bash's reserved word but the external /usr/bin/time, which runs its arguments: '> o time rm a' and 'a=1 time rm a' remove a. Neither v0.238.8 nor the one-bash-lexer reader reads 'rm a' there (v0.238.8 read '> o time >! rm a' only by accident via '>!'). Same family as fb-0e678051f98e (sudo/env/xargs wrappers); fix with the wrapper work on the bash reader. Found by the round-4 token sweep of one-bash-lexer.",
+  "feature": "one-bash-lexer",
+  "content_hash": "9b48baaee117",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
