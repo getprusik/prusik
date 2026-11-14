@@ -1,0 +1,16 @@
+{
+  "id": "fb-6e133097e7b1",
+  "created_at": "2026-11-14T17:41:22.344622+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "stop hook re-fires while a reviewer agent is still running",
+  "detail": "During reviewing, the main thread hands work to a background reviewer agent and ends its turn. The Stop hook ('Phase reviewing has unsatisfied exit artifacts: regression.txt verdict must be PASS') blocks the stop. That forces another main-thread turn, which can do nothing but say it is waiting, and each such turn re-reads the whole session context. In the one-bash-lexer session this fired 6 times while the reviewer, the token sweep and the fuzz ran; trivial-lane sprints spend about 2M of 4-6M total in the reviewing phase. Candidate: Stop does not block while a background reviewer or a capture for the current feature is in flight, or blocks once per artifact state rather than on every stop.",
+  "feature": null,
+  "content_hash": "6e133097e7b1",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
