@@ -10,7 +10,22 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": ".venv/bin/python -m pytest -p no:cacheprovider -q tests/test_stop_blocks_once.py",
+    "fixed_in": "0.239.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-14T18:26:51.262359+00:00",
+      "exit": 0,
+      "executed_count": 10,
+      "verdict": true,
+      "why": "10 test(s) executed, exit 0",
+      "worktree_hash": "d1bb4d5-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }

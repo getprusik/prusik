@@ -16,7 +16,22 @@
       "body": "From heredocs-read-as-bash (v0.238.5), more cases a single lexer would settle. _strip_heredocs relies on _quoted_text_mask, so a quoted << after the mask stops marking still reads as an operator. An operator in an already closed substitution opens a body: 'echo \"$(echo <<A)\"\\nrm a\\nA'. _substitution_end ends at a ')' in a comment: 'cat <<EOF\\n$(echo hi # )\\nrm a)\\nEOF'. In an unquoted body a joined line is not read: 'foo\\\\<newline>EOF' closes early, and '$\\\\<newline>(rm a)' is a joined substitution the gate misses. Retaking the mask per line is also quadratic in heredocs, 2.9s at 500, which one forward pass would remove."
     }
   ],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": ".venv/bin/python -m pytest -p no:cacheprovider -q tests/test_one_bash_lexer.py",
+    "fixed_in": "0.239.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-14T18:25:50.405397+00:00",
+      "exit": 0,
+      "executed_count": 448,
+      "verdict": true,
+      "why": "448 test(s) executed, exit 0",
+      "worktree_hash": "d1bb4d5-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
