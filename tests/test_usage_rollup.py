@@ -303,8 +303,8 @@ def _key_read(key: str) -> re.Pattern:
     return re.compile(rf"""\.get\(\s*["']{k}["']|\[\s*["']{k}["']\s*\](?!\s*=(?!=))""")
 
 
-# `rolled` is the name effort gives the rollup result it reads once (by_phase + per_sprint)
-_ON_THE_ROLLUP = re.compile(r"\b(?:rollup\([^()]*\)|rolled)\s*$")
+_ON_THE_ROLLUP = re.compile(r"\brollup\([^()]*\)\s*$")
+_ROLLUP_BINDING = re.compile(r"^\s*(\w+)\s*=\s*(?:\w+\.)?rollup\(", re.M)
 
 
 def _reads_a_snapshot(text: str) -> bool:
@@ -313,11 +313,14 @@ def _reads_a_snapshot(text: str) -> bool:
 
     The one by_phase read that is NOT a snapshot read is a read of the rollup's own result,
     `usage.rollup(records)["by_phase"]` — the consumer form the plan prescribes for effort —
-    so a key read applied directly to a `rollup(...)` call, or to the `rolled` variable that
-    holds one, is exempt from (a)."""
+    so a key read applied directly to a `rollup(...)` call, or to a name the same file binds
+    to one (`rolled = usage.rollup(records)`), is exempt from (a)."""
+    bound = _ROLLUP_BINDING.findall(text)
+    on_a_binding = (re.compile(rf"\b(?:{'|'.join(map(re.escape, bound))})\s*$")
+                    if bound else None)
     for m in _key_read("by_phase").finditer(text):
         prefix = text[text.rfind("\n", 0, m.start()) + 1:m.start()]
-        if not _ON_THE_ROLLUP.search(prefix):
+        if not (_ON_THE_ROLLUP.search(prefix) or (on_a_binding and on_a_binding.search(prefix))):
             return True
     return bool(_key_read("actual").search(text) and _key_read("usage").search(text))
 
@@ -329,6 +332,9 @@ def test_snapshot_read_matcher_catches_the_two_step_form_and_spares_writers():
     subscript = "n = rec['by_" "phase']['building']\n"
     assert _reads_a_snapshot(two_step) and _reads_a_snapshot(chained)
     assert _reads_a_snapshot(subscript)
+    bound = "rolled = usage.rollup(records)\nphase_tokens = rolled[\"by_" "phase\"]\n"
+    unbound = "phase_tokens = rolled[\"by_" "phase\"]\n"
+    assert not _reads_a_snapshot(bound) and _reads_a_snapshot(unbound)
     writer = "act" "ual[\"us" "age\"] = u.breakdown()\nok = r.get(\"act" "ual\")\n"
     literal = "snap = {\"by_" "phase\": phases, \"by_role\": roles}\n"
     compare = "if snap[\"by_" "phase\"] == other: pass\n"
