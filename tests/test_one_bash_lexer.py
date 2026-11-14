@@ -218,6 +218,11 @@ _RUNS = [
     "a=( <<E\nRUN",
     "a=( > o\nRUN",
     "a=( a=(\nRUN",
+    # A backslash that ends the text is dropped, so the word before it is the word bash runs.
+    "RUN\\",
+    "echo; RUN\\",
+    "RUN\\\n\\",
+    "RUN \\",
     # A command name split by quoting is still the command.
     ("r''m a", "g''it push"),
     ('rm"" a', 'git"" push'),
