@@ -86,7 +86,7 @@ def test_a_satisfied_phase_passes_and_clears_the_record(project, monkeypatch):
     assert _stop() == 2
     record = project / ".sprint" / "stop-reported.json"
     assert record.exists()
-    monkeypatch.setattr(gate, "_unsatisfied_exit_artifacts", lambda spec, feature: [])
+    monkeypatch.setattr(gate, "_unsatisfied_exit_items", lambda spec, feature: [])
     assert _stop() == 0
     assert not record.exists()
     monkeypatch.undo()

@@ -1382,14 +1382,17 @@ def stop(args=None) -> int:
     phase = state["phase"]
     feature = state.get("feature")
     phase_spec = phases.get_phase_spec(config, phase) or {}
-    missing = _unsatisfied_exit_artifacts(phase_spec, feature)
+    # One pass: the evidence validator spawns git, so the items feed both the message and
+    # `_in_flight` rather than re-running the check.
+    items = _unsatisfied_exit_items(phase_spec, feature)
+    missing = [f"{p} ({r})" for p, r in items]
     record = ledger.project_root() / ".sprint" / _STOP_REPORTED_FILE
     if not missing:
         record.unlink(missing_ok=True)
         return 0
     # fb-0fbea010311c: a turn spent waiting on the reviewer that owns every missing artifact is
     # not a turn to remind about. Computed only on this blocking path.
-    if _in_flight(feature, _unsatisfied_exit_items(phase_spec, feature)):
+    if _in_flight(feature, items):
         return 0
     # fb-6e133097e7b1: remind once per state of the phase's exit artifacts. A stop that finds the
     # same state already reported (typically a turn spent waiting on a background reviewer) passes;
