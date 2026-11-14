@@ -302,7 +302,7 @@ class _Parser:
                 if nxt == "\n":
                     i += 2
                 elif not nxt:
-                    i += 1           # bash drops a backslash that ends the text: `rm a\` runs `rm a`
+                    i += 1           # bash 3.2 drops a backslash that ends the text (`rm a\` runs `rm a`); bash 5 keeps it
                 else:
                     out.append(LITERAL_DOLLAR if nxt == "$" else nxt)
                     i += 2

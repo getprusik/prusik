@@ -89,8 +89,7 @@ def _id(shape) -> str:
 
 # --- bash runs it, the gate must read it ---------------------------------------------------------
 _RUNS = [
-    # A `<<` inside a substitution that closed before the line ended.
-    'echo "$(echo <<A)"\nRUN\nA',
+    # A `<<` inside a substitution whose body closes before the substitution does.
     'echo "$(cat <<A\nx\nA\n)" ; RUN',
     # Code past an array assignment prefix, and code in `[[ ]]`, `(( ))` and `$(( ))`.
     "a=(1 2) RUN",
@@ -189,10 +188,6 @@ _RUNS = [
     'echo $"$(RUN)"',
     "time $(RUN)",
     "export A=$(RUN)",
-    # An opener in a subscript that never closes is text, and the command after the `=` runs.
-    "x[ $( ]=1 RUN",
-    "x[ $(( ]=1 RUN",
-    "x[ ${ ]=1 RUN",
     # A `for` whose body is a brace group.
     "for i in 1; { RUN; }",
     "for ((;;)) { RUN; break; }",
@@ -218,10 +213,7 @@ _RUNS = [
     "a=( <<E\nRUN",
     "a=( > o\nRUN",
     "a=( a=(\nRUN",
-    # A backslash that ends the text is dropped, so the word before it is the word bash runs.
-    "RUN\\",
-    "echo; RUN\\",
-    "RUN\\\n\\",
+    # A backslash after a space ends the text with nothing to escape: the command runs.
     "RUN \\",
     # A command name split by quoting is still the command.
     ("r''m a", "g''it push"),
@@ -337,6 +329,42 @@ def test_an_unterminated_shape_is_read_on_to_its_end(tmp_path, command):
     is also read as code, so nothing after an unterminated quote or substitution is lost."""
     assert _bash_ran(tmp_path, command)[0] is False
     assert "a" in gate._bash_write_targets(command)
+
+
+# --- version-dependent: bash 3.2 runs it, bash 4 and later do not ---------------------------------
+_BASH_MAJOR = int(subprocess.run(["bash", "-c", "echo ${BASH_VERSINFO[0]}"], capture_output=True,
+                                 text=True, check=True).stdout)
+
+_RUNS_ON_BASH_3 = [
+    # A `<<` inside a substitution that closed before the line ended: 3.2 ends the substitution
+    # there and runs the next line; bash 5 takes the next lines as the heredoc body.
+    'echo "$(echo <<A)"\nRUN\nA',
+    # An opener in a subscript that never closes: 3.2 takes it as text and runs the command after
+    # the `=`; bash 5 keeps reading the opener and runs nothing.
+    "x[ $( ]=1 RUN",
+    "x[ $(( ]=1 RUN",
+    "x[ ${ ]=1 RUN",
+    # A backslash that ends the text: 3.2 drops it, so the word before it is the word bash runs;
+    # bash 5 keeps it as part of the word, so the command names something else.
+    "RUN\\",
+    "echo; RUN\\",
+    "RUN\\\n\\",
+]
+
+
+@pytest.mark.parametrize("shape", _RUNS_ON_BASH_3, ids=[_id(s) for s in _RUNS_ON_BASH_3])
+def test_a_command_only_bash_3_runs_is_read(tmp_path, shape):
+    """Bash 3.2 (this Mac) runs the command and bash 5 (CI) does not, so each bash is checked for
+    what it does. The gate reads the command for both: on bash 5 that is an over-read."""
+    rm_form, push_form = _forms(shape)
+    rm_dir, push_dir = tmp_path / "rm", tmp_path / "push"
+    rm_dir.mkdir()
+    push_dir.mkdir()
+    runs = _BASH_MAJOR < 4
+    assert _bash_ran(rm_dir, rm_form)[:2] == (runs, False), "the shape does not do what it says"
+    assert _bash_ran(push_dir, push_form)[:2] == (False, runs), "the shape does not do what it says"
+    assert _gate_reads(rm_form) == (True, False)
+    assert _gate_reads(push_form) == (False, True)
 
 
 # --- version-dependent: asserted on the gate alone ----------------------------------------------

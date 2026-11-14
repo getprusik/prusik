@@ -44,8 +44,8 @@ All notable changes to **Prusik** are documented here. The format follows
   at both, and `cd worktrees/solo && trap 'git commit' EXIT` only in the worktree. This is more
   precise than "the shared tree", and it still refuses what can reach it.
 - **Heredocs come from the same pass.** An operator opens a body only where the reader reads one,
-  at any point in the command; `echo "$(echo <<A)"` followed by `rm a` runs `rm a` and the gate
-  now reads it; a `)` in a comment closes no substitution; in an unquoted body a backslash-newline
+  at any point in the command; `echo "$(echo <<A)"` followed by `rm a` runs `rm a` in bash 3.2 (bash 5
+  takes it as the body) and the gate now reads it; a `)` in a comment closes no substitution; in an unquoted body a backslash-newline
   joins lines before the delimiter is matched and before substitutions are found. Five hundred
   heredocs in one command are judged in 6 ms (2.9 s before).
 - **Two over-reads, on purpose.** A function body is read where it is defined, called or not
@@ -54,7 +54,7 @@ All notable changes to **Prusik** are documented here. The format follows
   rejects is read on: the text after an unterminated quote or substitution is also read as code,
   and a header with no body (`for;`, `case x in`, `a=( &`) hides nothing after it. A `for` or
   `select` with a `{ }` body is read like one with `do ... done`, and a backslash that ends the
-  text is dropped as bash drops it (`rm a\`). A sweep of every sequence of up to three of 82
+  text is dropped as bash 3.2 drops it (`rm a\`; bash 5 keeps it, so there it is an over-read). A sweep of every sequence of up to three of 82
   grammar tokens around one `rm a` or `git push` (4.45 million commands, real bash as arbiter)
   finds no command v0.238.8 reads, this release does not, and bash runs, beyond two shapes both
   releases miss in general and v0.238.8 read only by accident: a command name that expands to nothing (`$(:) >! rm a`, fb-a0dd3c924838) and
