@@ -48,7 +48,10 @@ def _bash_ran(tmp_path, command: str) -> tuple[bool, bool, list[str]]:
                    capture_output=True, timeout=10, check=False)
     calls = tmp_path / "git-calls"
     created = sorted(p.name for p in tmp_path.iterdir() if p.name not in _HERE)
-    return not (tmp_path / "a").exists(), calls.exists() and "push" in calls.read_text(), created
+    # A push is a call whose subcommand is exactly `push`: bash 5 runs `git push\` as `git 'push\'`.
+    pushed = calls.exists() and any(line.split()[:1] == ["push"]
+                                    for line in calls.read_text().splitlines())
+    return not (tmp_path / "a").exists(), pushed, created
 
 
 def _gate_reads(command: str) -> tuple[bool, bool]:
