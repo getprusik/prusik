@@ -1,0 +1,16 @@
+{
+  "id": "fb-0fbea010311c",
+  "created_at": "2026-11-14T21:48:41.941876+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "stop hook burns a turn while the role that owns the missing artifact is still running",
+  "detail": "session-size-warning (15.3M, 95 main-thread responses): each of 7 role spawns cost the orchestrator 3-4 responses at ~150K context, ~2.5M total with no work done. One of them is the stop-hook block that fires while the spawned role is still writing its report. The role's tier_resolved event (written by prusik tier resolve --role at spawn) is a system-computed in-flight signal: until that role's verdict or report lands, the stop hook could stay silent for the artifacts that role owns.",
+  "feature": null,
+  "content_hash": "0fbea010311c",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

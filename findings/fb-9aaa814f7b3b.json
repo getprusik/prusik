@@ -1,0 +1,16 @@
+{
+  "id": "fb-9aaa814f7b3b",
+  "created_at": "2026-11-14T21:48:42.006425+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "tier policy put scope-critic on opus for an S-size scope (1.8M over 2 rounds)",
+  "detail": "session-size-warning: scope-critic resolved to opus and cost 1.8M of 15.3M across two rounds verifying a 4-module S-size scope. Its catch (tier report lists only tier-predicted sprints) was a verify-against-code check within sonnet's reach. Candidate: scope-critic tier follows scope size, sonnet at S/M, opus at L/XL.",
+  "feature": null,
+  "content_hash": "9aaa814f7b3b",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

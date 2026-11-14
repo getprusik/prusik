@@ -1,0 +1,16 @@
+{
+  "id": "fb-9dac611d867c",
+  "created_at": "2026-11-14T21:48:42.071086+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "an orchestrator's design reads ride every later turn; nothing drops them at the plan boundary",
+  "detail": "session-size-warning: main-thread context grew 53K to 180K, mostly from design reads; after the plan was approved ~40 more turns re-read it (~3-4M). Once plan.md is approved it holds everything the rest of the sprint needs. Candidate: advance into building prints a compact/fresh-session advisory naming plan.md as the resume point (builds on session-size-warning's session_context).",
+  "feature": null,
+  "content_hash": "9dac611d867c",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
