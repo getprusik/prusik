@@ -106,7 +106,7 @@ _STAYS_DATA = [
 ]
 
 
-def _bash_ran(tmp_path, command: str) -> tuple[bool, bool]:
+def _bash_ran(tmp_path, command: str, bash: tuple[str, int]) -> tuple[bool, bool]:
     """(`a` was removed, the stub ran `git push`) after real bash runs `command`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -115,7 +115,7 @@ def _bash_ran(tmp_path, command: str) -> tuple[bool, bool]:
     stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
     (tmp_path / "a").write_text("")
     env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
-    subprocess.run(["bash", "-c", command], cwd=tmp_path, env=env, stdin=subprocess.DEVNULL,
+    subprocess.run([bash[0], "-c", command], cwd=tmp_path, env=env, stdin=subprocess.DEVNULL,
                    capture_output=True, timeout=10, check=False)
     calls = tmp_path / "git-calls"
     return not (tmp_path / "a").exists(), calls.exists() and "push" in calls.read_text()
@@ -126,25 +126,25 @@ def _gate_reads(command: str) -> tuple[bool, bool]:
     return "a" in gate._bash_write_targets(command), gate._command_denied(command, _PUSH)
 
 
-def _assert_matches_bash(tmp_path, shape: str, expected: bool) -> None:
+def _assert_matches_bash(tmp_path, shape: str, expected: bool, bash: tuple[str, int]) -> None:
     rm_dir, push_dir = tmp_path / "rm", tmp_path / "push"
     rm_dir.mkdir()
     push_dir.mkdir()
-    removed = _bash_ran(rm_dir, shape.format(run=_RM))[0]
-    pushed = _bash_ran(push_dir, shape.format(run=_PUSH))[1]
+    removed = _bash_ran(rm_dir, shape.format(run=_RM), bash)[0]
+    pushed = _bash_ran(push_dir, shape.format(run=_PUSH), bash)[1]
     assert (removed, pushed) == (expected, expected), "the shape does not do what it says"
     assert _gate_reads(shape.format(run=_RM))[0] is expected
     assert _gate_reads(shape.format(run=_PUSH))[1] is expected
 
 
 @pytest.mark.parametrize("shape", _RUNS)
-def test_a_command_bash_runs_is_read(tmp_path, shape):
-    _assert_matches_bash(tmp_path, shape, True)
+def test_a_command_bash_runs_is_read(tmp_path, shape, bash):
+    _assert_matches_bash(tmp_path, shape, True, bash)
 
 
 @pytest.mark.parametrize("shape", _STAYS_DATA)
-def test_text_bash_treats_as_data_is_not_read(tmp_path, shape):
-    _assert_matches_bash(tmp_path, shape, False)
+def test_text_bash_treats_as_data_is_not_read(tmp_path, shape, bash):
+    _assert_matches_bash(tmp_path, shape, False, bash)
 
 
 @pytest.mark.parametrize("shell", ["bash", "sh", "zsh", "ksh", "dash", "/bin/zsh"])

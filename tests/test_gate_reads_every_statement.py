@@ -51,18 +51,24 @@ def _targets(cmd, start=""):
     "if false; then :; else\\\n rm a; fi", "if false; then :; elif\\\n rm a; then :; fi",
     "for i in 1; do\\\n rm a; done", "while\\\n rm a\ndo break; done",
 ])
-def test_a_verb_bash_runs_is_named(tmp_path, cmd):
+def test_a_verb_bash_runs_is_named(tmp_path, cmd, bash):
     (tmp_path / "a").write_text("x")
     (tmp_path / "in").write_text("x")
-    subprocess.run(["bash", "-c", cmd], cwd=tmp_path, capture_output=True, check=False)
+    subprocess.run([bash[0], "-c", cmd], cwd=tmp_path, capture_output=True, check=False)
     assert not (tmp_path / "a").exists(), "bash did not run the verb, so this case proves nothing"
     assert "a" in _targets(cmd)
 
 
 @pytest.mark.parametrize("cmd", ["{fd}>o rm a", "case x in @(x|y)) rm a;; esac",
                                  "case x in x) rm a;& y) true;; esac"])
-def test_a_verb_only_newer_bash_runs_is_named(cmd):
-    # macOS ships bash 3.2, with no `{fd}>` or `;&`, and extglob needs a shopt. Linux CI runs them.
+def test_a_verb_only_newer_bash_runs_is_named(tmp_path, cmd, bash):
+    """Bash 4 and later run the verb (extglob switched on before the parse); bash 3.2 has no `{fd}>`
+    or `;&`, so there only the gate half is asserted."""
+    (tmp_path / "a").write_text("x")
+    subprocess.run([bash[0], "-O", "extglob", "-c", cmd], cwd=tmp_path, capture_output=True,
+                   check=False)
+    if bash[1] >= 4:
+        assert not (tmp_path / "a").exists(), "bash did not run the verb, so this case proves nothing"
     assert "a" in _targets(cmd)
 
 
@@ -74,9 +80,9 @@ def test_a_verb_only_newer_bash_runs_is_named(cmd):
     ("cat <<A > x\nrm no\nA\ncat <<B > y\nrm no2\nB", {"x", "y"}),
     ("cat <<A <<B > out\nrm no\nA\nrm no2\nB", {"out"}),
 ])
-def test_only_a_heredoc_body_is_data(tmp_path, cmd, expected):
+def test_only_a_heredoc_body_is_data(tmp_path, cmd, expected, bash):
     (tmp_path / "b").write_text("x")
-    subprocess.run(["bash", "-c", cmd], cwd=tmp_path, capture_output=True, check=False)
+    subprocess.run([bash[0], "-c", cmd], cwd=tmp_path, capture_output=True, check=False)
     assert not (tmp_path / "no").exists()
     assert set(_targets(cmd)) == expected
 
@@ -112,10 +118,10 @@ def test_the_word_esac_as_an_argument_closes_nothing():
     assert _targets("case x in x) echo esac; rm a;; y) rm b;; esac") == ["a", "b"]
 
 
-def test_a_case_label_opens_no_subshell(tmp_path):
+def test_a_case_label_opens_no_subshell(tmp_path, bash):
     cmd = "(case x in x) cd d;; esac; touch a); touch b"
     (tmp_path / "d").mkdir()
-    subprocess.run(["bash", "-c", cmd], cwd=tmp_path, check=True)
+    subprocess.run([bash[0], "-c", cmd], cwd=tmp_path, check=True)
     assert (tmp_path / "d" / "a").exists() and (tmp_path / "b").exists()
     assert _targets(cmd) == ["d/a", "b"]
 
@@ -157,11 +163,11 @@ def test_a_resolved_value_is_read_as_the_word_it_is(cmd, expected):
     assert _targets(cmd) == expected
 
 
-def test_a_flag_held_in_a_variable_really_moves_the_target(tmp_path):
+def test_a_flag_held_in_a_variable_really_moves_the_target(tmp_path, bash):
     (tmp_path / "a").mkdir()
     (tmp_path / "a" / "f").write_text("x")
     cmd = "S=-R; cp $S a b"
-    subprocess.run(["bash", "-c", cmd], cwd=tmp_path, check=True)
+    subprocess.run([bash[0], "-c", cmd], cwd=tmp_path, check=True)
     assert (tmp_path / "b" / "f").exists()
     assert _targets(cmd) == ["b"]
 

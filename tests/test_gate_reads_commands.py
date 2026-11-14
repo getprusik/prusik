@@ -37,7 +37,7 @@ echo "$(pwd -P) $1" >> "$GIT_LOG"
 
 
 @pytest.fixture
-def shell(tmp_path):
+def shell(tmp_path, bash):
     """Runs a command in real bash in a project with a worktree, and returns [(directory, git
     subcommand)] for each time the stub git ran."""
     stubs = tmp_path / "stubs"
@@ -52,7 +52,7 @@ def shell(tmp_path):
 
     def run(cmd: str) -> list[tuple[str, str]]:
         log.write_text("")
-        subprocess.run(["bash", "-c", cmd.replace("{stubs}", str(stubs))], cwd=project, env=env,
+        subprocess.run([bash[0], "-c", cmd.replace("{stubs}", str(stubs))], cwd=project, env=env,
                        capture_output=True, check=False, timeout=10)
         return [tuple(line.rsplit(" ", 1)) for line in log.read_text().splitlines()]
 
@@ -195,11 +195,11 @@ def test_the_lease_needs_no_literal_git_in_the_text(tmp_path, monkeypatch):
     ("echo '`rm a`'", []), ("echo \\\\`rm a`", ["a"]),
     ("echo \"`true`\"; echo 'a`b'; echo `rm a`", ["a"]),
 ])
-def test_the_write_check_reads_a_backtick_body(tmp_path, cmd, expected):
+def test_the_write_check_reads_a_backtick_body(tmp_path, cmd, expected, bash):
     (tmp_path / "a").write_text("x")
     (tmp_path / "d").mkdir()
     (tmp_path / "d" / "a").write_text("x")
-    subprocess.run(["bash", "-c", cmd], cwd=tmp_path, capture_output=True, check=False)
+    subprocess.run([bash[0], "-c", cmd], cwd=tmp_path, capture_output=True, check=False)
     ran = not (tmp_path / "a").exists() or not (tmp_path / "d" / "a").exists()
     assert ran is bool(expected)
     assert gate._bash_write_targets(cmd) == expected

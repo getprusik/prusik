@@ -205,3 +205,32 @@ def _restore_global_state(tmp_path_factory):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+# --- every bash on this host is an oracle --------------------------------------------------------
+def _distinct_bashes() -> list[tuple[str, int]]:
+    """(path, major version) for each distinct bash binary found: /bin/bash, the first on PATH,
+    and Homebrew's. A Mac ships 3.2 and Linux CI runs 5, and they parse some shapes differently,
+    so a test that asks real bash runs once against each one present."""
+    found: dict[str, tuple[str, int]] = {}
+    for cand in ("/bin/bash", shutil.which("bash"), "/opt/homebrew/bin/bash", "/usr/local/bin/bash"):
+        if not cand or not os.access(cand, os.X_OK):
+            continue
+        real = os.path.realpath(cand)
+        if real in found:
+            continue
+        out = subprocess.run([cand, "-c", "echo ${BASH_VERSINFO[0]}"], capture_output=True,
+                             text=True, check=False).stdout.strip()
+        if out.isdigit():
+            found[real] = (cand, int(out))
+    return sorted(found.values(), key=lambda b: b[1])
+
+
+BASHES = _distinct_bashes()
+
+
+def pytest_generate_tests(metafunc):
+    """A test (or a fixture it uses) that asks for `bash` gets one run per bash on this host,
+    as a (path, major) pair, with the major in the test id."""
+    if "bash" in metafunc.fixturenames:
+        metafunc.parametrize("bash", BASHES, ids=[f"bash{major}" for _, major in BASHES])

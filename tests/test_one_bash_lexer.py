@@ -34,8 +34,8 @@ _LITERAL_DOLLAR, _QUOTED_DOLLAR = bash_reader.LITERAL_DOLLAR, bash_reader.QUOTED
 _HERE = {"a", "bin", "git-calls"}
 
 
-def _bash_ran(tmp_path, command: str) -> tuple[bool, bool, list[str]]:
-    """(`a` was removed, the stub ran `git push`, files bash created) after real bash runs
+def _bash_ran(tmp_path, command: str, bash: tuple[str, int]) -> tuple[bool, bool, list[str]]:
+    """(`a` was removed, the stub ran `git push`, files bash created) after the `bash` binary runs
     `command`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -44,7 +44,7 @@ def _bash_ran(tmp_path, command: str) -> tuple[bool, bool, list[str]]:
     stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
     (tmp_path / "a").write_text("")
     env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
-    subprocess.run(["bash", "-c", command], cwd=tmp_path, env=env, stdin=subprocess.DEVNULL,
+    subprocess.run([bash[0], "-c", command], cwd=tmp_path, env=env, stdin=subprocess.DEVNULL,
                    capture_output=True, timeout=10, check=False)
     calls = tmp_path / "git-calls"
     created = sorted(p.name for p in tmp_path.iterdir() if p.name not in _HERE)
@@ -59,9 +59,9 @@ def _gate_reads(command: str) -> tuple[bool, bool]:
     return "a" in gate._bash_write_targets(command), gate._command_denied(command, _PUSH)
 
 
-def _agree(tmp_path, command: str, removed: bool, pushed: bool) -> list[str]:
+def _agree(tmp_path, command: str, removed: bool, pushed: bool, bash: tuple[str, int]) -> list[str]:
     """Bash did what the case says, and the gate reads exactly that. Returns what bash created."""
-    ran = _bash_ran(tmp_path, command)
+    ran = _bash_ran(tmp_path, command, bash)
     assert ran[:2] == (removed, pushed), "the shape does not do what it says"
     assert _gate_reads(command) == (removed, pushed)
     return ran[2]
@@ -75,13 +75,13 @@ def _forms(shape) -> tuple[str, str]:
     return shape.replace("RUN", _RM), shape.replace("RUN", _PUSH)
 
 
-def _agree_shape(tmp_path, shape, expected: bool) -> list[str]:
+def _agree_shape(tmp_path, shape, expected: bool, bash: tuple[str, int]) -> list[str]:
     rm_form, push_form = _forms(shape)
     rm_dir, push_dir = tmp_path / "rm", tmp_path / "push"
     rm_dir.mkdir()
     push_dir.mkdir()
-    created = _agree(rm_dir, rm_form, expected, False)
-    created += _agree(push_dir, push_form, False, expected)
+    created = _agree(rm_dir, rm_form, expected, False, bash)
+    created += _agree(push_dir, push_form, False, expected, bash)
     return created
 
 
@@ -234,13 +234,13 @@ _RUNS = [
 
 
 @pytest.mark.parametrize("shape", _RUNS, ids=[_id(s) for s in _RUNS])
-def test_a_command_bash_runs_is_read(tmp_path, shape):
-    _agree_shape(tmp_path, shape, True)
+def test_a_command_bash_runs_is_read(tmp_path, shape, bash):
+    _agree_shape(tmp_path, shape, True, bash)
 
 
-def test_a_second_heredoc_on_the_line_is_read_in_order(tmp_path):
+def test_a_second_heredoc_on_the_line_is_read_in_order(tmp_path, bash):
     """`bash` takes the second body: `rm a` runs, the first body is data, so no push."""
-    _agree(tmp_path, "cat <<A; bash <<B\ngit push\nA\nrm a\nB", True, False)
+    _agree(tmp_path, "cat <<A; bash <<B\ngit push\nA\nrm a\nB", True, False, bash)
 
 
 # --- bash treats it as text, the gate must not read it ------------------------------------------
@@ -269,15 +269,15 @@ _TEXT = [
 
 
 @pytest.mark.parametrize("shape", _TEXT, ids=[_id(s) for s in _TEXT])
-def test_text_bash_does_not_run_is_not_read(tmp_path, shape):
-    created = _agree_shape(tmp_path, shape, False)
+def test_text_bash_does_not_run_is_not_read(tmp_path, shape, bash):
+    created = _agree_shape(tmp_path, shape, False, bash)
     assert created == [], "bash created a file, so something in the shape ran"
     assert gate._bash_write_targets(_forms(shape)[0]) == []
 
 
-def test_a_python_comparison_is_no_redirect(tmp_path):
+def test_a_python_comparison_is_no_redirect(tmp_path, bash):
     command = 'python3 -c "print(1 > 2)"'
-    assert _bash_ran(tmp_path, command)[2] == []
+    assert _bash_ran(tmp_path, command, bash)[2] == []
     assert gate._bash_write_targets(command) == []
 
 
@@ -292,52 +292,49 @@ _QUOTED = [
 
 
 @pytest.mark.parametrize("quoted", _QUOTED, ids=[_id(s) for s in _QUOTED])
-def test_a_real_command_after_quoted_text_is_still_read(tmp_path, quoted):
+def test_a_real_command_after_quoted_text_is_still_read(tmp_path, quoted, bash):
     """The quoted text holds the other command; only the one after it runs."""
     rm_dir, push_dir = tmp_path / "rm", tmp_path / "push"
     rm_dir.mkdir()
     push_dir.mkdir()
-    _agree(rm_dir, quoted.replace("X", _PUSH) + " ; " + _RM, True, False)
-    _agree(push_dir, quoted.replace("X", _RM) + " ; " + _PUSH, False, True)
+    _agree(rm_dir, quoted.replace("X", _PUSH) + " ; " + _RM, True, False, bash)
+    _agree(push_dir, quoted.replace("X", _RM) + " ; " + _PUSH, False, True, bash)
 
 
 @pytest.mark.parametrize("quoted", _QUOTED, ids=[_id(s) for s in _QUOTED])
-def test_a_real_redirect_after_quoted_text_is_still_read(tmp_path, quoted):
+def test_a_real_redirect_after_quoted_text_is_still_read(tmp_path, quoted, bash):
     command = quoted.replace("X", _RM) + " > f"
-    assert _agree(tmp_path, command, False, False) == ["f"]
+    assert _agree(tmp_path, command, False, False, bash) == ["f"]
     targets = gate._bash_write_targets(command)
     assert "f" in targets and "b" not in targets and "a" not in targets
 
 
 # --- stated over-reads: the gate reads code bash does not run, on purpose -----------------------
-def test_a_function_body_is_read_where_it_is_defined(tmp_path):
+def test_a_function_body_is_read_where_it_is_defined(tmp_path, bash):
     """Over-read by design: `f` is never called, so bash removes nothing, but a definition is code
     the gate reads where it stands, called or not (a call can come from anywhere)."""
     command = "f() { rm a; }"
-    assert _bash_ran(tmp_path, command)[0] is False
+    assert _bash_ran(tmp_path, command, bash)[0] is False
     assert "a" in gate._bash_write_targets(command)
 
 
-def test_a_script_argument_is_read_as_code_on_purpose(tmp_path):
+def test_a_script_argument_is_read_as_code_on_purpose(tmp_path, bash):
     """Over-read by design: `bash script.sh <<EOF` runs the script and not the body, but telling
     it from `bash <<EOF` means parsing each shell's flags, and a false refusal costs one turn."""
     command = f"bash script.sh <<EOF\n{_PUSH}\nEOF"
-    assert _bash_ran(tmp_path, command)[1] is False
+    assert _bash_ran(tmp_path, command, bash)[1] is False
     assert gate._command_denied(command, _PUSH) is True
 
 
 @pytest.mark.parametrize("command", ["echo \"abc\nrm a", "echo hi\necho $(rm a"])
-def test_an_unterminated_shape_is_read_on_to_its_end(tmp_path, command):
+def test_an_unterminated_shape_is_read_on_to_its_end(tmp_path, command, bash):
     """Over-read by design: bash rejects the syntax and runs nothing, but the text after the opener
     is also read as code, so nothing after an unterminated quote or substitution is lost."""
-    assert _bash_ran(tmp_path, command)[0] is False
+    assert _bash_ran(tmp_path, command, bash)[0] is False
     assert "a" in gate._bash_write_targets(command)
 
 
 # --- version-dependent: bash 3.2 runs it, bash 4 and later do not ---------------------------------
-_BASH_MAJOR = int(subprocess.run(["bash", "-c", "echo ${BASH_VERSINFO[0]}"], capture_output=True,
-                                 text=True, check=True).stdout)
-
 _RUNS_ON_BASH_3 = [
     # A `<<` inside a substitution that closed before the line ended: 3.2 ends the substitution
     # there and runs the next line; bash 5 takes the next lines as the heredoc body.
@@ -356,16 +353,16 @@ _RUNS_ON_BASH_3 = [
 
 
 @pytest.mark.parametrize("shape", _RUNS_ON_BASH_3, ids=[_id(s) for s in _RUNS_ON_BASH_3])
-def test_a_command_only_bash_3_runs_is_read(tmp_path, shape):
+def test_a_command_only_bash_3_runs_is_read(tmp_path, shape, bash):
     """Bash 3.2 (this Mac) runs the command and bash 5 (CI) does not, so each bash is checked for
     what it does. The gate reads the command for both: on bash 5 that is an over-read."""
     rm_form, push_form = _forms(shape)
     rm_dir, push_dir = tmp_path / "rm", tmp_path / "push"
     rm_dir.mkdir()
     push_dir.mkdir()
-    runs = _BASH_MAJOR < 4
-    assert _bash_ran(rm_dir, rm_form)[:2] == (runs, False), "the shape does not do what it says"
-    assert _bash_ran(push_dir, push_form)[:2] == (False, runs), "the shape does not do what it says"
+    runs = bash[1] < 4
+    assert _bash_ran(rm_dir, rm_form, bash)[:2] == (runs, False), "the shape does not do what it says"
+    assert _bash_ran(push_dir, push_form, bash)[:2] == (False, runs), "the shape does not do what it says"
     assert _gate_reads(rm_form) == (True, False)
     assert _gate_reads(push_form) == (False, True)
 
@@ -744,10 +741,10 @@ def test_an_ansi_c_escape_that_spells_a_name_stays_unread():
     "bash <<A; cat <<B\nrm a\nA\nrm a\nB",
     "cat <<A; bash <<B\nrm a\nA\nrm a\nB",
 ])
-def test_equal_heredoc_bodies_are_judged_one_by_one(tmp_path, command):
+def test_equal_heredoc_bodies_are_judged_one_by_one(tmp_path, command, bash):
     """Bash runs `rm a` once, from the body the shell reads; the other body is data. Only the shell's
     body stays in the `deny_bash` text, so equal text in two bodies is not one verdict."""
-    assert _bash_ran(tmp_path, command)[0] is True
+    assert _bash_ran(tmp_path, command, bash)[0] is True
     assert "a" in gate._bash_write_targets(command)
     assert gate._deny_bash_text(command).count("rm a") == 1
 
