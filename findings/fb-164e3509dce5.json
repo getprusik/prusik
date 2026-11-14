@@ -1,0 +1,16 @@
+{
+  "id": "fb-164e3509dce5",
+  "created_at": "2026-11-14T20:36:39.684920+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "a sprint started in a long session pays that session's context on every turn",
+  "detail": "stop-blocks-once, a trivial 18-minute change, measured 12.9M tokens. 11.6M were the main thread (Opus), 1.3M the three role agents. 10.4M came from session eb27f96e, which had already run the whole one-bash-lexer sprint, so every briefing/build/review turn re-read that context (98% cache reads). The same sprint in a fresh session was 2.5M. Candidate: sprint-start and each gate advance read the session's current context size (platform_adapter.read_usage) and warn above a threshold derived from transcripts, naming the hand-off path; tier report shows each sprint's peak context. Advisory, not a block.",
+  "feature": null,
+  "content_hash": "164e3509dce5",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
