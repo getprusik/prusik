@@ -1415,13 +1415,29 @@ def stop(args=None) -> int:
 _STOP_REPORTED_FILE = "stop-reported.json"
 
 
+def _evidence_phase(name: str) -> str:
+    """`regression.evidence.json` -> `regression`: the phase whose `<phase>.txt` verdict it pairs
+    with. The one pairing rule, shared by `_evidence_unsatisfied` and `_artifact_owner`."""
+    return name.split(".evidence.json")[0]
+
+
+def _artifact_owner(path: str) -> str | None:
+    """The reviewer role that produces this exit artifact: the owner of the verdict itself, or
+    of the verdict an `.evidence.json` pairs with; None for any other file."""
+    name = Path(path).name
+    if name.endswith(".evidence.json"):
+        name = f"{_evidence_phase(name)}.txt"
+    entry = _APPROVAL_SOURCE.get(name)
+    return entry[0] if entry else None
+
+
 def _in_flight(feature: str | None, items: list[tuple[str, str]]) -> bool:
     """True when every missing exit artifact is owned by a reviewer whose spawn (a
     `tier_resolved` naming it) was recorded since the phase was entered and whose report has
     not landed since. The reviewer is working; the artifact is not overdue."""
     if not feature or not items:
         return False
-    if any(Path(p).name not in _APPROVAL_SOURCE for p, _ in items):
+    if any(_artifact_owner(p) is None for p, _ in items):
         return False
     from datetime import datetime
 
@@ -1444,7 +1460,7 @@ def _in_flight(feature: str | None, items: list[tuple[str, str]]) -> bool:
     entry = max(entries)
     root = ledger.project_root()
     for path, _ in items:
-        owner = _APPROVAL_SOURCE[Path(path).name][0]
+        owner = _artifact_owner(path)
         spawns = [e for r in records
                   if r.get("event") == "tier_resolved" and r.get("feature") == feature
                   and owner in (r.get("roles") or {})
@@ -4286,7 +4302,7 @@ def _evidence_unsatisfied(rel_path: str, feature: str | None,
     dominant-cost cure, so a carried paired verdict satisfies."""
     from prusik import schema
     name = Path(rel_path).name
-    phase = name.split(".evidence.json")[0]
+    phase = _evidence_phase(name)
     abs_path = root / rel_path
     paired_txt = abs_path.parent / f"{phase}.txt"
 

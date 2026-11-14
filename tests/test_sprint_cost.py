@@ -158,9 +158,6 @@ def test_a_different_roles_spawn_does_not_count(project, monkeypatch):
 
 
 def _both_reviewers_missing(project, monkeypatch, spawns):
-    # The execution-evidence files are a separate exit artifact; this isolates the two
-    # reviewer verdicts the plan names.
-    monkeypatch.setattr(gate, "_evidence_unsatisfied", lambda *a, **k: None)
     _ledger(project, [_entered(0, "phase_advance"), *spawns])
     return _stop("reviewing")
 
@@ -176,6 +173,21 @@ def test_reviewing_blocks_when_only_one_owner_is_in_flight(project, monkeypatch)
     # moat-finding: fb-0fbea010311c
     rc = _both_reviewers_missing(project, monkeypatch, [_spawn("regression-sentinel", 3)])
     assert rc == 2
+
+
+def test_a_stale_evidence_file_with_the_verdict_missing_is_in_flight(project, monkeypatch):
+    # moat-finding: fb-0fbea010311c
+    _report(project, "regression.evidence.json", "{}", 1)       # before the spawn
+    rc = _both_reviewers_missing(project, monkeypatch, [
+        _spawn("regression-sentinel", 3), _spawn("conventions-enforcer", 4)])
+    assert rc == 0
+
+
+def test_artifact_owner_pairs_evidence_with_its_verdict():
+    # moat-finding: fb-0fbea010311c
+    assert gate._artifact_owner("reports/f/regression.evidence.json") == "regression-sentinel"
+    assert gate._artifact_owner("reports/f/conventions.txt") == "conventions-enforcer"
+    assert gate._artifact_owner("design/f/scope.md") is None
 
 
 def test_in_flight_is_false_for_no_feature_or_no_items():
