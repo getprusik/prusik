@@ -1383,14 +1383,49 @@ def stop(args=None) -> int:
     feature = state.get("feature")
     phase_spec = phases.get_phase_spec(config, phase) or {}
     missing = _unsatisfied_exit_artifacts(phase_spec, feature)
-    if missing:
-        reason = (f"[prusik-gate] Phase '{phase}' has unsatisfied exit artifacts:\n  - "
-                  + "\n  - ".join(missing)
-                  + "\nProduce the artifact(s) or run /sprint-advance if you mean to move on.")
-        # Stop hook: exit 2 + JSON on stdout per hook spec to block session end
-        print(json.dumps({"decision": "block", "reason": reason}))
-        return 2
-    return 0
+    record = ledger.project_root() / ".sprint" / _STOP_REPORTED_FILE
+    if not missing:
+        record.unlink(missing_ok=True)
+        return 0
+    # fb-6e133097e7b1: remind once per state of the phase's exit artifacts. A stop that finds the
+    # same state already reported (typically a turn spent waiting on a background reviewer) passes;
+    # the phase advance still refuses until the artifacts are satisfied.
+    key = _artifact_state_key(phase_spec, phase, feature, missing)
+    try:
+        if json.loads(record.read_text()).get("key") == key:
+            return 0
+    except (OSError, ValueError, AttributeError):
+        pass  # no readable record: not yet reported
+    reason = (f"[prusik-gate] Phase '{phase}' has unsatisfied exit artifacts:\n  - "
+              + "\n  - ".join(missing)
+              + "\nProduce the artifact(s) or run /sprint-advance if you mean to move on.")
+    try:
+        record.write_text(json.dumps({"key": key}))
+    except OSError:
+        pass  # the reminder still lands; the next stop simply reminds again
+    # Stop hook: exit 2 + JSON on stdout per hook spec to block session end
+    print(json.dumps({"decision": "block", "reason": reason}))
+    return 2
+
+
+_STOP_REPORTED_FILE = "stop-reported.json"
+
+
+def _artifact_state_key(phase_spec: dict, phase: str, feature: str | None,
+                        missing: list[str]) -> str:
+    """A digest of what a stop reminder reports: the feature, the phase, what is missing and the
+    bytes (or absence) of every exit artifact the phase declares."""
+    import hashlib
+    root = ledger.project_root()
+    h = hashlib.sha256(json.dumps([feature, phase, sorted(missing)]).encode())
+    for artifact in _exit_list(phase_spec):
+        path = phases.resolve_path(artifact["path"], feature=feature)
+        h.update(b"\0" + str(path).encode() + b"\0")
+        try:
+            h.update(hashlib.sha256((root / path).read_bytes()).digest())
+        except OSError:
+            h.update(b"absent")
+    return h.hexdigest()
 
 
 # ============================================================
@@ -4724,6 +4759,14 @@ def _verdict_line_ok(text: str, token: str) -> bool:
     return False
 
 
+def _exit_list(phase_spec: dict) -> list[dict]:
+    """The exit artifacts the active sprint's lane must produce for `phase_spec`."""
+    lane = (phases.current_sprint_state() or {}).get("lane")
+    if lane == "trivial" and phase_spec.get("trivial_exit_artifacts"):
+        return phase_spec["trivial_exit_artifacts"]
+    return phase_spec.get("exit_artifacts", [])
+
+
 def _unsatisfied_exit_artifacts(phase_spec: dict, feature: str | None) -> list[str]:
     from prusik import schema
     root = ledger.project_root()
@@ -4734,12 +4777,7 @@ def _unsatisfied_exit_artifacts(phase_spec: dict, feature: str | None) -> list[s
     # trivial.md instead of full scope.md + scope-critic APPROVED). The
     # reviewing phase declares no trivial variant, so its correctness floor
     # (regression + conventions PASS) applies to trivial sprints unchanged.
-    lane = (phases.current_sprint_state() or {}).get("lane")
-    if lane == "trivial" and phase_spec.get("trivial_exit_artifacts"):
-        exit_list = phase_spec["trivial_exit_artifacts"]
-    else:
-        exit_list = phase_spec.get("exit_artifacts", [])
-    for artifact in exit_list:
+    for artifact in _exit_list(phase_spec):
         path = phases.resolve_path(artifact["path"], feature=feature)
         abs_path = root / path
         validator = artifact.get("validator")

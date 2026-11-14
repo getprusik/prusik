@@ -67,8 +67,14 @@ All notable changes to **Prusik** are documented here. The format follows
   this release on `git push`, `git merge`, the lease and the write targets: no command raises, the
   four judgments take 8.4 s against 46.0 s, no push, merge or lease verdict changes, and every
   write-target difference is code in `bash -c` or `trap` now read, quoted text no longer read as a
-  redirect, or a `${v// /_}` no longer split at its space. 130 findings now carry a regression
+  redirect, or a `${v// /_}` no longer split at its space. 131 findings now carry a regression
   test (127 before); the README count and the Action pin follow.
+- **Also: the Stop hook reminds once per state (fb-6e133097e7b1).** A stop in a phase with
+  unsatisfied exit artifacts was blocked every time, so a session waiting on a background reviewer
+  spent a full turn per stop only to say it was still waiting (six in one session). The reminder
+  now lands once for a given feature, phase, missing list and artifact contents, recorded in
+  `.sprint/stop-reported.json`; any change to those reminds again, and a satisfied phase clears
+  the record. Advancing the phase still refuses until the artifacts are satisfied.
 
 ## [0.238.8] — three small frictions: negative CSS utilities, the lease hint, fix-round status
 
