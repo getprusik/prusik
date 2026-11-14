@@ -3,6 +3,20 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.241.0] — Three sprint-cost terms
+
+- **The Stop hook stays silent while the reviewer that owns the missing artifact is working
+  (fb-0fbea010311c).** When every missing exit artifact is a reviewer verdict whose owner was
+  spawned since the phase was entered and has not written its report since, the stop passes
+  without a reminder and without a record. Any other missing artifact still blocks as before.
+- **scope-critic's tier follows the scope (fb-9aaa814f7b3b).** It resolves from `scope.md`'s size
+  and the stakes computed before triage: `bounded` for size S or M below high stakes, else
+  `high_stakes`. A missing or malformed `scope.md` fails closed in the standard lane; the
+  trivial lane is unchanged. The `tier_resolved` event now records each role's reason.
+- **Leaving planning in a grown session says so (fb-9dac611d867c).** Past 40,000 tokens above the
+  session's first turn, the advance out of planning prints a plan-boundary line naming
+  `design/<feature>/plan.md` and `/compact`, and records `plan_boundary_advised`.
+
 ## [0.240.0] — A grown session says so
 
 - **sprint-start and every successful advance warn when the session has grown (fb-164e3509dce5).**

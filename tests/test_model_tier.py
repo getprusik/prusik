@@ -43,7 +43,7 @@ _ALL_ROLES = ["backend-builder", "brief-critic", "cartographer", "conventions-en
               "conventions-scribe", "feature-planner", "frontend-builder", "integrator",
               "plan-critic", "pr-composer", "product-fit-critic", "regression-sentinel",
               "scope-critic", "scoping", "test-writer"]
-_FIXED = ["brief-critic", "product-fit-critic", "cartographer", "scoping", "scope-critic",
+_FIXED = ["brief-critic", "product-fit-critic", "cartographer", "scoping",
           "conventions-scribe", "pr-composer"]
 
 
@@ -93,12 +93,23 @@ def _decision(root: Path, feature=_FEATURE, *, mode="team", size="M", priority="
         "brief_meta": {"type": "new_feature", "priority": priority}}))
 
 
+def _scope(root: Path, feature=_FEATURE, *, size="S", priority="P1", risks=()) -> None:
+    """The scope.md and brief scope-critic's class resolves from (fb-9aaa814f7b3b)."""
+    (root / "design" / feature).mkdir(parents=True, exist_ok=True)
+    (root / "briefs").mkdir(exist_ok=True)
+    risk_lines = "".join(f"- {r}\n" for r in risks)
+    (root / "design" / feature / "scope.md").write_text(
+        f"## Domains\n- backend\n\n## Size\n{size}\n\n## Risks\n{risk_lines}")
+    (root / "briefs" / f"{feature}.md").write_text(f"## Type\nnew_feature\n\n## Priority\n{priority}\n")
+
+
 @pytest.fixture
 def ready(proj):
     """Tiering on, reference profile installed, shared decision written. Standard lane."""
     _set_tiering(proj, {"enabled": True})
     _install(proj, "reference")
     _decision(proj)
+    _scope(proj)
     return proj
 
 
@@ -337,7 +348,7 @@ def test_standard_lane_malformed_decision_is_an_error(ready):
 def test_trivial_lane_resolves_from_the_brief_without_a_decision(ready):
     (ready / "decisions" / f"{_FEATURE}.json").unlink()
     (ready / "decisions").rmdir()
-    (ready / "briefs").mkdir()
+    (ready / "briefs").mkdir(exist_ok=True)
     brief = ready / "briefs" / f"{_FEATURE}.md"
     brief.write_text("# Brief\n\n## Type\nbug_fix\n\n## Priority\nP1\n\n"
                      "## Problem\nA security fix.\n")
@@ -649,10 +660,10 @@ def test_no_plan_means_no_override(ready):
     assert all(r.source != "override" for r in model_tier.resolve(_FEATURE).roles.values())
     # the section is read only from design/<f>/plan.md: a bad one elsewhere is ignored
     (ready / "design" / _FEATURE / "scope.md").write_text(
-        f"# Scope\n\n## Model tiers\n- ghost-role: premium {_EM} nope\n")
-    (ready / "briefs").mkdir()
+        f"# Scope\n\n## Size\nS\n\n## Model tiers\n- ghost-role: premium {_EM} nope\n")
+    (ready / "briefs").mkdir(exist_ok=True)
     (ready / "briefs" / f"{_FEATURE}.md").write_text(
-        f"## Model tiers\n- plan-critic: mechanical {_EM} nope\n")
+        f"## Priority\nP1\n\n## Model tiers\n- plan-critic: mechanical {_EM} nope\n")
     res = model_tier.resolve(_FEATURE)
     assert res.roles["plan-critic"].source == "stakes"
 
@@ -686,9 +697,10 @@ def test_cli_resolve_table_has_header_reasons_and_a_row_per_role(ready, monkeypa
     rows = {}
     for ln in lines[1:]:
         cols = ln.split()
-        if len(cols) == 4 and cols[0] in set(_ALL_ROLES) | {"docs-writer"}:
+        # a row with a reason (scope-critic: scope.md size + stakes) trails "(...)"
+        if len(cols) >= 4 and cols[0] in set(_ALL_ROLES) | {"docs-writer"}:
             assert cols[0] not in rows, f"duplicate row for {cols[0]}"
-            rows[cols[0]] = cols[1:]
+            rows[cols[0]] = cols[1:4]
     assert set(rows) == set(_ALL_ROLES) | {"docs-writer"}          # 15 packaged + profile role
     assert rows["regression-sentinel"] == ["high_stakes", "opus", "stakes"]
     assert rows["cartographer"] == ["high_stakes", "opus", "fixed"]

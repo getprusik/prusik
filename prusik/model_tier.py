@@ -18,6 +18,9 @@ platform adapter validates (`spawn_model_refs`, `pinned_model_note`, `model_matc
     record it cannot use is listed under `skipped` with the reason, and an input it cannot
     read at all is rc 2.
 
+scope-critic's class comes from scope.md size plus the stakes computed before triage
+(fb-9aaa814f7b3b).
+
 Off the hook hot path: nothing on the PreToolUse/Stop import set imports this module.
 """
 
@@ -35,7 +38,7 @@ import yaml
 from prusik import ledger, phases, usage
 from prusik.platform_adapter import PlatformAdapter, get_adapter
 from prusik.schema import extract_list_items, parse_sections
-from prusik.triage import parse_brief_meta
+from prusik.triage import parse_brief_meta, parse_scope
 
 TIER_CLASSES: tuple[str, ...] = ("high_stakes", "bounded", "mechanical")
 
@@ -53,7 +56,7 @@ BASE_CLASS: dict[str, str] = {
 
 # Pre-scope roles (stakes are not known yet) plus pr-composer: their class never moves.
 FIXED_ROLES: frozenset[str] = frozenset({
-    "brief-critic", "product-fit-critic", "cartographer", "scoping", "scope-critic",
+    "brief-critic", "product-fit-critic", "cartographer", "scoping",
     "conventions-scribe", "pr-composer"})
 
 PROFILE_RELPATH = Path(".claude") / "model-profile.yaml"
@@ -110,7 +113,7 @@ class RoleTier:
     base_class: str
     tier_class: str
     model: str
-    source: str                     # "fixed" | "stakes" | "project" | "override"
+    source: str                     # "fixed" | "stakes" | "project" | "override" | "scope"
     reason: str | None = None
 
 
@@ -302,7 +305,9 @@ def stakes(signals: Signals, profile: Profile) -> Stakes:
 # ---- class + overrides ---------------------------------------------------------------------
 
 def _stakes_sensitive(role: str, profile: Profile) -> bool:
-    return (role not in profile.roles and role in BASE_CLASS
+    # scope-critic's stakes come from scope.md (`_scope_class`), before triage: it never loads
+    # or records the decision-based stakes.
+    return (role not in profile.roles and role in BASE_CLASS and role != "scope-critic"
             and role not in FIXED_ROLES and BASE_CLASS[role] != "mechanical")
 
 
@@ -313,6 +318,8 @@ def tier_class(role: str, level: str | None, profile: Profile) -> tuple[str, str
         return profile.roles[role], "project"
     if role not in BASE_CLASS:
         raise TierError(f"{role}: not a packaged role and not in the profile's roles")
+    if role == "scope-critic":
+        raise TierError("scope-critic: resolved from scope.md, not stakes")
     base = BASE_CLASS[role]
     if role in FIXED_ROLES or base == "mechanical":
         return base, "fixed"
@@ -360,6 +367,30 @@ def parse_overrides(plan_text: str, known_roles: set[str]) -> dict[str, tuple[st
     return out
 
 
+def _scope_class(feature: str, profile: Profile) -> tuple[str, str]:
+    """(class, reason) for scope-critic: bounded for a size S or M scope whose stakes are not
+    high, else high_stakes. Reads design/<feature>/scope.md and the brief (fb-9aaa814f7b3b)."""
+    root = ledger.project_root()
+    scope = root / "design" / feature / "scope.md"
+    brief = root / "briefs" / f"{feature}.md"
+    for path in (scope, brief):
+        if not path.is_file():
+            raise TierError(f"{path.relative_to(root).as_posix()}: missing "
+                            "(scope-critic resolves from it)")
+    s = parse_scope(scope)
+    size = s["size"]
+    if size not in SIZE_POINTS:
+        raise TierError(f"design/{feature}/scope.md: size {size!r} is not one of "
+                        f"{', '.join(SIZE_POINTS)}")
+    st = stakes(Signals(lane="standard", size=size,
+                        priority=str(parse_brief_meta(brief)["priority"]), team=False,
+                        risk_text="\n".join([*s["domains"], *s["risks"]]),
+                        source=f"design/{feature}/scope.md"), profile)
+    cls = "bounded" if size in ("S", "M") and st.level != "high" else "high_stakes"
+    return cls, "; ".join([*st.reasons, "team mode unknown before triage: +0",
+                           f"scope-critic: size {size}, stakes {st.level} -> {cls}"])
+
+
 # ---- resolve + record ----------------------------------------------------------------------
 
 def resolve(feature: str, role: str | None = None) -> Resolution:
@@ -393,6 +424,14 @@ def resolve(feature: str, role: str | None = None) -> Resolution:
             base = BASE_CLASS.get(n) or profile.roles[n]
             roles[n] = RoleTier(n, base, cls, profile.tiers[cls], "override", reason)
             continue
+        if n == "scope-critic" and n not in profile.roles:
+            if lane == "trivial":       # the trivial lane never spawns scope-critic
+                roles[n] = RoleTier(n, "high_stakes", "high_stakes",
+                                    profile.tiers["high_stakes"], "fixed")
+            else:
+                cls, reason = _scope_class(feature, profile)
+                roles[n] = RoleTier(n, "high_stakes", cls, profile.tiers[cls], "scope", reason)
+            continue
         cls, source = tier_class(n, st.level if st else None, profile)
         roles[n] = RoleTier(n, BASE_CLASS.get(n) or cls, cls, profile.tiers[cls], source)
     return Resolution(feature, True, lane, st, roles)
@@ -403,7 +442,8 @@ def record(res: Resolution) -> None:
     ledger.append("tier_resolved", feature=res.feature, lane=res.lane,
                   stakes=res.stakes.level if res.stakes else None,
                   score=res.stakes.score if res.stakes else None,
-                  roles={r: {"tier_class": t.tier_class, "model": t.model, "source": t.source}
+                  roles={r: {"tier_class": t.tier_class, "model": t.model, "source": t.source,
+                             **({"reason": t.reason} if t.reason is not None else {})}
                          for r, t in res.roles.items()})
 
 

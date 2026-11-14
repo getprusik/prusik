@@ -1387,6 +1387,10 @@ def stop(args=None) -> int:
     if not missing:
         record.unlink(missing_ok=True)
         return 0
+    # fb-0fbea010311c: a turn spent waiting on the reviewer that owns every missing artifact is
+    # not a turn to remind about. Computed only on this blocking path.
+    if _in_flight(feature, _unsatisfied_exit_items(phase_spec, feature)):
+        return 0
     # fb-6e133097e7b1: remind once per state of the phase's exit artifacts. A stop that finds the
     # same state already reported (typically a turn spent waiting on a background reviewer) passes;
     # the phase advance still refuses until the artifacts are satisfied.
@@ -1409,6 +1413,50 @@ def stop(args=None) -> int:
 
 
 _STOP_REPORTED_FILE = "stop-reported.json"
+
+
+def _in_flight(feature: str | None, items: list[tuple[str, str]]) -> bool:
+    """True when every missing exit artifact is owned by a reviewer whose spawn (a
+    `tier_resolved` naming it) was recorded since the phase was entered and whose report has
+    not landed since. The reviewer is working; the artifact is not overdue."""
+    if not feature or not items:
+        return False
+    if any(Path(p).name not in _APPROVAL_SOURCE for p, _ in items):
+        return False
+    from datetime import datetime
+
+    def epoch(ts) -> float | None:
+        try:
+            return datetime.fromisoformat(ts).timestamp()
+        except (TypeError, ValueError):
+            return None
+
+    try:
+        records = ledger.read_all()
+    except (OSError, ValueError):
+        return False
+    entries = [e for r in records
+               if r.get("event") in ("sprint_started", "phase_advance", "phase_rewind")
+               and r.get("feature") == feature
+               and (e := epoch(r.get("ts"))) is not None]
+    if not entries:
+        return False
+    entry = max(entries)
+    root = ledger.project_root()
+    for path, _ in items:
+        owner = _APPROVAL_SOURCE[Path(path).name][0]
+        spawns = [e for r in records
+                  if r.get("event") == "tier_resolved" and r.get("feature") == feature
+                  and owner in (r.get("roles") or {})
+                  and (e := epoch(r.get("ts"))) is not None and e >= entry]
+        if not spawns:
+            return False
+        try:
+            if (root / path).stat().st_mtime >= max(spawns):
+                return False  # the report landed after the spawn
+        except OSError:
+            pass  # absent: still awaited
+    return True
 
 
 def _artifact_state_key(phase_spec: dict, phase: str, feature: str | None,
@@ -2996,7 +3044,10 @@ def advance(args) -> int:
     if current:
         print(_phase_usage_line(feature, current,
                                 phases.get_phase_spec(config, current) or {}))
-    size_line = _session_size_line(feature, target_phase)
+    size_line = (_plan_boundary_line(feature)
+                 if current == "planning" and not rewinding else None)
+    if size_line is None:
+        size_line = _session_size_line(feature, target_phase)
     if size_line is not None:
         print(size_line)
     return 0
@@ -3013,6 +3064,22 @@ def _phase_usage_line(feature: str, phase: str, phase_spec: dict) -> str:
     tail = (f" / budget {effort.fmt_tokens(budget)}"
             + (" — EXCEEDED" if u.tokens > budget else "")) if budget else ""
     return f"[prusik-gate] {phase} used {effort.fmt_tokens(u.tokens)} tokens{tail}"
+
+
+def _plan_boundary_line(feature: str) -> str | None:
+    """Advisory printed on leaving planning when the session has grown past
+    `usage.PLAN_BOUNDARY_GROWTH` (fb-9dac611d867c): plan.md carries what the rest of the sprint
+    needs, so this is the cheapest point to compact. Recorded as `plan_boundary_advised`.
+    None when the session is unmeasured or small. Never blocks."""
+    from prusik import effort, usage
+    c = usage.session_context()                    # total: never raises
+    if not (c.applies and c.measured) or c.growth <= usage.PLAN_BOUNDARY_GROWTH:
+        return None
+    ledger.append("plan_boundary_advised", feature=feature, context=c.current, growth=c.growth)
+    return (f"[prusik-gate] plan.md is approved and carries what the rest of the sprint needs; "
+            f"this session is {effort.fmt_tokens(c.current)} tokens, "
+            f"{effort.fmt_tokens(c.growth)} above its first turn, re-read on every later turn. "
+            f"/compact now, or resume in a fresh session from design/{feature}/plan.md.")
 
 
 def _session_size_line(feature: str, phase: str) -> str | None:
@@ -4794,9 +4861,14 @@ def _exit_list(phase_spec: dict) -> list[dict]:
 
 
 def _unsatisfied_exit_artifacts(phase_spec: dict, feature: str | None) -> list[str]:
+    return [f"{p} ({r})" for p, r in _unsatisfied_exit_items(phase_spec, feature)]
+
+
+def _unsatisfied_exit_items(phase_spec: dict, feature: str | None) -> list[tuple[str, str]]:
+    """Each unsatisfied exit artifact as (path, reason); the message is `path (reason)`."""
     from prusik import schema
     root = ledger.project_root()
-    missing: list[str] = []
+    items: list[tuple[str, str]] = []
     # v0.11.0 #2: lane-aware exit artifacts. A phase may declare a
     # `trivial_exit_artifacts` set used only when the active sprint is in
     # the trivial lane (scoping uses this to require a lightweight
@@ -4813,31 +4885,31 @@ def _unsatisfied_exit_artifacts(phase_spec: dict, feature: str | None) -> list[s
         if validator == "execution_evidence":
             reason = _evidence_unsatisfied(path, feature, root)
             if reason:
-                missing.append(f"{path} (execution-evidence: {reason})")
+                items.append((path, f"execution-evidence: {reason}"))
             continue
         if not abs_path.exists():
             if _try_carry_forward(path, feature, root):
                 continue
-            missing.append(f"{path} (does not exist)")
+            items.append((path, "does not exist"))
             continue
         if validator == "brief_schema":
             ok, errs = schema.validate_brief(abs_path)
             if not ok:
-                missing.append(f"{path} (schema: {'; '.join(errs)})")
+                items.append((path, f"schema: {'; '.join(errs)}"))
                 continue
         elif validator == "scope_schema":
             ok, errs = schema.validate_scope(abs_path, root)
             if not ok:
-                missing.append(f"{path} (schema: {'; '.join(errs)})")
+                items.append((path, f"schema: {'; '.join(errs)}"))
                 continue
         elif validator == "triage_decision":
             ok, errs = schema.validate_triage_decision(abs_path)
             if not ok:
-                missing.append(f"{path} (schema: {'; '.join(errs)})")
+                items.append((path, f"schema: {'; '.join(errs)}"))
                 continue
         for sec in artifact.get("required_sections", []):
             if sec not in abs_path.read_text():
-                missing.append(f"{path} (missing section: {sec})")
+                items.append((path, f"missing section: {sec}"))
         mc = artifact.get("must_contain")
         text = abs_path.read_text() if mc else ""
         # A carried-forward marker is a claim about a hash: honoured only while what it
@@ -4845,17 +4917,17 @@ def _unsatisfied_exit_artifacts(phase_spec: dict, feature: str | None) -> list[s
         stale_carry = (mc and _is_carry_marker(text) and feature is not None
                        and _approval_carried_forward(path, feature, root) is None)
         if stale_carry:
-            missing.append(f"{path} (verdict line must be {mc!r} — its carried-forward "
-                           f"marker is stale: what it judged has changed)")
+            items.append((path, f"verdict line must be {mc!r} — its carried-forward "
+                               f"marker is stale: what it judged has changed"))
         elif mc and not _verdict_line_ok(text, mc):
             marker, newer = (_carryable_verdict(path, feature, root) if feature
                              else (None, None))
             if marker and feature:
                 _write_carry_marker(path, marker, feature, root)
                 continue
-            missing.append(f"{path} (verdict line must be {mc!r}"
-                           f"{f' — {newer}' if newer else ''})")
-    return missing
+            items.append((path, f"verdict line must be {mc!r}"
+                               f"{f' — {newer}' if newer else ''}"))
+    return items
 
 
 # ============================================================

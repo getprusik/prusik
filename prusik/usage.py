@@ -43,6 +43,10 @@ _CATEGORIES = ("input", "output", "cache_write", "cache_read")
 # larger system prompt is not warned for its baseline.
 SESSION_GROWTH_WARN = 120_000
 
+# The session behind fb-9dac611d867c grew from 53K to 180K on design reads, then re-read them
+# for ~40 more turns (~3-4M), so 40K of design reads x tens of turns is >= 1M.
+PLAN_BOUNDARY_GROWTH = 40_000
+
 
 def turn_context(input: int, cache_write: int, cache_read: int) -> int:  # noqa: A002
     """The one definition of a turn's context: what that response read (output is excluded,
