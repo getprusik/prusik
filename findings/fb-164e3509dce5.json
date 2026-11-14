@@ -10,7 +10,22 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": ".venv/bin/python -m pytest -q tests/test_session_size_warning.py",
+    "fixed_in": "0.240.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-14T21:53:51.367853+00:00",
+      "exit": 0,
+      "executed_count": 25,
+      "verdict": true,
+      "why": "25 test(s) executed, exit 0",
+      "worktree_hash": "685d031-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
