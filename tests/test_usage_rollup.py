@@ -303,7 +303,8 @@ def _key_read(key: str) -> re.Pattern:
     return re.compile(rf"""\.get\(\s*["']{k}["']|\[\s*["']{k}["']\s*\](?!\s*=(?!=))""")
 
 
-_ON_THE_ROLLUP = re.compile(r"\brollup\([^()]*\)\s*$")
+# `rolled` is the name effort gives the rollup result it reads once (by_phase + per_sprint)
+_ON_THE_ROLLUP = re.compile(r"\b(?:rollup\([^()]*\)|rolled)\s*$")
 
 
 def _reads_a_snapshot(text: str) -> bool:
@@ -312,7 +313,8 @@ def _reads_a_snapshot(text: str) -> bool:
 
     The one by_phase read that is NOT a snapshot read is a read of the rollup's own result,
     `usage.rollup(records)["by_phase"]` — the consumer form the plan prescribes for effort —
-    so a key read applied directly to a `rollup(...)` call is exempt from (a)."""
+    so a key read applied directly to a `rollup(...)` call, or to the `rolled` variable that
+    holds one, is exempt from (a)."""
     for m in _key_read("by_phase").finditer(text):
         prefix = text[text.rfind("\n", 0, m.start()) + 1:m.start()]
         if not _ON_THE_ROLLUP.search(prefix):

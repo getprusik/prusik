@@ -226,11 +226,15 @@ def run(json_output: bool = False) -> int:
     feats = summarize_features(records)
     phases = summarize_phases(records)
     from prusik import usage   # function-local: usage imports effort lazily (acyclic)
-    phase_tokens = usage.rollup(records)["by_phase"]
+    rolled = usage.rollup(records)
+    phase_tokens = rolled["by_phase"]
+    # ts-sorted, so a feature's latest completion wins
+    peaks = {e["feature"]: e["peak_context"] for e in rolled["per_sprint"]}
 
     if json_output:
         print(json.dumps({"features": feats, "by_phase": phases,
-                          "tokens_by_phase": phase_tokens}, indent=2, default=str))
+                          "tokens_by_phase": phase_tokens,
+                          "peak_context": peaks}, indent=2, default=str))
         return 0
 
     if not feats:
@@ -238,13 +242,14 @@ def run(json_output: bool = False) -> int:
         return 0
 
     print(f"Effort-telemetry — {len(feats)} journeys\n")
-    print(f"  {'feature':24s} {'wall':>6s} {'tokens':>7s} {'rwnd':>5s} {'blk':>4s} "
+    print(f"  {'feature':24s} {'wall':>6s} {'tokens':>7s} {'peak':>7s} {'rwnd':>5s} {'blk':>4s} "
           f"{'fix':>4s}  status")
     for feat in sorted(feats, key=lambda k: -(feats[k]["wall_clock_sec"] or 0)):
         d = feats[feat]
         status = "done" if d["complete"] else "open"
         print(f"  {str(feat)[:24]:24s} {fmt_duration(d['wall_clock_sec']):>6s} "
               f"{fmt_tokens(d['tokens']):>7s} "
+              f"{fmt_tokens(peaks.get(feat)):>7s} "
               f"{d['rewinds']:5d} {d['blocks']:4d} {d['fix_rounds']:4d}  {status}")
 
     if phases:
@@ -260,5 +265,7 @@ def run(json_output: bool = False) -> int:
           "rwnd=rewinds, blk=writable-gate blocks, fix=fix-rounds. "
           "tokens = measured from session transcripts at sprint-complete (input + output + "
           "cache writes + cache reads); set a phase's budget_tokens from these. "
+          "peak = the largest main-thread context of one turn in the sprint, what each turn "
+          "re-reads. "
           "Wall-clock includes any pause time.")
     return 0

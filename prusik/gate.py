@@ -2040,6 +2040,9 @@ def sprint_start(args) -> int:
     else:
         print(f"Next: run scoping role (reads briefs/{feature}.md + design/map.md),"
               f" produce design/{feature}/scope.md, then /sprint-advance triage.")
+    size_line = _session_size_line(feature, "scoping")
+    if size_line is not None:
+        print(size_line)
     return 0
 
 
@@ -2993,6 +2996,9 @@ def advance(args) -> int:
     if current:
         print(_phase_usage_line(feature, current,
                                 phases.get_phase_spec(config, current) or {}))
+    size_line = _session_size_line(feature, target_phase)
+    if size_line is not None:
+        print(size_line)
     return 0
 
 
@@ -3007,6 +3013,26 @@ def _phase_usage_line(feature: str, phase: str, phase_spec: dict) -> str:
     tail = (f" / budget {effort.fmt_tokens(budget)}"
             + (" — EXCEEDED" if u.tokens > budget else "")) if budget else ""
     return f"[prusik-gate] {phase} used {effort.fmt_tokens(u.tokens)} tokens{tail}"
+
+
+def _session_size_line(feature: str, phase: str) -> str | None:
+    """One advisory line when the current host session has grown past
+    `usage.SESSION_GROWTH_WARN` (fb-164e3509dce5), recorded as a `session_size_warned` event;
+    an UNMEASURED line when a session exists but could not be read. None otherwise. Never
+    blocks."""
+    from prusik import effort, usage
+    c = usage.session_context()                    # total: never raises
+    if not c.applies:
+        return None
+    if not c.measured:
+        return f"[prusik-gate] session context UNMEASURED: {c.reason}"
+    if c.growth <= usage.SESSION_GROWTH_WARN:
+        return None
+    ledger.append("session_size_warned", feature=feature, phase=phase,
+                  context=c.current, growth=c.growth)
+    return (f"[prusik-gate] ⚠ this session's context is {effort.fmt_tokens(c.current)} tokens, "
+            f"{effort.fmt_tokens(c.growth)} above its first turn, and every turn re-reads it. "
+            f"A fresh session resumes this sprint from briefs/{feature}.md and the ledger.")
 
 
 def mark_fallback(args) -> int:

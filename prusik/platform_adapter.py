@@ -16,7 +16,8 @@ The same seam carries the host I/O behind measured token usage (fb-a1b7db140a5e)
 `session_ref` (hook payload → neutral `SessionRef`), `read_usage` (the host's transcript
 files → neutral `UsageRecord`s) and `last_write` (newest transcript write, the cheap
 coverage bound). What stays host-neutral in `prusik.usage`: the session registry, dedup,
-phase attribution and measurability.
+phase attribution and measurability. `current_session_id` names the session this process
+runs in, so the warning about a grown session reads the right transcript.
 
 Only the Claude Code adapter ships today — this is the SEAM, not a second adapter (which
 the freeze-speculative-surface posture builds only when a real adopter moves to a runtime,
@@ -110,6 +111,10 @@ class PlatformAdapter(abc.ABC):
         """The session + transcript a hook payload identifies, or None."""
 
     @abc.abstractmethod
+    def current_session_id(self) -> str | None:
+        """The host session this process runs in, or None outside one."""
+
+    @abc.abstractmethod
     def read_usage(self, transcript: str, role_names: set[str]) -> TranscriptUsage:
         """Usage records from a session's transcript files; `role_names` are the roles a
         subagent may be attributed to."""
@@ -182,6 +187,11 @@ class ClaudeCodeAdapter(PlatformAdapter):
     _USAGE_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens",
                    "cache_read_input_tokens")
     _GENERIC_AGENT_TYPES = ("general-purpose", "")
+
+    def current_session_id(self) -> str | None:
+        # Verified 2026-11-14 on Claude Code 2.1.325: exported to every Bash subprocess,
+        # subagents' included (they carry the parent's id).
+        return os.environ.get("CLAUDE_CODE_SESSION_ID") or None
 
     def session_ref(self, payload: dict) -> SessionRef | None:
         sid, path = payload.get("session_id"), payload.get("transcript_path")

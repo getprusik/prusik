@@ -36,6 +36,19 @@ if TYPE_CHECKING:                     # type-only: keeps Stop's import set uncha
 _REGISTRY = "sessions.json"
 _CATEGORIES = ("input", "output", "cache_write", "cache_read")
 
+# A session whose latest turn re-reads more than this above its first turn is warned about.
+# Evidence (this repo's registered transcripts, 2026-10-26 to 2026-11-14): a sprint briefed in
+# a fresh session started 26K-87K above that session's first turn; one briefed after another
+# sprint in the same session started 147K-273K above it. Growth, not absolute size, so a
+# larger system prompt is not warned for its baseline.
+SESSION_GROWTH_WARN = 120_000
+
+
+def turn_context(input: int, cache_write: int, cache_read: int) -> int:  # noqa: A002
+    """The one definition of a turn's context: what that response read (output is excluded,
+    it is not re-read by that turn)."""
+    return input + cache_write + cache_read
+
 # The defaults shipped through v0.227.x: guesses 10-100x below measured usage (median phase
 # 1.6M-22M tokens across three projects). A phase whose budget_tokens equals one of its
 # phase's retired values is indistinguishable from an untouched default, so `prusik refresh`
@@ -136,13 +149,15 @@ class Usage:
     by_session: dict[str, int] = field(default_factory=dict)
     by_role_model: dict[str, dict[str, int]] = field(default_factory=dict)   # {role: {model: n}}
     malformed_lines: int = 0
+    peak_context: int | None = None    # largest main-thread turn context in the windows
 
     def breakdown(self) -> dict:
         return {"input": self.input, "output": self.output, "cache_write": self.cache_write,
                 "cache_read": self.cache_read, "by_phase": self.by_phase,
                 "by_role": self.by_role, "by_model": self.by_model,
                 "by_session": self.by_session, "by_role_model": self.by_role_model,
-                "malformed_lines": self.malformed_lines}
+                "malformed_lines": self.malformed_lines,
+                "peak_context": self.peak_context}
 
 
 def measure(feature: str, phase: str | None = None, now: datetime | None = None) -> Usage:
@@ -220,6 +235,7 @@ def _measure(feature: str, phase: str | None, now: datetime | None) -> Usage:
                     cur[c] = max(cur[c], getattr(rec, c))
 
     u = Usage(measured=True, malformed_lines=malformed)
+    peak: int | None = None
     for row in merged.values():
         t = _parse_ts(row["ts"])
         if t is None:                         # counted, never silently outside every window
@@ -229,6 +245,9 @@ def _measure(feature: str, phase: str | None, now: datetime | None) -> Usage:
         if ph is None:
             continue
         n = sum(row[c] for c in _CATEGORIES)
+        if row["role"] == "main":
+            ctx = turn_context(row["input"], row["cache_write"], row["cache_read"])
+            peak = ctx if peak is None else max(peak, ctx)
         u.tokens += n
         for c in _CATEGORIES:
             setattr(u, c, getattr(u, c) + row[c])
@@ -237,7 +256,69 @@ def _measure(feature: str, phase: str | None, now: datetime | None) -> Usage:
             bucket[key] = bucket.get(key, 0) + n
         inner = u.by_role_model.setdefault(row["role"], {})
         inner[row["model"]] = inner.get(row["model"], 0) + n
+    u.peak_context = peak
     return u
+
+
+# ---- the current session's growth --------------------------------------------------------
+
+@dataclass
+class SessionContext:
+    """The current host session's context: `applies=False` outside a host session; otherwise
+    `measured` with the first and latest main-thread turn's context, or the `reason` it
+    could not be read."""
+    applies: bool
+    measured: bool = False
+    reason: str | None = None
+    first: int = 0
+    current: int = 0
+
+    @property
+    def growth(self) -> int:
+        return self.current - self.first
+
+
+def session_context() -> SessionContext:
+    """Total: any failure is `applies=True, measured=False` with its reason, never raised."""
+    try:
+        return _session_context()
+    except Exception as e:  # noqa: BLE001 — advisory telemetry must never break its callers
+        return SessionContext(applies=True,
+                              reason=f"session context read failed: {type(e).__name__}: {e}")
+
+
+def _session_context() -> SessionContext:
+    from prusik.platform_adapter import get_adapter
+    adapter = get_adapter()
+    sid = adapter.current_session_id()
+    if not sid:
+        return SessionContext(applies=False)
+    path = registry_path()
+    reg = _load_registry(path)
+    if reg is None:
+        return SessionContext(applies=True, reason=f"session registry unreadable: {path}")
+    entry = reg.get(sid)
+    transcript = entry.get("transcript_path") if isinstance(entry, dict) else None
+    if not transcript:
+        return SessionContext(
+            applies=True,
+            reason=f"session {sid} is not registered in {path} "
+                   f"(the hooks register it at SessionStart)")
+    read = adapter.read_usage(str(transcript), set())
+    if read.unreadable:
+        return SessionContext(applies=True,
+                              reason=f"transcript unreadable: {', '.join(read.unreadable)}")
+    rows: dict[str, dict[str, int]] = {}
+    for rec in read.records:
+        if rec.role != "main":
+            continue
+        cur = rows.setdefault(rec.message_id, {c: 0 for c in _CATEGORIES})
+        for c in _CATEGORIES:
+            cur[c] = max(cur[c], getattr(rec, c))
+    if not rows:
+        return SessionContext(applies=True, reason=f"no main-thread usage in {transcript}")
+    ctxs = [turn_context(r["input"], r["cache_write"], r["cache_read"]) for r in rows.values()]
+    return SessionContext(applies=True, measured=True, first=ctxs[0], current=ctxs[-1])
 
 
 # ---- rollup: one product's measured usage, from the ledger alone -------------------------
@@ -309,7 +390,8 @@ def rollup(records: list[dict]) -> dict:
         month["sprints"] += 1
         entry: dict = {"feature": r.get("feature"), "ts": ts, "measured": is_measured,
                        "reason": None, "tokens": None,
-                       "by_phase": {}, "by_role": {}, "by_model": {}}
+                       "by_phase": {}, "by_role": {}, "by_model": {},
+                       "peak_context": None}
         if is_measured and isinstance(tokens, int) and isinstance(snap, dict):
             out["measured"] += 1
             out["tokens"] += tokens
@@ -317,6 +399,9 @@ def rollup(records: list[dict]) -> dict:
             month["tokens"] += tokens
             measured_tokens.append(tokens)
             entry["tokens"] = tokens
+            peak = snap.get("peak_context")
+            entry["peak_context"] = (peak if isinstance(peak, int)
+                                     and not isinstance(peak, bool) else None)
             for key in _BY_KEYS:
                 attributed = _int_dict(snap.get(key))
                 entry[key] = attributed

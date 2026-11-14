@@ -93,7 +93,7 @@ def test_gate_allows_when_writable(monkeypatch):
 def test_usage_operations_are_part_of_the_adapter_contract():
     # fb-a1b7db140a5e: reading a session's usage is host I/O, so every runtime adapter must
     # implement it; a partial adapter can't be instantiated.
-    assert {"session_ref", "read_usage", "last_write"} <= pa.PlatformAdapter.__abstractmethods__
+    assert {"session_ref", "read_usage", "last_write", "current_session_id"} <= pa.PlatformAdapter.__abstractmethods__
 
     class Partial(pa.PlatformAdapter):
         def read_payload(self):

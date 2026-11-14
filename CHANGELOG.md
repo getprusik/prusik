@@ -3,6 +3,29 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.240.0] — A grown session says so
+
+- **sprint-start and every successful advance warn when the session has grown (fb-164e3509dce5).**
+  A trivial sprint cost 12.9M tokens because it ran in a session that had already carried a whole
+  sprint, so every turn re-read that context; fresh, it cost 2.5M. When the current host session's
+  latest main-thread turn reads more than 120,000 tokens above its first turn, prusik prints one
+  advisory line naming the context, the growth, and `briefs/<feature>.md` plus the ledger as what a
+  fresh session resumes from, and appends a `session_size_warned` ledger event (feature, phase,
+  context, growth). Growth, not absolute size, so a larger system prompt is not warned for its
+  baseline; the threshold comes from this repo's transcripts (a fresh session starts 26K-87K above
+  its first turn, one that carried a sprint 147K-273K). The session is the host's own: the platform
+  adapter gained `current_session_id` (Claude Code's `CLAUDE_CODE_SESSION_ID`) and the transcript
+  comes from the session registry; outside a host session nothing is printed. A session whose
+  transcript is unregistered, unreadable or empty prints one `UNMEASURED` line with the reason.
+  Subagent files are excluded. It never blocks and never changes an exit code.
+- **Each sprint records its peak.** The `sprint_complete` usage snapshot carries `peak_context`,
+  the largest main-thread context of any response inside the sprint's phase windows; the rollup
+  carries it per sprint, and `prusik effort` shows a `peak` column and `peak_context` per feature
+  in `--json`. A sprint completed earlier, or unmeasured, shows `-` / null; a later unmeasured
+  completion of a feature replaces its earlier peak.
+- **The suite no longer reads the transcript of the session running it**: `conftest.py` drops
+  `CLAUDE_CODE_SESSION_ID`.
+
 ## [0.239.0] — One bash reader
 
 - **One parser reads every Bash command (fb-401f6430ec61, fb-386c186d88ee, fb-b298c5270e7a).** The

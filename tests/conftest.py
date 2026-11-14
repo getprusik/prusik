@@ -35,6 +35,8 @@ import pytest
 # /var/tmp is chosen deliberately: it is OUTSIDE both /tmp rules and has no
 # .claude/.sprint ancestor, so project_root() falls back to cwd as tests expect.
 os.environ.pop("CLAUDE_PROJECT_DIR", None)
+# The suite must never read the transcript of the session running it (CI has none).
+os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
 try:
     _HERMETIC = tempfile.mkdtemp(prefix="prusik-pytest-", dir="/var/tmp")
 except OSError:  # /var/tmp unavailable — fall back to a repo-local dir
@@ -180,7 +182,7 @@ def _env_integrity_gate():
 _env_integrity_gate()
 
 # Env vars the kit/test harness mutates and that must not leak between tests.
-_TRACKED_ENV = ("CLAUDE_PROJECT_DIR", "PRUSIK_BRIDGE_PATH")
+_TRACKED_ENV = ("CLAUDE_PROJECT_DIR", "PRUSIK_BRIDGE_PATH", "CLAUDE_CODE_SESSION_ID")
 
 
 @pytest.fixture(autouse=True)
