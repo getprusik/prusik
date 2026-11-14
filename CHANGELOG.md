@@ -51,14 +51,21 @@ All notable changes to **Prusik** are documented here. The format follows
 - **Two over-reads, on purpose.** A function body is read where it is defined, called or not
   (`f() { rm a; }`), since a call can come from anywhere; and `bash script.sh <<EOF` still reads the
   body as code, since telling it from `bash <<EOF` means parsing each shell's flags. Syntax bash
-  rejects is read on: the text after an unterminated quote or substitution is also read as code.
+  rejects is read on: the text after an unterminated quote or substitution is also read as code,
+  and a header with no body (`for;`, `case x in`, `a=( &`) hides nothing after it. A `for` or
+  `select` with a `{ }` body is read like one with `do ... done`, and a backslash that ends the
+  text is dropped as bash drops it (`rm a\`). A sweep of every sequence of up to three of 82
+  grammar tokens around one `rm a` or `git push` (4.45 million commands, real bash as arbiter)
+  finds no command v0.238.8 reads, this release does not, and bash runs, beyond two shapes both
+  releases miss in general and v0.238.8 read only by accident: a command name that expands to nothing (`$(:) >! rm a`, fb-a0dd3c924838) and
+  `/usr/bin/time` after a redirect (`> o time >! rm a`, fb-9b48baaee117).
 - **`deny_bash` patterns see the same text, with one exception.** A heredoc body inside a backtick
   span is read from its own string and so stays in the text those patterns match; it can only
   over-match. The four pipe shapes above become data and are cut; a body on a compound or under a
   code runner becomes code and stays.
 - **Field replay.** 81,142 unique Bash commands from local transcripts, judged by v0.238.8 and by
   this release on `git push`, `git merge`, the lease and the write targets: no command raises, the
-  four judgments take 7.0 s against 46.0 s, no push, merge or lease verdict changes, and every
+  four judgments take 8.4 s against 46.0 s, no push, merge or lease verdict changes, and every
   write-target difference is code in `bash -c` or `trap` now read, quoted text no longer read as a
   redirect, or a `${v// /_}` no longer split at its space. 130 findings now carry a regression
   test (127 before); the README count and the Action pin follow.
