@@ -1,0 +1,503 @@
+"""`prusik drive <feature>`: the deterministic sprint driver (fb-13faaeb53496).
+
+Every test injects a FakeAdapter, so no real `claude` runs. `_gate` is replaced by a recorder
+where a real gate run would need a real suite; the planning, tier and lease paths run for real.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import os
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+import yaml
+
+from prusik import drive, fix_round, ledger, main_writer, phases, usage
+from prusik import platform_adapter as pa
+
+F = "feat"
+PLAN = """# Plan — feat
+
+## Modules touched
+- `src/a.py`
+
+## Test plan
+tests.
+
+## Risks
+- none
+
+## Proposed roles
+- **backend-builder** owns worktrees/backend-builder/.
+"""
+CRITERIA = {"schema_version": "1.0", "criteria": [{
+    "id": "c1", "description": "d", "verify_command": "false", "kind": "tests",
+    "prove_red": True}]}
+_TEMPLATE = Path(drive.__file__).parent / "templates" / ".claude" / "sprint-config.yaml"
+
+
+class FakeAdapter(pa.ClaudeCodeAdapter):
+    def __init__(self, events: list, *, auth=("claude.ai", "login")):
+        self.events, self.auth = events, auth
+        self.requests: list[pa.SpawnRequest] = []
+        self.scripts: dict = {}
+        self.results: dict = {}
+        self.probe = None
+
+    def spawn(self, req):
+        self.requests.append(req)
+        self.events.append(("spawn", req.role))
+        if self.probe:
+            self.probe(req)
+        script = self.scripts.get(req.role)
+        if script:
+            script(req)
+        res = self.results.get(req.role)
+        return res(req) if res else pa.SpawnResult(req.session_id, 0, False, "ok", (), False)
+
+    def auth_method(self, env):
+        return self.auth
+
+    def current_session_id(self):
+        return "holder-1"
+
+
+@pytest.fixture
+def proj(tmp_path, monkeypatch):
+    root = tmp_path / "proj"
+    for d in ("design/feat", "reports/feat", "briefs", ".claude", ".sprint", "worktrees"):
+        (root / d).mkdir(parents=True)
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    (root / "design/feat/plan.md").write_text(PLAN)
+    (root / "briefs/feat.md").write_text("# b\n")
+    (root / "briefs/feat.criteria.yaml").write_text(yaml.safe_dump(CRITERIA))
+    set_config(root, suite="true")
+    set_phase(root, "building")
+    ledger.append("sprint_started", feature=F)
+    return root
+
+
+def set_config(root, *, suite=None, drive_block=True, auth="claude.ai"):
+    cfg = yaml.safe_load(_TEMPLATE.read_text())
+    cfg.pop("drive", None)
+    if drive_block:
+        cfg["drive"] = {"auth": auth, "spawn_timeout_min": 7}
+        if suite:
+            cfg["drive"]["suite_command"] = suite
+    (root / ".claude" / "sprint-config.yaml").write_text(yaml.safe_dump(cfg))
+
+
+def set_phase(root, phase, feature=F):
+    phases.set_sprint_state({"feature": feature, "phase": phase}, root)
+
+
+class Rig:
+    """Recorder for `_gate` and `_prusik` (tier resolve stays real), plus the adapter."""
+
+    def __init__(self, root, monkeypatch):
+        self.root, self.events = root, []
+        self.rcs: dict[str, list[int]] = {}
+        self.tails: dict[str, str] = {}
+        self.adapter = FakeAdapter(self.events)
+        rig = self
+        orig_prusik = drive._Drive._prusik
+
+        def fake_gate(self, *a):
+            rig.events.append(("gate", *a))
+            key = a[0] if a[0] != "fix-round" else f"fix-round {a[1]}"
+            queue = rig.rcs.get(key)
+            rc = queue.pop(0) if queue else rig.default_rc(a)
+            if rc == 0:
+                rig.effect(a)
+            return rc, rig.tails.get(key, "")
+
+        def fake_prusik(self, *a, cwd=None):
+            if a[0] == "prove":
+                rig.events.append(("prove", str(cwd)))
+                queue = rig.rcs.get("prove")
+                return (queue.pop(0) if queue else 0), ""
+            return orig_prusik(self, *a, cwd=cwd)
+
+        monkeypatch.setattr(drive._Drive, "_gate", fake_gate)
+        monkeypatch.setattr(drive._Drive, "_prusik", fake_prusik)
+
+    @staticmethod
+    def default_rc(a):
+        return 1 if a[0] == "verdict-current" else 0
+
+    def effect(self, a):
+        if a[0] == "advance":
+            set_phase(self.root, a[1])
+        elif a[0] == "prove-red":
+            ledger.append("criterion_red_baseline", feature=F, id="c1",
+                          verify_command="false", exit_code=1)
+        elif a[0] == "fix-round" and a[1] == "start":
+            fix_round.start(F, self.root)
+        elif a[0] == "fix-round" and a[1] == "end":
+            fix_round.end(F, self.root)
+
+    def run(self, feature=F):
+        out = io.StringIO()
+        rc = drive.run(feature, adapter=self.adapter, out=out)
+        self.out = out.getvalue()
+        return rc
+
+    def escalation(self):
+        return json.loads((self.root / "reports/feat/drive-escalation.json").read_text())
+
+
+def write_report(root, name, text):
+    def script(req):
+        (root / "reports/feat" / name).write_text(text)
+    return script
+
+
+@pytest.fixture
+def rig(proj, monkeypatch):
+    r = Rig(proj, monkeypatch)
+    root = proj
+    r.adapter.scripts = {
+        "plan-critic": write_report(root, "plan-approval.txt", "APPROVED\n"),
+        "regression-sentinel": write_report(root, "regression.txt", "PASS\n"),
+        "conventions-enforcer": write_report(root, "conventions.txt", "PASS\n"),
+    }
+    return r
+
+
+def escalated_events():
+    return [e for e in ledger.read_all() if e["event"] == "drive_escalated"]
+
+
+# ── planning ──────────────────────────────────────────────────────────────────────────────
+
+def test_planning_gate_plan_failure_escalates_before_the_critic(proj):
+    set_phase(proj, "planning")
+    (proj / "design/feat/plan.md").write_text("# not a plan\n")
+    adapter = FakeAdapter([])
+    out = io.StringIO()
+    assert drive.run(F, adapter=adapter, out=out) == 3          # real `gate plan`
+    assert adapter.requests == [], "the critic is not spawned"
+    esc = json.loads((proj / "reports/feat/drive-escalation.json").read_text())
+    assert esc["kind"] == "plan_invalid" and esc["phase"] == "planning" and esc["evidence"]
+    ev = escalated_events()
+    assert len(ev) == 1 and ev[0]["kind"] == "plan_invalid" and ev[0]["feature"] == F
+    assert "gate plan" in (proj / "reports/feat/drive.log").read_text()
+
+
+def test_planning_rejection_escalates_and_never_advances(rig, proj):
+    set_phase(proj, "planning")
+    rig.adapter.scripts["plan-critic"] = write_report(proj, "plan-approval.txt",
+                                                      "REJECTED\n- PC-1 [must-fix] x\n")
+    assert rig.run() == 3
+    assert rig.escalation()["kind"] == "plan_rejected"
+    assert not [e for e in rig.events if e[:2] == ("gate", "advance")]
+
+
+def test_planning_approved_then_advances_to_building_and_on(rig, proj):
+    set_phase(proj, "planning")
+    rig.rcs["verdict-current"] = [1]
+    rig.run()
+    assert rig.events[:3] == [("gate", "plan", F), ("gate", "verdict-current", "--role",
+                                                    "plan-critic", "--feature", F, "--artifact",
+                                                    f"design/{F}/plan.md"),
+                              ("spawn", "plan-critic")]
+    assert ("gate", "advance", "building", "--feature", F) in rig.events
+
+
+# ── building ──────────────────────────────────────────────────────────────────────────────
+
+def test_building_order_prove_red_then_builders_then_suite_then_advance(rig):
+    rig.run()
+    seq = [e for e in rig.events if e[0] in ("spawn", "prove") or e[:2] == ("gate", "prove-red")
+           or e[:2] == ("gate", "advance")]
+    first = [e[:2] if e[0] == "gate" else e[0] for e in seq][:4]
+    assert first == [("gate", "prove-red"), "spawn", "prove", ("gate", "advance")]
+    assert seq[0] == ("gate", "prove-red", "--feature", F)
+    assert seq[2][1].endswith("worktrees/backend-builder")
+
+
+def test_building_skips_prove_red_when_every_baseline_exists(rig):
+    ledger.append("criterion_red_baseline", feature=F, id="c1", verify_command="false",
+                  exit_code=1)
+    rig.run()
+    assert ("gate", "prove-red", "--feature", F) not in rig.events
+    assert ("spawn", "backend-builder") in rig.events
+
+
+def test_building_prove_red_that_captures_nothing_escalates(rig):
+    rig.effect = lambda a: None                         # prove-red "succeeds" but records none
+    assert rig.run() == 3
+    assert rig.escalation()["kind"] == "prove_red_failed" and ("spawn", "backend-builder") not in rig.events
+
+
+def test_building_suite_failure_escalates_and_does_not_advance(rig):
+    rig.rcs["prove"] = [1]
+    assert rig.run() == 3
+    assert rig.escalation()["kind"] == "suite_failed"
+    assert not [e for e in rig.events if e[:3] == ("gate", "advance", "reviewing")]
+
+
+def test_no_drive_block_defaults_auth_and_building_needs_a_suite_command(rig, proj):
+    set_config(proj, drive_block=False)
+    assert rig.run() == 3
+    esc = rig.escalation()
+    assert esc["kind"] == "suite_failed" and "drive.suite_command" in esc["reason"]
+    assert rig.adapter.requests == [], "no builder is spawned before the suite is known"
+    assert "[drive] auth: claude.ai (login)" in rig.out
+
+
+def test_building_resume_reuses_an_existing_worktree(rig, proj, monkeypatch):
+    (proj / ".git").mkdir()
+    (proj / "worktrees/backend-builder").mkdir()
+    called = []
+    orig = drive._Drive._cli
+
+    def cli(self, argv, cwd=None):
+        called.append(argv)
+        return (1, "unexpected git") if argv[0] == "git" else orig(self, argv, cwd)
+    monkeypatch.setattr(drive._Drive, "_cli", cli)
+    rig.run()
+    assert ("spawn", "backend-builder") in rig.events
+    assert not [c for c in called if c[0] == "git"], "no `git worktree add` on resume"
+
+
+def test_building_creates_the_worktree_for_a_new_builder(rig, proj, monkeypatch):
+    (proj / ".git").mkdir()
+    called = []
+    orig = drive._Drive._cli
+
+    def cli(self, argv, cwd=None):
+        if argv[0] != "git":
+            return orig(self, argv, cwd)
+        called.append(argv)
+        (proj / "worktrees/backend-builder").mkdir()
+        return 0, ""
+    monkeypatch.setattr(drive._Drive, "_cli", cli)
+    rig.run()
+    assert called[0] == ["git", "worktree", "add", "-b", "sprint/feat-backend-builder",
+                         "worktrees/backend-builder", "HEAD"]
+
+
+def test_plan_without_a_builder_role_escalates(rig, proj):
+    (proj / "design/feat/plan.md").write_text(PLAN.replace("**backend-builder**", "**scribe**"))
+    assert rig.run() == 3
+    assert "no builder role" in rig.escalation()["reason"]
+
+
+# ── reviewing ─────────────────────────────────────────────────────────────────────────────
+
+def test_reviewing_fail_runs_a_fix_round_then_rejudges_and_advances(rig, proj):
+    set_phase(proj, "reviewing")
+    verdicts = iter(["FAIL\n- bug\n", "PASS\n"])
+    rig.adapter.scripts["regression-sentinel"] = lambda req: (
+        proj / "reports/feat/regression.txt").write_text(next(verdicts))
+    rig.run()
+    names = [e[1:3] if e[0] == "gate" else e for e in rig.events if e[0] == "spawn"
+             or e[:2] in (("gate", "fix-round"), ("gate", "advance"))]
+    assert names == [("spawn", "regression-sentinel"), ("fix-round", "start"),
+                     ("spawn", "backend-builder"), ("fix-round", "end"),
+                     ("spawn", "regression-sentinel"), ("spawn", "conventions-enforcer"),
+                     ("advance", "integrating"), ("spawn", "integrator")]
+    fix_req = [r for r in rig.adapter.requests if r.role == "backend-builder"][0]
+    assert "fix round 1" in fix_req.prompt and "regression.txt" in fix_req.prompt
+
+
+def test_fix_round_cap_escalates(rig, proj):
+    set_phase(proj, "reviewing")
+    rig.adapter.scripts["regression-sentinel"] = write_report(proj, "regression.txt", "FAIL\n")
+    rig.rcs["fix-round start"] = [2]
+    assert rig.run() == 3
+    esc = rig.escalation()
+    assert esc["kind"] == "fix_round_cap" and esc["evidence"][0].endswith("regression.txt")
+
+
+def test_reviewing_a_stale_pass_is_not_this_spawns_verdict(rig, proj):
+    set_phase(proj, "reviewing")
+    report = proj / "reports/feat/regression.txt"
+    report.write_text("PASS\n")
+    old = time.time() - 3600
+    os.utime(report, (old, old))
+    rig.adapter.scripts["regression-sentinel"] = lambda req: None     # writes nothing
+    assert rig.run() == 3
+    assert rig.escalation()["kind"] == "spawn_failed"
+    assert report.read_text() == "PASS\n", "drive never rewrites a report"
+
+
+def test_reviewing_resumes_an_active_fix_round_before_starting_another(rig, proj):
+    set_phase(proj, "reviewing")
+    fix_round.start(F, proj)
+    (proj / "reports/feat/regression.txt").write_text("FAIL\n- x\n")
+    rig.run()
+    gates = [e[1:3] for e in rig.events if e[:2] == ("gate", "fix-round")]
+    assert gates[0] == ("fix-round", "end"), "end the resumed round before any start"
+    assert [e for e in rig.events if e[0] == "spawn"][0] == ("spawn", "backend-builder")
+    assert rig.events.index(("spawn", "backend-builder")) < rig.events.index(
+        ("gate", "fix-round", "end", "--feature", F))
+    assert not any(e[2:3] == ("start",) for e in rig.events if e[:2] == ("gate", "fix-round"))
+
+
+def test_resume_with_a_marker_owned_by_another_feature_is_left_alone(rig, proj):
+    set_phase(proj, "reviewing")
+    fix_round._marker_path(proj).write_text(json.dumps({"feature": "other", "round": 1}))
+    rig.run()
+    assert not any(e[:3] == ("gate", "fix-round", "end") for e in rig.events), \
+        "a marker owned by another feature is left to fix-round start's reaping"
+    first = [e for e in rig.events if e[0] == "spawn"][0]
+    assert first == ("spawn", "regression-sentinel"), "no builder resume for a foreign marker"
+
+
+def test_missing_report_after_a_reviewer_spawn_escalates(rig, proj):
+    set_phase(proj, "reviewing")
+    rig.adapter.scripts.pop("conventions-enforcer")
+    assert rig.run() == 3 and rig.escalation()["kind"] == "spawn_failed"
+
+
+# ── escalation kinds from the spawn ───────────────────────────────────────────────────────
+
+def test_permission_denial_escalates_naming_the_tool(rig):
+    rig.adapter.results["backend-builder"] = lambda req: pa.SpawnResult(
+        req.session_id, 0, False, "ok", ({"tool_name": "Bash"},), False)
+    assert rig.run() == 3
+    esc = rig.escalation()
+    assert esc["kind"] == "permission_denied" and "Bash" in esc["reason"]
+    assert esc["role"] == "backend-builder"
+
+
+def test_error_and_timeout_results_escalate_spawn_failed(rig):
+    rig.adapter.results["backend-builder"] = lambda req: pa.SpawnResult(
+        req.session_id, -1, True, "timed out after 420s", (), True)
+    assert rig.run() == 3 and rig.escalation()["kind"] == "spawn_failed"
+
+
+def test_tier_resolve_failure_escalates_without_spawning(rig, monkeypatch):
+    orig = drive._Drive._prusik
+    monkeypatch.setattr(drive._Drive, "_prusik", lambda self, *a, cwd=None: (
+        (1, "tier broke") if a[0] == "tier" else orig(self, *a, cwd=cwd)))
+    assert rig.run() == 3
+    assert rig.escalation()["kind"] == "tier_unresolved" and rig.adapter.requests == []
+
+
+def test_the_tier_model_reaches_the_spawn(rig, monkeypatch):
+    monkeypatch.setattr(drive._Drive, "_model", lambda self, role: "opus")
+    rig.run()
+    assert rig.adapter.requests[0].model == "opus"
+    assert rig.adapter.requests[0].timeout_s == 7 * 60, "drive.spawn_timeout_min"
+
+
+def test_model_off_means_no_model(rig):
+    rig.run()                                            # real `tier resolve`: tiering is off
+    assert rig.adapter.requests[0].model is None
+
+
+# ── auth and lease ────────────────────────────────────────────────────────────────────────
+
+def test_auth_mismatch_fails_closed_before_any_spawn(rig):
+    rig.adapter.auth = ("api_key", "ANTHROPIC_API_KEY")
+    assert rig.run() == 3
+    esc = rig.escalation()
+    assert esc["kind"] == "auth_mismatch" and rig.adapter.requests == []
+    assert "api_key" in esc["reason"] and "ANTHROPIC_API_KEY" in esc["reason"]
+    assert "[drive] auth: api_key (ANTHROPIC_API_KEY)" in rig.out
+
+
+def test_a_live_foreign_lease_is_writer_busy(rig, proj):
+    main_writer.check_and_touch(proj, "somebody-else", feature="x", phase="building")
+    assert rig.run() == 3
+    esc = rig.escalation()
+    assert esc["kind"] == "writer_busy" and "somebody-e" in esc["reason"]
+    assert rig.adapter.requests == []
+
+
+@pytest.mark.parametrize("setup,needle", [
+    ("nosprint", "no active sprint"),
+    ("other", "not 'feat'"),
+    ("scoping", "drive takes over at planning"),
+    ("noplan", "write design/feat/plan.md"),
+])
+def test_not_drivable_exits_2(rig, proj, setup, needle):
+    if setup == "nosprint":
+        (proj / ".sprint/state.json").unlink()
+    elif setup == "other":
+        set_phase(proj, "building", feature="other")
+    elif setup == "scoping":
+        set_phase(proj, "scoping")
+    else:
+        set_phase(proj, "planning")
+        (proj / "design/feat/plan.md").unlink()
+    assert rig.run() == 2
+    assert needle in rig.out
+    assert rig.adapter.requests == [] and not (proj / "reports/feat/drive-escalation.json").exists()
+
+
+# ── bounded output, bookkeeping ───────────────────────────────────────────────────────────
+
+def test_clean_run_from_reviewing_completes_and_clears_the_stale_escalation(rig, proj):
+    set_phase(proj, "reviewing")
+    (proj / "reports/feat/drive-escalation.json").write_text("{}")
+    assert rig.run() == 0
+    assert not (proj / "reports/feat/drive-escalation.json").exists()
+    lines = rig.out.strip().splitlines()
+    assert len(lines) <= 20 and lines[0] == "[drive] auth: claude.ai (login)"
+    assert lines[-1].startswith("[drive] complete: feat")
+    done = [e for e in rig.events if e[:2] == ("gate", "sprint-complete")]
+    assert len(done) == 1 and done[0][2:5] == ("--feature", F, "--duration-min")
+    assert ("spawn", "integrator") in rig.events
+
+
+def test_escalation_output_is_bounded_and_names_the_json(rig, proj):
+    set_phase(proj, "planning")
+    rig.rcs["plan"] = [2]
+    rig.tails["plan"] = "\n".join(f"error line {i}" for i in range(40))
+    assert rig.run() == 3
+    lines = rig.out.strip().splitlines()
+    assert len(lines) <= 20
+    assert lines[-1] == "details: reports/feat/drive-escalation.json"
+    assert lines[1].startswith("[drive] ESCALATION plan_invalid in planning")
+
+
+def test_each_spawn_tags_the_registry_and_delegates_the_lease(rig, proj):
+    seen = []
+
+    def probe(req):
+        reg = json.loads(usage.registry_path().read_text())
+        lease = main_writer.load(proj)
+        seen.append((reg[req.session_id], lease))
+    rig.adapter.probe = probe
+    rig.run()
+    assert seen
+    for (entry, lease), req in zip(seen, rig.adapter.requests):
+        assert entry["role"] == req.role and entry["feature"] == F
+        assert lease["session"] == "holder-1" and req.session_id in lease["delegates"]
+    assert "CLAUDE_CODE_SESSION_ID" not in rig.adapter.requests[0].env
+    events = [e for e in ledger.read_all() if e["event"] in ("drive_step", "writer_delegated")]
+    assert {e["event"] for e in events} == {"drive_step", "writer_delegated"}
+
+
+def test_the_tick_heartbeat_refreshes_the_lease(rig, proj):
+    result = {}
+
+    def probe(req):
+        lease = main_writer.load(proj)
+        lease["refreshed_at"] = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+        main_writer._write(proj, lease)
+        old = main_writer.load(proj)["refreshed_at"]
+        req.on_tick()
+        result["old"], result["new"] = old, main_writer.load(proj)["refreshed_at"]
+        result["tick_s"] = req.tick_s
+    rig.adapter.probe = probe
+    rig.run()
+    assert result["new"] > result["old"] and result["tick_s"] <= 300
+
+
+def test_escalation_kinds_are_the_documented_set():
+    assert set(drive.ESCALATION_KINDS) == {
+        "plan_invalid", "plan_rejected", "prove_red_failed", "suite_failed", "fix_round_cap",
+        "permission_denied", "spawn_failed", "tier_unresolved", "auth_mismatch",
+        "writer_busy", "advance_blocked"}
+    with pytest.raises(ValueError):
+        drive.Escalation("made_up", "building", None, "x")

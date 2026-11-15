@@ -121,6 +121,28 @@ def register(ref: SessionRef | None) -> None:
         pass
 
 
+def tag_session(session: str, *, role: str, feature: str) -> None:
+    """Record which role and feature a session was spawned for (`prusik drive`), so `measure`
+    attributes its main-thread rows to that role instead of `main`. Same atomic replace as
+    `register`; it keeps the keys it does not set, so the SessionStart hook later adds
+    `transcript_path`."""
+    path = registry_path()
+    reg = _load_registry(path)
+    if reg is None:                           # corrupt: keep the evidence, start fresh
+        os.replace(path, path.with_name(_REGISTRY + ".corrupt"))
+        reg = {}
+    entry = reg.get(session)
+    if not isinstance(entry, dict):
+        entry = {"first_seen": datetime.now(timezone.utc).isoformat()}
+    entry["role"] = role
+    entry["feature"] = feature
+    reg[session] = entry
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{_REGISTRY}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(reg, indent=1, sort_keys=True))
+    os.replace(tmp, path)
+
+
 def packaged_roles() -> frozenset[str]:
     """The packaged prusik roles (stems of `prusik/templates/.claude/agents/*.md`), present
     wherever prusik runs. The single source for `known_roles` and the export's role
@@ -200,12 +222,14 @@ def _measure(feature: str, phase: str | None, now: datetime | None) -> Usage:
     if reg is None:
         return Usage(measured=False, reason=f"session registry unreadable: {registry_path()}")
     adapter = get_adapter()
-    active: list[tuple[str, str]] = []
+    active: list[tuple[str, str, str]] = []
     for sid, entry in sorted(reg.items(), key=lambda kv: str((kv[1] or {}).get("first_seen"))
                              if isinstance(kv[1], dict) else ""):
         if not isinstance(entry, dict):
             continue
         path = str(entry.get("transcript_path") or "")
+        if not path:                                   # tagged by drive, hook not yet seen
+            continue
         written = adapter.last_write(path)
         if written is None:
             seen = _parse_ts(entry.get("last_seen"))
@@ -213,7 +237,7 @@ def _measure(feature: str, phase: str | None, now: datetime | None) -> Usage:
                 return Usage(measured=False, reason=f"transcript unreadable: {path}")
             continue                                   # long gone (host cleanup): no rows
         if datetime.fromtimestamp(written, timezone.utc) >= first:
-            active.append((sid, path))
+            active.append((sid, path, str(entry.get("role") or "main")))
     if not active:
         return Usage(measured=False,
                      reason=f"no registered session was active since {first.isoformat()} "
@@ -222,8 +246,8 @@ def _measure(feature: str, phase: str | None, now: datetime | None) -> Usage:
     role_names = known_roles(ledger.project_root())
     merged: dict[str, dict] = {}
     malformed = 0
-    for sid, path in active:
-        read = adapter.read_usage(path, role_names)
+    for sid, path, main_role in active:
+        read = adapter.read_usage(path, role_names, main_role=main_role)
         if read.unreadable:
             return Usage(measured=False,
                          reason=f"transcript unreadable: {', '.join(read.unreadable)}")

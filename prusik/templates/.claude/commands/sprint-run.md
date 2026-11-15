@@ -189,86 +189,33 @@ Invoke `feature-planner`:
 
 Then run `prusik gate plan $ARGUMENTS` via Bash, because the role has no shell. On a non-zero exit, send the errors back to `feature-planner` and re-run the gate before going on.
 
-Invoke `plan-critic`:
+Plan review has one owner: `prusik drive` runs `plan-critic` itself. If you review the plan in this session first, spawn it here, and drive then finds that verdict current and skips its own round:
 
     Agent(subagent_type='plan-critic', prompt='review design/$ARGUMENTS/plan.md per your role spec; write reports/$ARGUMENTS/plan-approval.txt')
 
-Gate on APPROVED same as scope-critic. Advance:
+**Hand off to the driver.** Once `prusik gate plan` passes, run the rest of the sprint in code. Run this with Bash `run_in_background: true` and wait for its completion notification (do not poll):
 
-    prusik gate advance building --feature $ARGUMENTS
+    prusik drive $ARGUMENTS
 
-**Worktree setup (v0.74.0 — JS/TS stacks only).** A fresh worktree on a JS/TS monorepo can't typecheck or test until its deps are installed AND the workspace packages are built (`dist/`, which cross-package imports resolve to; bare `tsc` doesn't build deps, turbo's `^build` does). Before builders run their checks, prep the worktree:
+`prusik drive` runs the deterministic gates first and spawns each role headless (plan-critic, the builders, both reviewers, fix rounds, the integrator) with its tier model, then closes the sprint with `gate sprint-complete`. It prints one line per phase and keeps gate output in `reports/$ARGUMENTS/drive.log`. The per-role `Agent(...)` spawns for building, reviewing and integrating are replaced by this hand-off, and drive does the worktree setup, the fix rounds and the retro itself.
 
-    prusik worktree-setup --dir worktrees/<role> --run   # pnpm install --prefer-offline (+ turbo run build for a monorepo)
+- **rc 0** — the sprint is complete and `gate sprint-complete` has run. Continue at Step 8, skipping its `sprint-complete` command.
+- **rc 3** — drive stopped at a judgement point. Read `reports/$ARGUMENTS/drive-escalation.json` and act on that file only. For `plan_invalid` or `plan_rejected`, fix `design/$ARGUMENTS/plan.md` (send the named defects back to `feature-planner`), re-run `prusik gate plan $ARGUMENTS`, then re-run `prusik drive $ARGUMENTS`. For every other kind, report the file's `kind`, `reason` and `evidence` to the user and stop.
+- **rc 2** — the sprint is not drivable yet. Show the message.
 
-This is a no-op for non-JS stacks (a Python partial-mirror sprint runs tools from the project root, so no setup). It fails closed — a non-zero from install/build stops the sequence so a half-set-up worktree isn't mistaken for ready.
-
-Invoke each builder per plan.md's `## Proposed roles`. For each, pass the plan path and the specific modules owned:
-
-    Agent(subagent_type='backend-builder', prompt='implement the api/* portion of design/$ARGUMENTS/plan.md in worktrees/backend-builder/')
-    # etc.
-
-Invoke `test-writer` in parallel.
-
-When all builders produce `reports/$ARGUMENTS/build-*.txt`, advance:
-
-    prusik gate advance reviewing --feature $ARGUMENTS
-
----
-
-## Step 6 — reviewing
-
-Invoke reviewers in parallel:
-
-    Agent(subagent_type='regression-sentinel', prompt='review changes for $ARGUMENTS per your role spec; write reports/$ARGUMENTS/regression.txt')
-    Agent(subagent_type='conventions-enforcer', prompt='review changes for $ARGUMENTS per your role spec; write reports/$ARGUMENTS/conventions.txt')
-
-**Apply the reviewer artifact fallback to each.** For regression-sentinel: if `reports/$ARGUMENTS/regression.txt` missing but text response starts with literal `PASS` or `FAIL`, write the file from the response then `prusik gate mark-fallback --role regression-sentinel --feature $ARGUMENTS`. Same for conventions-enforcer (`conventions.txt`). Hedged verdicts → STOP and ask the user.
-
-Both files must have `PASS` on line 1. On `FAIL`:
-- Read the failure report. Classify each finding: **real defect a builder can patch** vs **false positive** (e.g., worktree-vs-integrated path layout differences that resolve at integration).
-- If there are real defects and fixes are small/localized to `worktrees/*/**`, run a **fix round**:
-
-      prusik gate fix-round start --feature $ARGUMENTS
-
-  This expands `reviewing` writable to include `worktrees/*/**` for the duration of the round (scoped tight: still blocks `design/`, `src/`, etc.). Then dispatch the appropriate builder subagent(s) to patch their worktrees. When all patches land:
-
-      prusik gate fix-round end --feature $ARGUMENTS
-
-  Then re-run the reviewer(s). Max 2 fix rounds per sprint — the prusik gate enforces this cap; a third `start` call returns exit 2 and logs `fix_round_cap_hit`.
-- If a fix needs writes outside `worktrees/*/**` (e.g., scope or plan changes) OR the defect count exceeds what a fix round can absorb OR you hit the 2-round cap: STOP and report the verbatim reviewer output to the user (file `prusik feedback "<one-line>" --kind bug --detail "<reviewer output + what you tried>"` first — always-on capture — plus a bridge BUG if it's ON).
-
-When both PASS:
-
-    prusik gate advance integrating --feature $ARGUMENTS
-
----
-
-## Step 7 — integrating
-
-Detect VCS mode:
-
-    test -d .git && echo git || echo non-git
-
-Invoke `integrator` with the appropriate mode pointer:
-
-    Agent(subagent_type='integrator', prompt='integrate feature $ARGUMENTS per your role spec; the project is in <git|non-git> mode')
-
-Then write retro via the integrator or inline:
-
-    design/$ARGUMENTS/retro.md  (must contain ## What happened, ## What surprised, ## Updates to CLAUDE.md)
-
-Invoke `pr-composer`:
-
-    Agent(subagent_type='pr-composer', prompt='draft reports/$ARGUMENTS/pr.md per your role spec')
+A solo sprint (Step 5a) reaches `reviewing` on its own; run `prusik drive $ARGUMENTS` from there.
 
 ---
 
 ## Step 8 — close out
 
-Capture the wall-clock duration for the sprint (from the ledger / your awareness). Token usage is measured by prusik from the session transcripts, so don't estimate it. Then:
+If the sprint was driven, `prusik drive` has already run `gate sprint-complete`; skip to the digest. A sprint that was not driven needs the wall-clock duration from the ledger (token usage is measured by prusik from the session transcripts, so don't estimate it):
 
     prusik gate sprint-complete --feature $ARGUMENTS --duration-min <N>
+
+Invoke `pr-composer` (with the tier rule above):
+
+    Agent(subagent_type='pr-composer', prompt='draft reports/$ARGUMENTS/pr.md per your role spec')
 
 Finally:
 

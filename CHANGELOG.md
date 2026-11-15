@@ -3,6 +3,34 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.242.0] — A sprint runs from its plan to complete in code
+
+- **`prusik drive <feature>` runs the sprint after planning (fb-13faaeb53496).** The orchestrator
+  was an LLM session that carried every role's prompts, reports and gate output, and a sprint's
+  main thread was most of its cost. Drive is a state machine: it runs `gate plan`, spawns
+  plan-critic, runs `prove-red` once before the first builder, spawns the builders the plan names,
+  proves the full suite (`drive.suite_command`) before `advance reviewing`, runs the reviewers and
+  fix rounds to the cap, spawns the integrator and closes with `gate sprint-complete`. Each role
+  is spawned headless through the platform adapter (`claude -p`, permission mode auto, prompts
+  answered by nobody) with its tier model and the auth `drive.auth` names; if the session would use
+  the other auth, drive stops before any spawn. A report only counts when it is newer than the spawn
+  that should have written it, and a fix round left open by an earlier run is resumed, not
+  restarted. At a judgement point it writes `reports/<feature>/drive-escalation.json` and exits 3;
+  it exits 2 when the sprint is not drivable. Stdout is the auth line, one line per phase and the
+  completion or escalation block; everything else is in `reports/<feature>/drive.log`.
+- **Spawned sessions write under the driver's lease.** `main_writer.delegate` records the session
+  drive spawns as a delegate of the live holder, and a delegate's write refreshes the lease without
+  changing its holder. `heartbeat` keeps the lease live during a long spawn, since a builder's
+  worktree writes never refresh it. A delegate never outlives its holder.
+- **Usage names the role of a spawned session.** `usage.tag_session` records the role and feature,
+  and its main-thread rows are attributed to that role instead of `main`.
+- **`gate advance` removes the worktree caches that are tool output (fb-f0c2851ea5f9).** A
+  `.ruff_cache`, `.pytest_cache`, `.mypy_cache` or `__pycache__` in a worktree is deleted when
+  leaving building, solo_execute or reviewing, and the advance prints what it removed and records
+  `worktree_caches_removed`. `.tox`, `.cache` and `.coverage` can hold real content and still block.
+- `/sprint-run` hands the sprint to `prusik drive` after `gate plan` passes. The sprint-config
+  template gains a `drive:` block (`auth`, `spawn_timeout_min`, `suite_command`).
+
 ## [0.241.1] — Worktree suites test the worktree
 
 - **Subprocesses the suite spawns import the checkout under test (fb-b5ac5594db55).**

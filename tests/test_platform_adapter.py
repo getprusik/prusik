@@ -95,6 +95,9 @@ def test_usage_operations_are_part_of_the_adapter_contract():
     # implement it; a partial adapter can't be instantiated.
     assert {"session_ref", "read_usage", "last_write", "current_session_id"} <= pa.PlatformAdapter.__abstractmethods__
 
+    # sprint-drive: spawning a role headless is host I/O too
+    assert {"spawn", "spawn_env", "auth_method"} <= pa.PlatformAdapter.__abstractmethods__
+
     class Partial(pa.PlatformAdapter):
         def read_payload(self):
             return {}

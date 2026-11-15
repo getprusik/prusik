@@ -31,6 +31,8 @@ import json
 import os
 import re
 import sys
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -87,6 +89,46 @@ class TranscriptUsage:
     malformed: int = 0
 
 
+class SpawnError(Exception):
+    """The host could not be asked (or answered unreadably) when drive needed it."""
+
+
+@dataclass(frozen=True)
+class AgentSpec:
+    """A role's agent definition handed to the host's headless spawn."""
+    name: str
+    description: str
+    tools: tuple[str, ...]
+    prompt: str
+
+
+@dataclass(frozen=True)
+class SpawnRequest:
+    """One headless role spawn. `root` is the project root (where the agents file lives),
+    `cwd` where the child runs. `on_tick` is called every `tick_s` seconds while it runs."""
+    role: str
+    prompt: str
+    model: str | None
+    cwd: str
+    root: str
+    session_id: str
+    agent_spec: AgentSpec
+    timeout_s: int
+    env: dict[str, str]
+    on_tick: Callable[[], None] | None = None
+    tick_s: int = 300
+
+
+@dataclass(frozen=True)
+class SpawnResult:
+    session_id: str
+    rc: int
+    is_error: bool
+    text: str
+    denials: tuple[dict, ...]
+    timed_out: bool
+
+
 class PlatformAdapter(abc.ABC):
     """The seam every runtime implements. `read_payload` + `parse_event` turn the host's
     native tool-call event into a `ToolEvent`; `deny` expresses a refusal natively;
@@ -115,9 +157,24 @@ class PlatformAdapter(abc.ABC):
         """The host session this process runs in, or None outside one."""
 
     @abc.abstractmethod
-    def read_usage(self, transcript: str, role_names: set[str]) -> TranscriptUsage:
+    def read_usage(self, transcript: str, role_names: set[str],
+                   main_role: str = "main") -> TranscriptUsage:
         """Usage records from a session's transcript files; `role_names` are the roles a
-        subagent may be attributed to."""
+        subagent may be attributed to; the main file's rows carry `main_role`."""
+
+    @abc.abstractmethod
+    def spawn_env(self, auth: str, base: Mapping[str, str]) -> dict[str, str]:
+        """The environment a spawned session runs with for the configured `auth`
+        ("claude.ai" | "api_key"); ValueError for an unknown value."""
+
+    @abc.abstractmethod
+    def auth_method(self, env: Mapping[str, str]) -> tuple[str, str]:
+        """(method, source) the host would authenticate with under `env`; SpawnError when
+        it cannot be determined."""
+
+    @abc.abstractmethod
+    def spawn(self, req: SpawnRequest) -> SpawnResult:
+        """Run one role headless to completion (or timeout) and return what it reported."""
 
     @abc.abstractmethod
     def last_write(self, transcript: str) -> float | None:
@@ -193,6 +250,97 @@ class ClaudeCodeAdapter(PlatformAdapter):
         # subagents' included (they carry the parent's id).
         return os.environ.get("CLAUDE_CODE_SESSION_ID") or None
 
+    _AUTHS = ("claude.ai", "api_key")
+
+    def spawn_env(self, auth: str, base: Mapping[str, str]) -> dict[str, str]:
+        if auth not in self._AUTHS:
+            raise ValueError(f"unknown drive.auth {auth!r} — one of {list(self._AUTHS)}")
+        env = dict(base)
+        env.pop("CLAUDE_CODE_SESSION_ID", None)       # the child must not read the parent's id
+        if auth == "claude.ai":
+            env.pop("ANTHROPIC_API_KEY", None)
+        return env
+
+    def auth_method(self, env: Mapping[str, str]) -> tuple[str, str]:
+        import subprocess               # function-level: the hook hot path never spawns
+        try:
+            p = subprocess.run(["claude", "auth", "status"], capture_output=True, text=True,
+                               env=dict(env), timeout=30, check=False)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise SpawnError(f"`claude auth status` could not run: {e}") from e
+        if p.returncode != 0:
+            raise SpawnError(f"`claude auth status` exited {p.returncode}: "
+                             f"{(p.stderr or p.stdout).strip()[:200]}")
+        try:
+            data = json.loads(p.stdout)
+            return str(data["authMethod"]), str(data.get("apiKeySource") or "login")
+        except (ValueError, KeyError, TypeError) as e:
+            raise SpawnError(f"`claude auth status` output unparseable: {p.stdout[:200]!r}") from e
+
+    def spawn(self, req: SpawnRequest) -> SpawnResult:
+        agents_dir = Path(req.root) / ".sprint" / "drive-agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        spec = req.agent_spec
+        agents_file = agents_dir / f"{req.session_id}.json"
+        agents_file.write_text(json.dumps({spec.name: {
+            "description": spec.description, "prompt": spec.prompt,
+            "tools": list(spec.tools)}}), encoding="utf-8")
+        cmd = ["claude", "-p", req.prompt, "--agents", str(agents_file), "--agent", spec.name]
+        if req.model:
+            cmd += ["--model", req.model]
+        cmd += ["--permission-mode", "auto", "--permission-prompts", "none",
+                "--output-format", "json", "--session-id", req.session_id]
+        try:
+            return self._run(cmd, req)
+        finally:
+            agents_file.unlink(missing_ok=True)
+
+    @staticmethod
+    def _run(cmd: list[str], req: SpawnRequest) -> SpawnResult:
+        # Output goes to temp files, not pipes: a long run can never block on a full pipe
+        # while this loop waits in slices.
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            try:
+                proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out,
+                                        stderr=err, cwd=req.cwd, env=req.env)
+            except OSError as e:
+                raise SpawnError(f"could not start claude: {e}") from e
+            deadline = time.monotonic() + req.timeout_s
+            timed_out = False
+            while True:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    proc.kill()
+                    proc.wait()
+                    timed_out = True
+                    break
+                try:
+                    proc.wait(timeout=min(req.tick_s, left))
+                    break
+                except subprocess.TimeoutExpired:
+                    if req.on_tick is not None:
+                        req.on_tick()
+            out.seek(0)
+            err.seek(0)
+            stdout = out.read().decode("utf-8", errors="replace")
+            stderr = err.read().decode("utf-8", errors="replace")
+        if timed_out:
+            return SpawnResult(req.session_id, -1, True,
+                               f"timed out after {req.timeout_s}s", (), True)
+        try:
+            data = json.loads(stdout)
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+        except ValueError:
+            return SpawnResult(req.session_id, proc.returncode, True,
+                               (stderr or stdout)[:500], (), False)
+        denials = tuple(d for d in (data.get("permission_denials") or []) if isinstance(d, dict))
+        return SpawnResult(req.session_id, proc.returncode,
+                           bool(data.get("is_error")) or proc.returncode != 0,
+                           str(data.get("result") or ""), denials, False)
+
     def session_ref(self, payload: dict) -> SessionRef | None:
         sid, path = payload.get("session_id"), payload.get("transcript_path")
         if isinstance(sid, str) and sid and isinstance(path, str) and path:
@@ -204,10 +352,11 @@ class ClaudeCodeAdapter(PlatformAdapter):
         d = main.with_suffix("") / "subagents"
         return sorted(d.glob("agent-*.jsonl")) if d.is_dir() else []
 
-    def read_usage(self, transcript: str, role_names: set[str]) -> TranscriptUsage:
+    def read_usage(self, transcript: str, role_names: set[str],
+                   main_role: str = "main") -> TranscriptUsage:
         out = TranscriptUsage()
         main = Path(transcript)
-        if not self._read_file(main, "main", out):
+        if not self._read_file(main, main_role, out):
             out.unreadable.append(str(main))
             return out
         for f in self._subagent_files(main):

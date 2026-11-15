@@ -2949,6 +2949,14 @@ def advance(args) -> int:
                               missing=missing)
                 return 2
 
+        if current in ("building", "solo_execute", "reviewing"):
+            removed = consistency.remove_derived_worktree_caches(ledger.project_root())
+            if removed:
+                print("[prusik-gate] removed tool caches from worktrees: "
+                      + ", ".join(removed))
+                ledger.append("worktree_caches_removed", feature=feature,
+                              phase=current, paths=removed)
+
         inconsistencies = consistency.run_for_phase(current, ledger.project_root(), feature)
 
         if current == "scoping":

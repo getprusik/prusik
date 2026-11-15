@@ -21,8 +21,11 @@ sprint or sprint-less — because the field damage came from the sprint-less one
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from prusik import ledger
 
 # A holder that hasn't written for this long is presumed gone (crashed session,
 # closed laptop). Long enough to span a think-pause mid-sprint, short enough
@@ -49,34 +52,77 @@ def _is_stale(lease: dict, now: datetime) -> bool:
     return (now - refreshed) > timedelta(minutes=LEASE_TTL_MIN)
 
 
+def _write(root: Path, lease: dict) -> None:
+    """Atomic lease write: tmp + replace, so a concurrent reader never sees half a file."""
+    path = _lease_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(lease, indent=1), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def check_and_touch(root: Path, session: str, *, feature: str | None = None,
                     phase: str | None = None) -> tuple[bool, dict | None, str]:
     """The whole protocol, one call per shared-tree mutation:
       no lease            → acquire            → (True,  None,   'acquired')
       own live lease      → refresh            → (True,  None,   'refreshed')
+      delegate, live      → refresh timestamp  → (True,  None,   'refreshed')
       other, stale        → take over          → (True,  old,    'stolen_stale')
       other, live         → DENY               → (False, holder, 'denied')
+    A delegate (`delegate`) acts as the holder and never changes the holder's identity.
     """
     now = datetime.now(timezone.utc)
     lease = load(root)
-    action = "acquired"
     prior: dict | None = None
     if lease is not None:
+        stale = _is_stale(lease, now)
         if lease.get("session") == session:
-            action = "refreshed"
-        elif _is_stale(lease, now):
-            action, prior = "stolen_stale", lease
-        else:
+            lease.update(refreshed_at=now.isoformat(), feature=feature, phase=phase)
+            _write(root, lease)
+            return True, None, "refreshed"
+        if not stale and session in (lease.get("delegates") or []):
+            lease["refreshed_at"] = now.isoformat()
+            _write(root, lease)
+            return True, None, "refreshed"
+        if not stale:
             return False, lease, "denied"
-    acquired_at = (lease["acquired_at"] if action == "refreshed"
-                   and lease and lease.get("acquired_at") else now.isoformat())
-    path = _lease_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({
-        "session": session, "feature": feature, "phase": phase,
-        "acquired_at": acquired_at, "refreshed_at": now.isoformat(),
-    }, indent=1), encoding="utf-8")
+        action, prior = "stolen_stale", lease
+    else:
+        action = "acquired"
+    _write(root, {"session": session, "feature": feature, "phase": phase,
+                  "acquired_at": now.isoformat(), "refreshed_at": now.isoformat()})
     return True, prior, action
+
+
+def delegate(root: Path, holder: str, delegate_session: str, *, role: str,
+             feature: str) -> bool:
+    """The live lease holder `holder` lets a session it spawned (`prusik drive`) write the
+    shared tree as the holder (fb-13faaeb53496). False unless `holder` holds the live lease."""
+    lease = load(root)
+    if lease is None or lease.get("session") != holder or _is_stale(
+            lease, datetime.now(timezone.utc)):
+        return False
+    delegates = list(lease.get("delegates") or [])
+    if delegate_session not in delegates:
+        delegates.append(delegate_session)
+    lease["delegates"] = delegates
+    lease["refreshed_at"] = datetime.now(timezone.utc).isoformat()
+    _write(root, lease)
+    ledger.append("writer_delegated", holder=holder, delegate=delegate_session,
+                  role=role, feature=feature)
+    return True
+
+
+def heartbeat(root: Path, holder: str) -> bool:
+    """Refresh the lease when `holder` holds it live. A builder's worktree writes never
+    refresh the shared-tree lease, so drive calls this while a long spawn runs."""
+    lease = load(root)
+    if lease is None or lease.get("session") != holder or _is_stale(
+            lease, datetime.now(timezone.utc)):
+        return False
+    lease["refreshed_at"] = datetime.now(timezone.utc).isoformat()
+    _write(root, lease)
+    return True
 
 
 def release(root: Path) -> dict | None:

@@ -2194,7 +2194,7 @@ def test_advance_from_reviewing_blocks_when_cache_present():
         # thus evidence-freshness unaffected; the consistency scan still
         # flags the cache dir itself).
         wt = tmp / "worktrees" / "solo"
-        (wt / ".ruff_cache").mkdir(parents=True)
+        (wt / ".cache").mkdir(parents=True)
         args = argparse.Namespace(
             phase="integrating", feature="feat", allow_rewind=False
         )

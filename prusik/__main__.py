@@ -499,6 +499,12 @@ def main():
     p_effort.add_argument("--json", action="store_true",
                           help="Emit machine-readable JSON instead of text")
 
+    p_drive = sub.add_parser("drive", help="Run an active sprint from its plan to "
+                                           "sprint-complete: spawns each role headless, runs "
+                                           "the gates and fix rounds; rc 0 complete, 2 not "
+                                           "drivable, 3 escalated")
+    p_drive.add_argument("feature", type=_slug)
+
     # tier — model-tier routing policy (prusik/model_tier.py, imported only when dispatched).
     p_tier = sub.add_parser("tier", help="Model-tier routing: resolve a role's model; "
                                          "report predicted vs measured routing")
@@ -1108,6 +1114,9 @@ def main():
     if args.cmd == "effort":
         from prusik import effort
         return effort.run(json_output=args.json)
+    if args.cmd == "drive":
+        from prusik import drive
+        return drive.run(args.feature)
     if args.cmd == "tier":
         from prusik import model_tier
         if args.tier_cmd == "resolve":

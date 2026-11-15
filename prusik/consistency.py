@@ -566,6 +566,37 @@ _CACHE_MARKERS = {
 }
 
 
+def remove_derived_worktree_caches(project_root: Path) -> list[str]:
+    """Delete worktree cache dirs that are tool output by name (fb-f0c2851ea5f9).
+
+    Only names on BOTH the block list (`_CACHE_MARKERS`) and the gate's derived-dir list
+    are removed: they regenerate and belong to no deliverable. `.tox`, `.cache` and
+    `.coverage` can hold real content, so they stay and the scanner still blocks on them.
+    Returns the relpaths removed, sorted; a dir that fails to delete is not returned.
+    """
+    import os
+    import shutil
+    from prusik import gate               # function-level: gate imports consistency
+    names = _CACHE_MARKERS & gate._DERIVED_DIRS
+    worktrees = project_root / "worktrees"
+    if not worktrees.exists():
+        return []
+    found: list[Path] = []
+    for teammate_dir in worktrees.iterdir():
+        if not teammate_dir.is_dir():
+            continue
+        for dirpath, dirnames, _files in os.walk(teammate_dir):
+            dirnames[:] = [d for d in dirnames if d not in _BUILD_DEP_DIRS]
+            found.extend(Path(dirpath) / d for d in dirnames if d in names)
+            dirnames[:] = [d for d in dirnames if d not in names]
+    removed: list[str] = []
+    for d in found:
+        shutil.rmtree(d, ignore_errors=True)
+        if not d.exists():
+            removed.append(str(d.relative_to(project_root)))
+    return sorted(removed)
+
+
 def worktrees_clean_of_cache_artifacts(project_root: Path, feature: str
                                         ) -> list[str]:
     """Scan worktrees/ for tool-emitted cache directories before integrator runs.

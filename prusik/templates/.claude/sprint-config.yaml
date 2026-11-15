@@ -442,3 +442,9 @@ roadmap:
 #   (`feature` stays dropped regardless — product intent is never needed to fix a
 #   prusik finding.)
 # feedback_include_detail: true
+
+# `prusik drive <feature>` runs a sprint headless from its plan to sprint-complete.
+drive:
+  auth: claude.ai          # "claude.ai" (subscription login) or "api_key"; drive stops if the session would use the other
+  spawn_timeout_min: 60    # a role spawned by drive is killed and escalated after this many minutes
+  # suite_command: "<your full test command>"   # required: drive escalates at building without it
