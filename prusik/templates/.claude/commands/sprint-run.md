@@ -132,7 +132,30 @@ Loop until sprint-init exits 0 and the phase advances to `scoping`.
 
 ---
 
-## Step 3 — scoping
+## Step 3 — hand off to the driver
+
+Once sprint-init passes (phase `scoping`), run the rest of the sprint in code. Run this with Bash `run_in_background: true` and wait for its completion notification (do not poll):
+
+    prusik drive $ARGUMENTS
+
+`prusik drive` runs scoping, triage and planning (each author and critic round in a fresh headless session, capped by `drive.design_rounds`), then building, reviewing and integrating, each role spawned headless with its tier model. It closes the sprint with `gate sprint-complete`, prints one line per phase and keeps gate output in `reports/$ARGUMENTS/drive.log`. Do not spawn those roles with `Agent(...)` yourself.
+
+- **rc 0** — the sprint is complete and `gate sprint-complete` has run. Continue at Step 8, skipping its `sprint-complete` command.
+- **rc 3** — drive stopped at a judgement point. Read `reports/$ARGUMENTS/drive-escalation.json` and act on that file only. Report its `kind`, `reason` and `evidence` to the user, with the remedy for the kind:
+  - `scope_rejected` / `plan_rejected` — the critic did not approve within `drive.design_rounds`. Read the critic report in the evidence, fix the artifact or raise the cap, then re-run `prusik drive $ARGUMENTS`.
+  - `triage_rejected` — triage rejected the sprint or its decision was unreadable. Fix the brief or `decisions/$ARGUMENTS.json`, then re-run.
+  - `solo_handback` — triage chose solo; the sprint is in `solo_execute`. Implement in `worktrees/solo/` (Manual step 5a), then re-run `prusik drive $ARGUMENTS` from reviewing.
+  - `prove_red_failed`, `suite_failed`, `fix_round_cap`, `advance_blocked` — a gate or proof failed; fix the cause named in the evidence, then re-run.
+  - `permission_denied`, `spawn_failed`, `tier_unresolved`, `auth_mismatch`, `writer_busy` — a spawn or setup problem; show the evidence and stop.
+- **rc 2** — the sprint is not drivable yet (including the trivial lane: write `design/$ARGUMENTS/trivial.md`, implement in `worktrees/solo/`, re-run from reviewing). Show the message.
+
+---
+
+## Manual / not driven
+
+The steps below are the by-hand path for a sprint that is not driven. `prusik drive` does all of them itself; do not run them after the hand-off.
+
+### Manual step 3 — scoping
 
 Invoke `scoping`:
 
@@ -160,7 +183,7 @@ Advance:
 
 ---
 
-## Step 4 — triage (pure code, zero tokens)
+### Manual step 4 — triage (pure code, zero tokens)
 
     prusik triage --feature $ARGUMENTS
 
@@ -171,7 +194,7 @@ Read `decisions/$ARGUMENTS.json`'s `mode`:
 
 ---
 
-## Step 5a — solo build (if mode=solo)
+### Manual step 5a — solo build (if mode=solo)
 
 Read `design/$ARGUMENTS/scope.md`'s Modules touched. Implement the feature in `worktrees/solo/` — mirror the repo structure under worktrees/solo/ for files you touch. Respect the writable gate (nothing outside worktrees/solo/**).
 
@@ -181,7 +204,7 @@ Run the project's smoke/unit tests. If passing, advance:
 
 ---
 
-## Step 5b — team build (if mode=team)
+### Manual step 5b — team build (if mode=team)
 
 Invoke `feature-planner`:
 
@@ -189,21 +212,9 @@ Invoke `feature-planner`:
 
 Then run `prusik gate plan $ARGUMENTS` via Bash, because the role has no shell. On a non-zero exit, send the errors back to `feature-planner` and re-run the gate before going on.
 
-Plan review has one owner: `prusik drive` runs `plan-critic` itself. If you review the plan in this session first, spawn it here, and drive then finds that verdict current and skips its own round:
+Review the plan:
 
     Agent(subagent_type='plan-critic', prompt='review design/$ARGUMENTS/plan.md per your role spec; write reports/$ARGUMENTS/plan-approval.txt')
-
-**Hand off to the driver.** Once `prusik gate plan` passes, run the rest of the sprint in code. Run this with Bash `run_in_background: true` and wait for its completion notification (do not poll):
-
-    prusik drive $ARGUMENTS
-
-`prusik drive` runs the deterministic gates first and spawns each role headless (plan-critic, the builders, both reviewers, fix rounds, the integrator) with its tier model, then closes the sprint with `gate sprint-complete`. It prints one line per phase and keeps gate output in `reports/$ARGUMENTS/drive.log`. The per-role `Agent(...)` spawns for building, reviewing and integrating are replaced by this hand-off, and drive does the worktree setup, the fix rounds and the retro itself.
-
-- **rc 0** — the sprint is complete and `gate sprint-complete` has run. Continue at Step 8, skipping its `sprint-complete` command.
-- **rc 3** — drive stopped at a judgement point. Read `reports/$ARGUMENTS/drive-escalation.json` and act on that file only. For `plan_invalid` or `plan_rejected`, fix `design/$ARGUMENTS/plan.md` (send the named defects back to `feature-planner`), re-run `prusik gate plan $ARGUMENTS`, then re-run `prusik drive $ARGUMENTS`. For every other kind, report the file's `kind`, `reason` and `evidence` to the user and stop.
-- **rc 2** — the sprint is not drivable yet. Show the message.
-
-A solo sprint (Step 5a) reaches `reviewing` on its own; run `prusik drive $ARGUMENTS` from there.
 
 ---
 

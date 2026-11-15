@@ -175,17 +175,24 @@ def escalated_events():
 
 # ── planning ──────────────────────────────────────────────────────────────────────────────
 
-def test_planning_gate_plan_failure_escalates_before_the_critic(proj):
+def _backdate(path, seconds=3600):
+    old = time.time() - seconds
+    os.utime(path, (old, old))
+
+
+def test_planning_gate_plan_failure_respawns_the_planner_before_the_critic(proj):
     set_phase(proj, "planning")
     (proj / "design/feat/plan.md").write_text("# not a plan\n")
+    _backdate(proj / "design/feat/plan.md")
     adapter = FakeAdapter([])
     out = io.StringIO()
     assert drive.run(F, adapter=adapter, out=out) == 3          # real `gate plan`
-    assert adapter.requests == [], "the critic is not spawned"
+    assert [r.role for r in adapter.requests] == ["feature-planner"], "no critic spawn"
+    assert "gate plan" in adapter.requests[0].prompt
     esc = json.loads((proj / "reports/feat/drive-escalation.json").read_text())
-    assert esc["kind"] == "plan_invalid" and esc["phase"] == "planning" and esc["evidence"]
+    assert esc["kind"] == "spawn_failed" and esc["phase"] == "planning" and esc["evidence"]
     ev = escalated_events()
-    assert len(ev) == 1 and ev[0]["kind"] == "plan_invalid" and ev[0]["feature"] == F
+    assert len(ev) == 1 and ev[0]["kind"] == "spawn_failed" and ev[0]["feature"] == F
     assert "gate plan" in (proj / "reports/feat/drive.log").read_text()
 
 
@@ -193,6 +200,8 @@ def test_planning_rejection_escalates_and_never_advances(rig, proj):
     set_phase(proj, "planning")
     rig.adapter.scripts["plan-critic"] = write_report(proj, "plan-approval.txt",
                                                       "REJECTED\n- PC-1 [must-fix] x\n")
+    rig.adapter.scripts["feature-planner"] = lambda req: (
+        proj / "design/feat/plan.md").write_text(PLAN)
     assert rig.run() == 3
     assert rig.escalation()["kind"] == "plan_rejected"
     assert not [e for e in rig.events if e[:2] == ("gate", "advance")]
@@ -416,19 +425,15 @@ def test_a_live_foreign_lease_is_writer_busy(rig, proj):
 @pytest.mark.parametrize("setup,needle", [
     ("nosprint", "no active sprint"),
     ("other", "not 'feat'"),
-    ("scoping", "drive takes over at planning"),
-    ("noplan", "write design/feat/plan.md"),
+    ("briefing", "drive takes over at scoping"),
 ])
 def test_not_drivable_exits_2(rig, proj, setup, needle):
     if setup == "nosprint":
         (proj / ".sprint/state.json").unlink()
     elif setup == "other":
         set_phase(proj, "building", feature="other")
-    elif setup == "scoping":
-        set_phase(proj, "scoping")
     else:
-        set_phase(proj, "planning")
-        (proj / "design/feat/plan.md").unlink()
+        set_phase(proj, "briefing")
     assert rig.run() == 2
     assert needle in rig.out
     assert rig.adapter.requests == [] and not (proj / "reports/feat/drive-escalation.json").exists()
@@ -453,11 +458,12 @@ def test_escalation_output_is_bounded_and_names_the_json(rig, proj):
     set_phase(proj, "planning")
     rig.rcs["plan"] = [2]
     rig.tails["plan"] = "\n".join(f"error line {i}" for i in range(40))
+    _backdate(proj / "design/feat/plan.md")
     assert rig.run() == 3
     lines = rig.out.strip().splitlines()
     assert len(lines) <= 20
     assert lines[-1] == "details: reports/feat/drive-escalation.json"
-    assert lines[1].startswith("[drive] ESCALATION plan_invalid in planning")
+    assert lines[1].startswith("[drive] ESCALATION spawn_failed in planning")
 
 
 def test_each_spawn_tags_the_registry_and_delegates_the_lease(rig, proj):
@@ -496,8 +502,9 @@ def test_the_tick_heartbeat_refreshes_the_lease(rig, proj):
 
 def test_escalation_kinds_are_the_documented_set():
     assert set(drive.ESCALATION_KINDS) == {
-        "plan_invalid", "plan_rejected", "prove_red_failed", "suite_failed", "fix_round_cap",
-        "permission_denied", "spawn_failed", "tier_unresolved", "auth_mismatch",
-        "writer_busy", "advance_blocked"}
+        "scope_rejected", "triage_rejected", "solo_handback", "plan_rejected",
+        "prove_red_failed", "suite_failed", "fix_round_cap", "permission_denied",
+        "spawn_failed", "tier_unresolved", "auth_mismatch", "writer_busy",
+        "advance_blocked"}
     with pytest.raises(ValueError):
         drive.Escalation("made_up", "building", None, "x")

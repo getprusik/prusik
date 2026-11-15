@@ -91,12 +91,18 @@ def _decide_in_time(event) -> str | None:
         _signal.signal(_signal.SIGALRM, previous)
 
 
+def _session_field(event) -> dict:
+    """The hook's session for a gate_blocked record; no key at all when there is none."""
+    session = getattr(event, "session", None)
+    return {"session": session} if session else {}
+
+
 def _gate_fault(event, exc: BaseException) -> str:
     """The deny for a call the gate could not judge. The record is best effort: a ledger that
     can't be written may be the fault, and the deny must not depend on it."""
     fault = f"{type(exc).__name__}: {exc}"[:200]
     try:
-        ledger.append("gate_blocked", tool=event.tool, command=event.command,
+        ledger.append("gate_blocked", **_session_field(event), tool=event.tool, command=event.command,
                       gate_class=gate_class.GATE_FAULT, reason=f"gate fault: {fault}")
     except Exception:  # noqa: BLE001
         pass
@@ -129,7 +135,7 @@ def _pre_tool_decision(event) -> str | None:
             root, event.session,
             feature=state0.get("feature"), phase=state0.get("phase"))
         if not ok:
-            ledger.append("gate_blocked", tool=event.tool,
+            ledger.append("gate_blocked", **_session_field(event), tool=event.tool,
                           target=(event.file_targets[0] if event.file_targets else None),
                           command=event.command, phase=state0.get("phase"),
                           feature=state0.get("feature"),
@@ -362,7 +368,7 @@ def _gate_decision(event, config: dict, phase: str, feature) -> str | None:
             # blocks as true catches when the feature later advances (derived from the
             # ledger, not here).
             rel = _worktree_redirect_rel(target, config, phase, feature)
-            ledger.append("gate_blocked", tool=event.tool, target=target,
+            ledger.append("gate_blocked", **_session_field(event), tool=event.tool, target=target,
                           phase=phase, feature=feature,
                           gate_class=gate_class.WRITABLE_SCOPE, reason=reason,
                           redirect_rel=rel)
@@ -379,7 +385,7 @@ def _gate_decision(event, config: dict, phase: str, feature) -> str | None:
         for target in _event_write_targets(event, cmd):
             ok, reason = phases.is_path_writable(target, config, phase, feature)
             if not ok:
-                ledger.append("gate_blocked", tool=event.tool, command=cmd,
+                ledger.append("gate_blocked", **_session_field(event), tool=event.tool, command=cmd,
                               phase=phase, feature=feature,
                               gate_class=gate_class.WRITABLE_SCOPE,
                               reason=f"bash redirect to unwriteable path: {target} ({reason})")
@@ -390,7 +396,7 @@ def _gate_decision(event, config: dict, phase: str, feature) -> str | None:
         # inside heredocs or strings because we check command-position only.
         for denied in phase_spec.get("deny_commands", []):
             if _command_denied(cmd, denied):
-                ledger.append("gate_blocked", tool=event.tool, command=cmd,
+                ledger.append("gate_blocked", **_session_field(event), tool=event.tool, command=cmd,
                               phase=phase, feature=feature,
                               gate_class=gate_class.DENY_COMMAND,
                               reason=f"deny command: {denied}")
@@ -400,7 +406,7 @@ def _gate_decision(event, config: dict, phase: str, feature) -> str | None:
         # authored before v0.3.5.
         for pattern in phase_spec.get("deny_bash", []):
             if re.search(pattern, _deny_bash_text(cmd)):
-                ledger.append("gate_blocked", tool=event.tool, command=cmd,
+                ledger.append("gate_blocked", **_session_field(event), tool=event.tool, command=cmd,
                               phase=phase, feature=feature,
                               gate_class=gate_class.DENY_COMMAND,
                               reason=f"deny pattern: {pattern}")
