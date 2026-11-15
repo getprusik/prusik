@@ -3,8 +3,20 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
-## [0.242.1] — Outward-facing commands are opt-in, not part of the required baseline
+## [0.243.0] — JUnit XML reports are execution evidence
 
+- **`prove`, criteria and `gate capture` read JUnit XML (HQ backlog C1).** Test evidence came only
+  from pytest and vitest stdout, so an honest green Gradle run read as "0 executed". `prusik prove
+  --junit <glob>`, a criterion's `junit: <glob>` (with `kind: tests`) and `gate capture --junit
+  <glob>` now take the executed count, the failing tests and the skipped tests from the reports the
+  run itself wrote. One reader in `evidence.py` serves all three: each `<testcase>` counts once
+  however suites nest, and only files modified at or after the run started count, so an earlier
+  run's report can't prove this one. A malformed report or one with a DOCTYPE fails closed and names
+  the file. `--json` and `--sarif` (run-level properties, so a proven run carries them too) include
+  `junit_files`, `failed_tests` and `skipped_tests`. The GitHub Action takes a `junit` input. A
+  Gradle or Maven run that proves nothing without `--junit` gets a reason naming the flag and the
+  runner's default report glob. Reports must land in a gitignored directory (`build/`, `target/`);
+  reports that change the judged tree mid-capture are refused, not recorded (fb-511273152fe7).
 - **sprint-init no longer requires agents to be pre-approved to push (fb-6569762978f2).** The
   permissions baseline that `gate sprint-init` hard-requires, and that the shipped template allows,
   included `git push`, `curl`, `docker` and `docker-compose`. No sprint role needs them: building

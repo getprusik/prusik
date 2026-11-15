@@ -1,0 +1,16 @@
+{
+  "id": "fb-e900b3b60f77",
+  "created_at": "2026-11-15T20:32:53.082787+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "absence-check reads example paths in a plan as declared deliverables",
+  "detail": "junit-xml-evidence plan names example report paths (build/test-results/test/TEST-a.xml, target/surefire-reports/TEST-b.xml) in its test plan as fixture content written at test time. absence-check flags them as plan-declared deliverables missing from the worktree. regression-sentinel then tried to stage worktree files into the main tree to satisfy it; the reviewing writable gate denied it and drive escalated permission_denied (session d2839f08). absence-check should only count paths the plan declares as produced files (Modules touched + new), not every backtick path in the Test plan.",
+  "feature": "junit-xml-evidence",
+  "content_hash": "e900b3b60f77",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
