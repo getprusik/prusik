@@ -1,0 +1,16 @@
+{
+  "id": "fb-1303f39d14a6",
+  "created_at": "2026-11-15T21:35:19.360980+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "writable gate misses git apply: reviewer wrote the builder diff into the main tree",
+  "detail": "drive-design-phases reviewing: regression-sentinel (session c507cc48) ran 'git diff main...sprint/drive-design-phases-backend-builder | git apply' in the project root. The writable gate (reviewing may write only reports/<f>/**) did not block it, so the main tree took 5 modified + 2 new files. It then ran the suite there and wrote PASS. Its cleanup ('git checkout -- prusik tests && rm ...') WAS blocked, as is the operator's restore, so the gate catches the undo but not the write. Bash write detection must treat git apply / git checkout <ref> -- / git restore / git stash pop / git merge / git cherry-pick / git reset --hard / git am in the shared tree as writes to the paths they touch (or to the whole tree when unknowable), fail closed. Second issue: the sentinel spec let it verify in the main tree instead of the builder worktree.",
+  "feature": "drive-design-phases",
+  "content_hash": "1303f39d14a6",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

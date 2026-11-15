@@ -1,0 +1,16 @@
+{
+  "id": "fb-5861062129e7",
+  "created_at": "2026-11-15T21:44:40.731043+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "stop hook still blocks while a role or drive owns the missing artifact (fb-0fbea010311c recurred 8x)",
+  "detail": "drive-design-phases session d301f0fe: gate stop blocked 8 main turns, each ~100K context re-read, zero work. Two shapes that fb-0fbea010311c's tier_resolved signal misses: (1) tiers resolved in one batch before the spawns, or before sprint-start (scoping's tier was resolved before the sprint existed), so no per-spawn in-flight signal lines up with the artifact; (2) prusik drive running in the background owns the phase (scope/plan/retro artifacts), and the hook still demands them from main. Structural fix: the stop hook defers every phase-exit artifact while a live owner exists, keyed on system state instead of per-role guesses. The owners are a drive whose writer lease heartbeat is fresh for the feature, and a delegated role session whose lease delegation is live. The moat test covers both shapes. The old verify test passed while the field behaviour regressed, so its coverage was too narrow.",
+  "feature": "drive-design-phases",
+  "content_hash": "5861062129e7",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

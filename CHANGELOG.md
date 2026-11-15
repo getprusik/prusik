@@ -3,6 +3,24 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.244.0] — drive runs scoping through plan approval
+
+- **`prusik drive` takes over at `scoping` (fb-f358daf6e022).** The first driven sprint spent half
+  its tokens in the main thread, mostly in scoping and planning, where each critic round re-read
+  the main session's 100–150K context. drive now runs scoping, the scope-critic rounds, triage,
+  the planner and the plan-critic rounds itself. Each runs headless in a fresh session that works
+  from the files on disk. One bounded author/critic loop serves both scope and plan. A gate
+  failure sends the gate's errors back to the author. A REJECTED verdict sends the author the path
+  to the critic's report, never the text. `drive.design_rounds` (default 3) caps the rounds; at
+  the cap drive escalates `scope_rejected` or `plan_rejected`. A stale author or critic output
+  fails closed. Triage `solo` stops with `solo_handback`, `reject` escalates `triage_rejected`,
+  and drive refuses a trivial-lane sprint before the plan. `sprint-run` now hands off to drive
+  right after sprint-init.
+- **A gate deny the role recovered from no longer halts the sprint (fb-a5ef442478e8).**
+  `gate_blocked` events record the hook's session id. drive matches a spawn's denials against
+  them and goes on (ledger `drive_gate_denials`) when every denial matches. Any unmatched denial
+  still escalates `permission_denied`.
+
 ## [0.243.0] — JUnit XML reports are execution evidence
 
 - **`prove`, criteria and `gate capture` read JUnit XML (HQ backlog C1).** Test evidence came only
