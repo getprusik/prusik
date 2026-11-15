@@ -1,0 +1,16 @@
+{
+  "id": "fb-13faaeb53496",
+  "created_at": "2026-11-15T00:28:44.341248+00:00",
+  "kind": "request",
+  "severity": null,
+  "title": "sprint execution is orchestrated by the opus main thread; past plan approval it is a deterministic state machine and should run as code",
+  "detail": "sprint-cost measured: main thread 9.5M of 19.2M tokens (95% cache_read). Of ~68 main-thread responses, ~43 came after plan approval and were mechanical relay at 110-150K context each: tier resolve, spawn role, wait, read verdict, advance, delete caches, ff, complete. /sprint-run is an LLM slash command, so this cost grows with session length and every sequencing step depends on orchestrator discipline. In this sprint the orchestrator skipped prove-red, spawned plan-critic on a plan that failed `prusik gate plan`, and lost turns to caches. Candidate: `prusik sprint drive <feature>` runs building\u2192reviewing\u2192integrating\u2192complete in code. It spawns each role headless via the platform adapter (Claude Code: `claude -p --model <tier ref>`, fresh context, hooks still enforce), runs deterministic gates before any LLM critic, runs fix rounds up to the cap, and exits with a structured escalation (rc\u22600) only on a judgement point: a twice-rejected verdict, a permission denial, or failed criteria. The main thread keeps brief/scope/plan, where judgement and its context pay off. Projection: a clean sprint goes from ~12.6M to ~5-6M, constant regardless of session length. Verify at design time: headless permission mode under hooks, headless first-turn context, adapter seam for spawn.",
+  "feature": null,
+  "content_hash": "13faaeb53496",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
