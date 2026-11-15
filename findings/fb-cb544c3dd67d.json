@@ -1,0 +1,16 @@
+{
+  "id": "fb-cb544c3dd67d",
+  "created_at": "2026-11-15T22:12:11.136077+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "feedback harvest tags a moat test after its release is cut, which breaks the closures manifest",
+  "detail": "0.244.0: resolve + verify + harvest of fb-a5ef442478e8 ran after v0.244.0 was released. harvest tagged the test, test_closures_map then failed (the manifest lacks the id), and scripts/regen_closures.py correctly refuses because __version__ is already released. Harvest should apply the same guard as regen and fail closed: refuse when __version__ is already released and say 'bump to the next version first, or harvest before the release'. Better still, sprint-complete/release should harvest before the bump so the closure ships in the release that has the fix.",
+  "feature": null,
+  "content_hash": "cb544c3dd67d",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
