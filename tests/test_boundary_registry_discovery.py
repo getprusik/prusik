@@ -20,7 +20,9 @@ import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
-_SCRIPTS = ("boundary_check.py", "pre-commit-boundary.sh", "install-hooks.sh")
+_SCRIPTS = ("boundary_check.py", "pre-commit.sh", "pre-commit-boundary.sh",
+            "pre-commit-release-facts.sh", "pre-push.sh", "suite.sh",
+            "install-hooks.sh")
 _TOKEN = "zq" + "vendorx"          # runtime-built; never a literal registry label in source
 
 
@@ -84,7 +86,7 @@ def test_install_hooks_from_worktree_links_the_common_hook(tmp_path):
     main, _ = _layout(tmp_path)
     hook = main / ".git" / "hooks" / "pre-commit"
     assert hook.is_symlink()
-    assert hook.resolve() == (main / "scripts" / "pre-commit-boundary.sh").resolve()
+    assert hook.resolve() == (main / "scripts" / "pre-commit.sh").resolve()
 
 
 def test_worktree_commit_with_leak_is_blocked(tmp_path):
