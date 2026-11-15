@@ -68,6 +68,18 @@ if Path(_CWD_BASE).is_relative_to(_REPO):
 atexit.register(lambda: shutil.rmtree(_CWD_BASE, ignore_errors=True))
 
 
+# --- Subprocesses import this checkout (fb-b5ac5594db55) ------------------
+# `pythonpath = ["."]` only fixes this process. A `sys.executable` child imports prusik from the
+# venv's editable install, which is the main checkout, so a worktree suite's hook probes judged
+# main's code. The one place the suite sets PYTHONPATH: this repo root first, prior entries after.
+def _pythonpath_with_root(root, existing):
+    rest = [p for p in (existing or "").split(os.pathsep) if p and p != str(root)]
+    return os.pathsep.join([str(root), *rest])
+
+
+os.environ["PYTHONPATH"] = _pythonpath_with_root(_REPO, os.environ.get("PYTHONPATH"))
+
+
 def pytest_configure(config):
     """Leave the repo here, not at import: pytest globs `testpaths` against cwd after loading
     this file, and an empty glob makes it walk the whole repo (fb-c515bcaf0476)."""

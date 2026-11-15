@@ -235,8 +235,7 @@ def _pre_tool(path, command, deadline=gate._GATE_DEADLINE_SECONDS, setup=""):
     code = (f"import sys\nfrom prusik import gate\ngate._GATE_DEADLINE_SECONDS = {deadline}\n"
             f"{setup}sys.exit(gate.pre_tool())")
     result = subprocess.run([sys.executable, "-c", code], cwd=path, input=json.dumps(payload),
-                            capture_output=True, text=True, check=False, timeout=60,
-                            env={**os.environ, "PYTHONPATH": str(_ROOT)})
+                            capture_output=True, text=True, check=False, timeout=60)
     assert result.returncode == 0, result.stderr[-500:]
     if not result.stdout:
         return None

@@ -41,7 +41,6 @@ _PLAN_BROKEN = "# nothing a plan needs\n"
 def _gate(root: Path, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
     """Run the real CLI, so argparse, cwd and the exit code are the ones an operator gets."""
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
-    env["PYTHONPATH"] = str(_REPO)
     return subprocess.run([sys.executable, "-m", "prusik", "gate", *args], cwd=cwd or root,
                           env=env, capture_output=True, text=True, timeout=60)
 

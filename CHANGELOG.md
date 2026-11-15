@@ -3,6 +3,15 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.241.1] — Worktree suites test the worktree
+
+- **Subprocesses the suite spawns import the checkout under test (fb-b5ac5594db55).**
+  `tests/conftest.py` puts its own repo root first on `PYTHONPATH` for the whole session and keeps
+  prior entries after it. Before, a `sys.executable` child imported prusik from the venv's
+  editable install, which is the main checkout, so hook-probe tests in a worktree judged main's
+  code and stayed green over a worktree regression. Three per-file `PYTHONPATH` patches are
+  removed, and a test fails if one returns.
+
 ## [0.241.0] — Three sprint-cost terms
 
 - **The Stop hook stays silent while the reviewer that owns the missing artifact is working

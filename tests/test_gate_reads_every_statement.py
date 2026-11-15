@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import _signal
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -243,11 +242,10 @@ def _project(path: Path) -> Path:
 
 
 def _hook(path: Path, payload: dict, code: str | None = None):
-    env = {**os.environ, "PYTHONPATH": str(_ROOT)}
     argv = ([sys.executable, "-c", code] if code
             else [sys.executable, "-m", "prusik", "gate", "pre-tool"])
     return subprocess.run(argv, cwd=path, input=json.dumps(payload), capture_output=True,
-                          text=True, env=env, check=False, timeout=60)
+                          text=True, check=False, timeout=60)
 
 
 def _bash(command: str, path: Path) -> dict:
