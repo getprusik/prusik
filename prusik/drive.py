@@ -17,6 +17,7 @@ Exit codes: 0 complete, 2 not drivable, 3 escalated.
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -24,7 +25,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, TextIO
+from typing import Any, Callable, Iterable, TextIO
 
 import yaml
 
@@ -33,16 +34,32 @@ from prusik.platform_adapter import (
     AgentSpec, PlatformAdapter, SpawnError, SpawnRequest, SpawnResult, get_adapter,
 )
 
-ESCALATION_KINDS = ("plan_invalid", "plan_rejected", "prove_red_failed", "suite_failed",
-                    "fix_round_cap", "permission_denied", "spawn_failed", "tier_unresolved",
-                    "auth_mismatch", "writer_busy", "advance_blocked")
-DRIVEN = ("planning", "building", "reviewing", "integrating")
+ESCALATION_KINDS = ("scope_rejected", "triage_rejected", "solo_handback", "plan_rejected",
+                    "prove_red_failed", "suite_failed", "fix_round_cap", "permission_denied",
+                    "spawn_failed", "tier_unresolved", "auth_mismatch", "writer_busy",
+                    "advance_blocked")
+DRIVEN = ("scoping", "triage", "planning", "building", "reviewing", "integrating")
 BUILDER_ROLES = ("backend-builder", "frontend-builder", "test-writer")
 REVIEWERS = (("regression-sentinel", "regression.txt"),
              ("conventions-enforcer", "conventions.txt"))
 
-_DEFAULTS = {"auth": "claude.ai", "spawn_timeout_min": 60, "suite_command": None}
+_DEFAULTS = {"auth": "claude.ai", "spawn_timeout_min": 60, "suite_command": None,
+             "design_rounds": 3}
 _TICK_S = 300
+
+
+def _denial_tool(d: dict) -> str:
+    return str(d.get("tool_name") or d.get("tool") or "?")
+
+
+def _unmatched_denials(denials: Iterable[dict], events: Iterable[dict],
+                       session: str) -> list[str]:
+    """Sorted tool names of denials with no `gate_blocked` event whose `session` == session
+    and whose `tool` equals the denial's tool. An event with no `session` key matches
+    nothing."""
+    blocked = {e.get("tool") for e in events
+               if e.get("event") == "gate_blocked" and e.get("session") == session}
+    return sorted({t for t in (_denial_tool(d) for d in denials) if t not in blocked})
 
 
 class Escalation(Exception):
@@ -161,10 +178,14 @@ class _Drive:
         self._log(f"# spawn {role} session {sid} rc {res.rc} is_error {res.is_error}\n"
                   f"{res.text}\n")
         if res.denials:
-            tools = sorted({str(d.get("tool_name") or d.get("tool") or "?")
-                            for d in res.denials})
-            raise Escalation("permission_denied", self.phase, role,
-                             f"{role} was denied: {', '.join(tools)}", [sid])
+            unmatched = _unmatched_denials(res.denials, ledger.read_all(), sid)
+            if unmatched:
+                raise Escalation("permission_denied", self.phase, role,
+                                 f"{role} was denied: {', '.join(unmatched)}", [sid])
+            tools = sorted({_denial_tool(d) for d in res.denials})
+            self._log(f"# gate denials recovered: {', '.join(tools)}")
+            ledger.append("drive_gate_denials", feature=self.f, phase=self.phase, role=role,
+                          session=sid, tools=tools)
         if res.is_error or res.timed_out:
             first = (res.text.strip().splitlines() or ["no output"])[0][:200]
             raise Escalation("spawn_failed", self.phase, role,
@@ -173,13 +194,22 @@ class _Drive:
         return res, started
 
     @staticmethod
+    def _fresh(path: Path, since: float) -> bool:
+        """path exists and st_mtime >= math.floor(since): 1 s mtime granularity can't fail a
+        file written in the spawn's first second."""
+        try:
+            return path.stat().st_mtime >= math.floor(since)
+        except OSError:
+            return False
+
+    @staticmethod
     def _verdict(path: Path, token: str, since: float) -> bool | None:
         """None when the report is missing or older than the spawn that should have written
         it; else whether its first-line verdict is `token`. Reports are evidence: never
         deleted or rewritten here, freshness decides."""
+        if not _Drive._fresh(path, since):
+            return None
         try:
-            if path.stat().st_mtime < since:
-                return None
             text = path.read_text(encoding="utf-8")
         except OSError:
             return None
@@ -198,34 +228,106 @@ class _Drive:
         self.steps = []
 
     # ── phases ──────────────────────────────────────────────────────────────
-    def _planning(self) -> None:
+    def _design_loop(self, *, artifact: str, gate_args: tuple[str, ...], author: str,
+                     critic: str, report: str, rejected_kind: str) -> None:
+        """One bounded author/critic loop. Author prompts carry gate error lines or the
+        report's path, never the critique text."""
         f = self.f
-        rc, tail = self._gate("plan", f)
-        if rc != 0:
-            raise Escalation("plan_invalid", "planning", None, "`gate plan` failed",
-                             tail.splitlines())
-        self.steps.append("gate plan")
-        artifact = f"design/{f}/plan.md"
-        rc, _ = self._gate("verdict-current", "--role", "plan-critic", "--feature", f,
-                           "--artifact", artifact)
-        if rc != 0:
-            _, started = self._spawn(
-                "plan-critic",
-                f"review design/{f}/plan.md per your role spec; write "
-                f"reports/{f}/plan-approval.txt and record it with `prusik gate "
-                f"record-verdict --role plan-critic --feature {f} --artifact {artifact} "
-                f"--verdict <APPROVED|REJECTED>`. `prusik gate plan` output: {tail}")
-            report = self.reports / "plan-approval.txt"
-            ok = self._verdict(report, "APPROVED", started)
-            if ok is None:
-                raise Escalation("spawn_failed", "planning", "plan-critic",
-                                 "plan-critic wrote no plan-approval.txt", [str(report)])
-            if not ok:
-                raise Escalation("plan_rejected", "planning", "plan-critic",
-                                 "plan-critic did not approve the plan", [str(report)])
-        else:
-            self.steps.append("plan-critic current")
+        cap = int(self.cfg["design_rounds"])
+        report_path = self.reports / report
+        authored = 0
+        feedback = ""
+        rejected = False
+        while True:
+            if not (self.root / artifact).is_file():
+                rc, tail = 1, f"{artifact} does not exist"
+            else:
+                rc, tail = self._gate(*gate_args)
+            if rc == 0:
+                self.steps.append(f"gate {gate_args[0]}")
+                vrc, _ = self._gate("verdict-current", "--role", critic, "--feature", f,
+                                    "--artifact", artifact)
+                if vrc == 0:
+                    self.steps.append(f"{critic} current")
+                    return
+                _, started = self._spawn(
+                    critic,
+                    f"review {artifact} per your role spec; write reports/{f}/{report} and "
+                    f"record it with `prusik gate record-verdict --role {critic} --feature "
+                    f"{f} --artifact {artifact} --verdict <APPROVED|REJECTED>`. "
+                    f"`prusik gate {gate_args[0]}` output: {tail}")
+                ok = self._verdict(report_path, "APPROVED", started)
+                if ok is None:
+                    raise Escalation("spawn_failed", self.phase, critic,
+                                     f"{critic} wrote no fresh {report}", [str(report_path)])
+                if ok:
+                    return
+                rejected = True
+                feedback = (f"{critic} rejected it; read reports/{f}/{report} and address "
+                            f"every finding")
+            else:
+                rejected = False
+                feedback = f"`prusik gate {gate_args[0]}` failed:\n{tail}"
+            if authored == cap:
+                if rejected:
+                    raise Escalation(rejected_kind, self.phase, critic,
+                                     f"{authored} author rounds did not produce an approved "
+                                     f"{artifact}", [str(report_path)])
+                raise Escalation(rejected_kind, self.phase, author,
+                                 f"{authored} author rounds did not produce an approved "
+                                 f"{artifact}", tail.splitlines())
+            _, started = self._spawn(author, f"produce {artifact} per your role spec"
+                                             + (f"\n\n{feedback}" if feedback else ""))
+            authored += 1
+            if not self._fresh(self.root / artifact, started):
+                raise Escalation("spawn_failed", self.phase, author,
+                                 f"{author} did not write {artifact}",
+                                 [str(self.root / artifact)])
+
+    def _scoping(self) -> None:
+        artifact = f"design/{self.f}/scope.md"
+        self._design_loop(artifact=artifact, gate_args=("scope", artifact),
+                          author="scoping", critic="scope-critic",
+                          report="scope-approval.txt", rejected_kind="scope_rejected")
+        self._advance("triage")
+
+    def _planning(self) -> None:
+        self._design_loop(artifact=f"design/{self.f}/plan.md", gate_args=("plan", self.f),
+                          author="feature-planner", critic="plan-critic",
+                          report="plan-approval.txt", rejected_kind="plan_rejected")
         self._advance("building")
+
+    def _triage(self) -> None:
+        f = self.f
+        path = self.root / "decisions" / f"{f}.json"
+        rc, tail = self._prusik("triage", "--feature", f)
+        evidence = [str(path), *tail.splitlines()[-5:]]
+        if rc != 0:
+            raise Escalation("triage_rejected", "triage", None, f"triage rc {rc}", evidence)
+        try:
+            decision = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            raise Escalation("triage_rejected", "triage", None, "decision missing",
+                             evidence) from None
+        except (OSError, ValueError) as e:
+            raise Escalation("triage_rejected", "triage", None,
+                             f"decision unreadable: {e}", evidence) from e
+        mode = decision.get("mode") if isinstance(decision, dict) else None
+        if mode not in ("team", "solo", "reject"):
+            raise Escalation("triage_rejected", "triage", None, f"unknown mode {mode}",
+                             evidence)
+        if mode == "team":
+            self.steps.append("triage team")
+            self._advance("planning")
+        elif mode == "solo":
+            self._advance("solo_execute")
+            raise Escalation("solo_handback", "triage", None,
+                             f"triage chose solo: implement in worktrees/solo/, then "
+                             f"re-run prusik drive {f} from reviewing", [str(path)])
+        else:
+            raise Escalation("triage_rejected", "triage", None,
+                             str(decision.get("reason") or "triage rejected the sprint"),
+                             [str(path)])
 
     def _builders(self) -> list[str]:
         plan = self.root / "design" / self.f / "plan.md"
@@ -399,11 +501,18 @@ class _Drive:
             return 2
         phase = state.get("phase")
         if phase not in DRIVEN:
-            print(f"[drive] sprint {self.f} is in {phase!r}; drive takes over at planning "
-                  f"(plan.md written), building, reviewing or integrating", file=self.out)
+            print(f"[drive] sprint {self.f} is in {phase!r}; drive takes over at scoping, "
+                  f"triage, planning, building, reviewing or integrating", file=self.out)
             return 2
-        if phase == "planning" and not (self.root / "design" / self.f / "plan.md").is_file():
-            print(f"[drive] write design/{self.f}/plan.md first (the planning phase)",
+        if phase == "scoping" and state.get("lane") == "trivial":
+            print(f"[drive] sprint {self.f} is on the trivial lane: write "
+                  f"design/{self.f}/trivial.md, implement in worktrees/solo/, then re-run "
+                  f"drive from reviewing", file=self.out)
+            return 2
+        rounds = ((phases.load_sprint_config(self.root) or {}).get("drive") or {}) \
+            .get("design_rounds", _DEFAULTS["design_rounds"])
+        if isinstance(rounds, bool) or not isinstance(rounds, int) or rounds < 1:
+            print(f"[drive] drive.design_rounds must be a positive integer (got {rounds})",
                   file=self.out)
             return 2
         self.phase = str(phase)
@@ -439,6 +548,7 @@ class _Drive:
             return rc
         (self.reports / "drive-escalation.json").unlink(missing_ok=True)
         handlers: dict[str, Callable[[], None]] = {
+            "scoping": self._scoping, "triage": self._triage,
             "planning": self._planning, "building": self._building,
             "reviewing": self._reviewing, "integrating": self._integrating}
         try:

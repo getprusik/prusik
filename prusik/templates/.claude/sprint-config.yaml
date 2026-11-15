@@ -447,4 +447,5 @@ roadmap:
 drive:
   auth: claude.ai          # "claude.ai" (subscription login) or "api_key"; drive stops if the session would use the other
   spawn_timeout_min: 60    # a role spawned by drive is killed and escalated after this many minutes
+  design_rounds: 3         # author/critic rounds per design artifact (scope.md, plan.md); at the cap drive escalates
   # suite_command: "<your full test command>"   # required: drive escalates at building without it
