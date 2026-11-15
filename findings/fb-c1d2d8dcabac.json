@@ -1,0 +1,16 @@
+{
+  "id": "fb-c1d2d8dcabac",
+  "created_at": "2026-11-15T07:11:44.096631+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "a python/heredoc file write in Bash bypasses the phase writable gate (scope.md edited in planning)",
+  "detail": "During sprint-drive planning, a python3 heredoc doing open(p,'w') on design/sprint-drive/scope.md succeeded although planning's writable list excludes scope.md. The gate parses shell redirect targets, not interpreter file writes. Reverted by hand. Known class? (bash reader backlog)",
+  "feature": "sprint-drive",
+  "content_hash": "c1d2d8dcabac",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
