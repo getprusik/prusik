@@ -10,7 +10,22 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": "uv run python -m pytest tests/test_phases.py -q -k 'outward or permission'",
+    "fixed_in": "0.243.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-15T21:02:32.715002+00:00",
+      "exit": 0,
+      "executed_count": 6,
+      "verdict": true,
+      "why": "6 test(s) executed, exit 0",
+      "worktree_hash": "91c2611-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }

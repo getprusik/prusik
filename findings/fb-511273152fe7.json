@@ -10,7 +10,22 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": "uv run python -m pytest tests/test_junit_surfaces.py -q -k 'stale or unignored or gitignored'",
+    "fixed_in": "0.243.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-15T21:02:33.787131+00:00",
+      "exit": 0,
+      "executed_count": 5,
+      "verdict": true,
+      "why": "5 test(s) executed, exit 0",
+      "worktree_hash": "91c2611-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
