@@ -1,0 +1,16 @@
+{
+  "id": "fb-b5ac5594db55",
+  "created_at": "2026-11-15T00:00:49.432012+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "hook-probe tests in a worktree import the main checkout's prusik, so a reviewer PASS can miss a hook regression",
+  "detail": "sprint-cost: tests/test_hook_hot_path.py probes run sys.executable -c, which imports prusik from the venv's editable install (main checkout), not the worktree under test. The builder and regression-sentinel both ran the full suite green in worktrees/backend-builder while stop() spawned 4 git calls against a budget of 2; it surfaced only at sprint-complete from main. Workaround: PYTHONPATH=$PWD. Fix candidates: conftest pins PYTHONPATH to the repo root it runs from, or the probe passes its own sys.path.",
+  "feature": "sprint-cost",
+  "content_hash": "b5ac5594db55",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
