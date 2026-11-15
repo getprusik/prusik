@@ -10,7 +10,22 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": "uv run python -m pytest tests/test_drive_gate_denials.py -q -p no:cacheprovider",
+    "fixed_in": "0.244.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-15T22:08:22.678045+00:00",
+      "exit": 0,
+      "executed_count": 5,
+      "verdict": true,
+      "why": "5 test(s) executed, exit 0",
+      "worktree_hash": "9a3d4d5-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
