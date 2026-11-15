@@ -14,7 +14,13 @@ between the two surfaces.
 
 from __future__ import annotations
 
+import glob as _glob
+import os
 import re
+import shlex
+import time
+from pathlib import Path
+from collections import namedtuple
 
 
 def executed_count(kind: str, text: str, command: str = "") -> int:
@@ -248,3 +254,162 @@ def prove_verdict(kind: str, exit_code: int, executed: int,
             f"a clean ruff ('All checks passed!') or eslint (errors on no-match, "
             f"so a clean exit-0 counts) is credited as-is; tsc needs the count.")
     return True, f"{kind} check completed, exit 0 ({executed} checked)"
+
+
+# ---------------------------------------------------------------------------
+# JUnit XML reports — the run's OWN structured evidence (Gradle, Surefire, ...).
+# ---------------------------------------------------------------------------
+
+# A namedtuple, not a dataclass/typing.NamedTuple: evidence is imported by the hook hot
+# path, and those pull `dataclasses`/`typing` machinery in (tests/test_hook_hot_path.py).
+JUnitRead = namedtuple("JUnitRead", [
+    "pattern",        # str: the glob as given
+    "files",          # tuple[str, ...]: fresh report paths read, sorted, relative to base
+    "stale",          # int: matches ignored because mtime < since
+    "testcases",      # int: every <testcase>, counted once
+    "executed",       # int: testcases - skipped
+    "failed",         # int: testcases with <failure> or <error>
+    "failed_tests",   # tuple[str, ...]: names, first-seen order, de-duped
+    "skipped_tests",  # tuple[str, ...]: names of skipped cases, first-seen order, de-duped
+    "error",          # str | None: set => nothing is proven from this read
+])
+
+
+class _Rejected(Exception):
+    pass
+
+
+def run_start() -> int:
+    """Whole-second floor of time.time(), taken just before the command starts.
+    A file is fresh iff st_mtime >= this value (handles 1 s mtime granularity)."""
+    return int(time.time())
+
+
+def _parse_junit(data: bytes, label: str):
+    """Count testcases with expat directly. DOCTYPE and entity declarations raise
+    at the declaration, before anything is defined or expanded."""
+    from xml.parsers import expat   # lazy: evidence is on the hook hot path
+    cases: list[tuple[str, str]] = []     # (name, status)
+    state: dict = {"cur": None, "depth": 0, "mark": None}
+
+    def _doctype(*_a):
+        raise _Rejected(f"{label}: carries a DOCTYPE, which JUnit reports never "
+                        f"need; report rejected")
+
+    def _start(tag, attrs):
+        state["depth"] += 1
+        if tag == "testcase":
+            cn = attrs.get("classname") or ""
+            nm = attrs.get("name") or ""
+            state["cur"] = [f"{cn}::{nm}" if cn else nm, None, state["depth"]]
+        elif state["cur"] is not None and state["depth"] == state["cur"][2] + 1:
+            if tag == "skipped":
+                state["cur"][1] = "skipped"
+            elif tag in ("failure", "error") and state["cur"][1] != "skipped":
+                state["cur"][1] = "failed"
+
+    def _end(tag):
+        cur = state["cur"]
+        if tag == "testcase" and cur is not None and state["depth"] == cur[2]:
+            cases.append((cur[0], cur[1] or "passed"))
+            state["cur"] = None
+        state["depth"] -= 1
+
+    parser = expat.ParserCreate()
+    parser.StartDoctypeDeclHandler = _doctype
+    parser.EntityDeclHandler = _doctype
+    parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
+    parser.StartElementHandler = _start
+    parser.EndElementHandler = _end
+    try:
+        parser.Parse(data, True)
+    except _Rejected as e:
+        return str(e), []
+    except expat.ExpatError as e:
+        return (f"{label}: not well-formed XML ({expat.ErrorString(e.code)}); "
+                f"report rejected"), []
+    return None, cases
+
+
+def read_junit(pattern: str, base: Path, since: int) -> JUnitRead:
+    """glob.glob(pattern, root_dir=base, recursive=True) (an absolute pattern ignores base),
+    files only. Never raises on report content: errors come back in .error.
+    Name = f"{classname}::{name}", or name when classname is empty/absent."""
+    base = Path(base)
+
+    def _fail(msg: str, files=(), stale=0) -> JUnitRead:
+        return JUnitRead(pattern, tuple(files), stale, 0, 0, 0, (), (), msg)
+
+    try:
+        matches = sorted(_glob.glob(pattern, root_dir=base, recursive=True))
+    except (OSError, ValueError) as e:
+        return _fail(f"cannot expand {pattern!r}: {e}")
+    fresh: list[str] = []
+    stale = 0
+    for m in matches:
+        full = os.path.join(base, m)
+        try:
+            if not os.path.isfile(full):
+                continue
+            if os.stat(full).st_mtime >= since:
+                fresh.append(m)
+            else:
+                stale += 1
+        except OSError:
+            continue
+    if not fresh:
+        return _fail(f"no report matching {pattern!r} was written by this run "
+                     f"({stale} older match(es) ignored)", stale=stale)
+    allcases: list[tuple[str, str]] = []
+    for m in fresh:
+        try:
+            data = Path(os.path.join(base, m)).read_bytes()
+        except OSError as e:
+            return _fail(f"{m}: unreadable ({e}); report rejected", fresh, stale)
+        err, cases = _parse_junit(data, m)
+        if err:
+            return _fail(err, fresh, stale)
+        allcases.extend(cases)
+    skipped = [n for n, st in allcases if st == "skipped"]
+    failed = [n for n, st in allcases if st == "failed"]
+    return JUnitRead(
+        pattern=pattern, files=tuple(fresh), stale=stale,
+        testcases=len(allcases), executed=len(allcases) - len(skipped),
+        failed=len(failed),
+        failed_tests=tuple(dict.fromkeys(failed)),
+        skipped_tests=tuple(dict.fromkeys(skipped)),
+        error=None)
+
+
+def junit_verdict(exit_code: int, read: JUnitRead,
+                  min_executed: int) -> tuple[bool, str]:
+    """Decide a --junit tests run: exit != 0 is never proven; a read error or an
+    empty report proves nothing; else the same verdict as a stdout count."""
+    if exit_code != 0:
+        return prove_verdict("tests", exit_code, 0, min_executed)
+    if read.error:
+        return False, read.error
+    if read.testcases == 0:
+        return False, (f"{len(read.files)} fresh report(s) matching "
+                       f"{read.pattern!r} held no testcases")
+    return prove_verdict("tests", 0, read.executed, min_executed)
+
+
+def junit_hint(command: str) -> str | None:
+    """Name --junit and the runner's default glob when the command runs Gradle or
+    Maven (whose console output carries no parseable count)."""
+    try:
+        toks = shlex.split(command)
+    except ValueError:
+        toks = command.split()
+    for t in toks:
+        base = os.path.basename(t)
+        if base in ("gradle", "gradlew"):
+            return ("this looks like a Gradle run, whose console output has no "
+                    "test count — read its reports with "
+                    "--junit 'build/test-results/**/*.xml'")
+        if base in ("mvn", "mvnw"):
+            return ("this looks like a Maven run, whose console output has no "
+                    "test count — read its reports with "
+                    "--junit 'target/surefire-reports/*.xml'")
+    return None

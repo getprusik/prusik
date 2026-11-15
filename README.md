@@ -15,7 +15,7 @@ AI agents now write code faster than anyone can review it — and they routinely
 | A fix ships, then quietly regresses | Closed findings re-verify — a regression **auto-reopens the ticket** |
 | "Done" = a persuasive summary | "Done" = captured evidence in an append-only ledger you can hand an auditor |
 
-Free, Apache-2.0, **no telemetry, no account, no phone-home** — a verification tool you don't have to trust blindly would be a contradiction. The one network call it makes on its own is an update check against public GitHub and PyPI; see [SECURITY.md](SECURITY.md). The `prove` / `scan` / `feedback` layer works with **any** agent or CI; the full phase-gated harness targets Claude Code today. Backed by [2,800+ tests](tests/), including [regression tests pinned to 139 findings](prusik/_closures.json), each one fixed and proof-closed ([CI](https://github.com/getprusik/prusik/actions/workflows/ci.yml)).
+Free, Apache-2.0, **no telemetry, no account, no phone-home** — a verification tool you don't have to trust blindly would be a contradiction. The one network call it makes on its own is an update check against public GitHub and PyPI; see [SECURITY.md](SECURITY.md). The `prove` / `scan` / `feedback` layer works with **any** agent or CI; the full phase-gated harness targets Claude Code today. Backed by [2,800+ tests](tests/), including [regression tests pinned to 140 findings](prusik/_closures.json), each one fixed and proof-closed ([CI](https://github.com/getprusik/prusik/actions/workflows/ci.yml)).
 
 ## Prove your agent's tests actually ran (30 seconds, zero config)
 
@@ -147,7 +147,7 @@ Everything `init` writes is tracked in a content-hashed manifest, so `uninstall`
 
 | Command | What it does |
 |---|---|
-| `prusik prove [--kind tests\|lint\|types] [--min N] -- <cmd>` | Prove a command ran clean from its own output; `--sarif` for code-scanning |
+| `prusik prove [--kind tests\|lint\|types] [--min N] [--junit <glob>] -- <cmd>` | Prove a command ran clean from its own output; `--sarif` for code-scanning |
 | `prusik scan` | Static detectors (binding-mismatch, test-reach) + your own, day-1, no FSM needed |
 | `prusik init` / `doctor` / `update` / `uninstall` | Adopt, self-assess, stay current, leave cleanly |
 | `prusik feedback "…" --kind bug --repro "…"` | File a finding → git-tracked ticket that closes only on proof |
@@ -169,7 +169,7 @@ Run `prusik --help` for the complete list. Highlights beyond the table above: `d
 
 **Engine vs opinions.** Prusik ships the enforcement engine; your standards come from convention packs and `sprint-config.yaml`. The FSM's phases declare `writable` globs, denied commands, exit artifacts with schema validation, and budgets — all enforced by hooks, all yours to tune.
 
-**Evidence, precisely.** For tests, "real work" means executed = passed + failed, parsed from the runner's own summary — skips and collection counts never satisfy a gate. For lint/types it's files-checked from the tool's own scope report. Unparseable output proves nothing, and unproven blocks.
+**Evidence, precisely.** For tests, "real work" means executed = passed + failed, parsed from the runner's own summary — skips and collection counts never satisfy a gate. For lint/types it's files-checked from the tool's own scope report. Unparseable output proves nothing, and unproven blocks. When `--junit <glob>` (or a criterion's `junit:`) is given, executed/failed/skipped come from the JUnit XML reports the run itself wrote — fresh, well-formed, DOCTYPE-free — which makes Gradle and Maven suites provable.
 
 **The ledger is the memory.** `.sprint/ledger.jsonl` is append-only: every transition, block, capture, incident, and completion. `digest` turns it into outcome stats (escalation rate, prediction error, gate blocks by phase); `metrics` and `catches` turn it into the value story. Self-tuning happens by reading the ledger, not by trusting recollection.
 

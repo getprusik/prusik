@@ -27,6 +27,10 @@ inputs:
     description: "Minimum executed tests required (source=prove, kind=tests)."
     required: false
     default: "1"
+  junit:
+    description: "JUnit XML report glob (source=prove, kind=tests), e.g. 'build/test-results/**/*.xml'. Passed as --junit."
+    required: false
+    default: ""
   path:
     description: "Directory to scan (source=scan). Defaults to the repo root."
     required: false
@@ -75,6 +79,8 @@ runs:
     - name: Generate findings JSON
       id: gen
       shell: bash
+      env:
+        PRUSIK_JUNIT: ${{ inputs.junit }}
       run: |
         out="${RUNNER_TEMP}/prusik-findings.json"
         rc=0
@@ -86,7 +92,9 @@ runs:
             fi
             # raw command output → stderr (visible in logs); pure JSON → $out.
             # rc=1 means NOT PROVEN; surfaced via fail-on-findings as a gate.
-            prusik prove --kind "${{ inputs.kind }}" --min "${{ inputs.min }}" --json \
+            junit_args=()
+            if [ -n "$PRUSIK_JUNIT" ]; then junit_args=(--junit "$PRUSIK_JUNIT"); fi
+            prusik prove --kind "${{ inputs.kind }}" --min "${{ inputs.min }}" "${junit_args[@]}" --json \
               -- ${{ inputs.command }} > "$out" || rc=$?
             ;;
           scan)

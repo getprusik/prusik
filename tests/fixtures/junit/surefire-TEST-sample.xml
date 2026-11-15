@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="com.acme.ServiceTest" time="0.5" tests="99" errors="9" skipped="9" failures="9">
+  <properties>
+    <property name="java.version" value="21"/>
+    <property name="line.separator" value="&#10;"/>
+  </properties>
+  <testcase name="passes" classname="com.acme.ServiceTest" time="0.1">
+    <system-out><![CDATA[hello <skipped> not a real element]]></system-out>
+  </testcase>
+  <testcase name="optional" classname="com.acme.ServiceTest" time="0">
+    <skipped message="assumption failed"/>
+  </testcase>
+  <testcase name="fails" classname="com.acme.ServiceTest" time="0.1">
+    <failure message="nope" type="org.opentest4j.AssertionFailedError">trace</failure>
+  </testcase>
+  <testcase name="errors" classname="com.acme.ServiceTest" time="0.1">
+    <error message="npe" type="java.lang.NullPointerException">trace</error>
+  </testcase>
+  <testcase name="flaky" classname="com.acme.ServiceTest" time="0.3">
+    <flakyFailure message="first try" type="AssertionError">trace</flakyFailure>
+  </testcase>
+</testsuite>

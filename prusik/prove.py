@@ -20,6 +20,7 @@ import json
 import shlex
 import subprocess
 import sys
+from pathlib import Path
 
 from prusik import evidence
 
@@ -28,7 +29,7 @@ _TIMEOUT_SEC = 1800  # test suites legitimately run long
 
 def run(command: list[str] | None, kind: str = "tests",
         min_executed: int = 1, json_output: bool = False,
-        sarif_output: bool = False) -> int:
+        sarif_output: bool = False, junit: str | None = None) -> int:
     cmd = list(command or [])
     if cmd and cmd[0] == "--":
         cmd = cmd[1:]
@@ -40,7 +41,12 @@ def run(command: list[str] | None, kind: str = "tests",
     # (plain " ".join would mangle `pytest -k "a b"` or nested `bash -c "..."`).
     # bash -c is kept so shell features (pipes, &&, redirects) work.
     cmd_str = shlex.join(cmd)
+    if junit is not None and kind != "tests":
+        print("[prusik-prove] --junit applies only to --kind tests "
+              f"(got --kind {kind})", file=sys.stderr)
+        return 2
 
+    since = evidence.run_start() if junit is not None else 0
     try:
         proc = subprocess.run(["/bin/bash", "-c", cmd_str],
                               capture_output=True, text=True,
@@ -62,8 +68,19 @@ def run(command: list[str] | None, kind: str = "tests",
     if not combined.endswith("\n"):
         sink.write("\n")
 
-    executed = evidence.executed_count(kind, combined, cmd_str)
-    proven, reason = evidence.prove_verdict(kind, exit_code, executed, min_executed)
+    read = None
+    if junit is not None:
+        read = evidence.read_junit(junit, Path.cwd(), since)
+        executed = read.executed
+        proven, reason = evidence.junit_verdict(exit_code, read, min_executed)
+    else:
+        executed = evidence.executed_count(kind, combined, cmd_str)
+        proven, reason = evidence.prove_verdict(kind, exit_code, executed,
+                                                min_executed)
+        if kind == "tests" and exit_code == 0 and executed == 0:
+            hint = evidence.junit_hint(cmd_str)
+            if hint:
+                reason = f"{reason} {hint}"
 
     # v0.80.0 — record the proof so it's measurable and gate-checkable (e.g. a
     # builder's full-suite proof at building exit; field finding #14). ONLY inside
@@ -80,9 +97,12 @@ def run(command: list[str] | None, kind: str = "tests",
                 state = phases.current_sprint_state(root) or {}
             except Exception:  # noqa: BLE001 — unreadable state must not drop the proof
                 state = {}
+            extra = ({"junit": junit, "junit_files": len(read.files)}
+                     if read is not None else {})
             ledger.append("prove_run", kind=kind, exit_code=exit_code,
                           executed=executed, proven=proven, command=cmd_str,
-                          feature=state.get("feature"), phase=state.get("phase"))
+                          feature=state.get("feature"), phase=state.get("phase"),
+                          **extra)
             if proven and kind == "tests":
                 from prusik import suite_baseline
                 suite_baseline.update(root, executed)   # learn the full-suite size
@@ -98,6 +118,10 @@ def run(command: list[str] | None, kind: str = "tests",
         "proven": proven,
         "reason": reason,
     }
+    if read is not None:
+        verdict["junit_files"] = list(read.files)
+        verdict["failed_tests"] = list(read.failed_tests)
+        verdict["skipped_tests"] = list(read.skipped_tests)
     if sarif_output:
         from prusik import sarif
         print(json.dumps(sarif.from_prove(verdict), indent=2))

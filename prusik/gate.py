@@ -2129,6 +2129,7 @@ def _red_baseline_exists(root: Path, feature: str, cid: str, vc: str) -> bool:
     lf = root / ".sprint" / "ledger.jsonl"
     if not lf.exists():
         return False
+    want_junit = _criterion_junit(root, feature, cid)
     for line in lf.read_text().splitlines():
         if not line.strip():
             continue
@@ -2138,9 +2139,31 @@ def _red_baseline_exists(root: Path, feature: str, cid: str, vc: str) -> bool:
             continue
         if (e.get("event") == "criterion_red_baseline"
                 and e.get("feature") == feature and e.get("id") == cid
-                and e.get("verify_command") == vc):
+                and e.get("verify_command") == vc
+                and e.get("junit") == want_junit):
             return True
     return False
+
+
+def _criterion_junit(root: Path, feature: str, cid: str) -> str | None:
+    """The `junit:` glob a criterion declares, or None (no file / no criterion /
+    no field) — which keeps today's behavior for every non-junit criterion."""
+    from prusik import schema
+    try:
+        path = schema.criteria_path_for_brief(root / "briefs" / f"{feature}.md")
+        if not path.exists():
+            return None
+        for c in schema.load_criteria(path):
+            if c.get("id") == cid:
+                return c.get("junit") or None
+    except Exception:  # noqa: BLE001 — unreadable criteria keep today's behavior
+        return None
+    return None
+
+
+def _ev_run_start() -> int:
+    from prusik import evidence as _ev
+    return _ev.run_start()
 
 
 def prove_red(args) -> int:
@@ -2175,6 +2198,8 @@ def prove_red(args) -> int:
         cid = entry.get("id")
         vc = entry.get("verify_command", "")
         expected = entry.get("expected_exit", 0)
+        junit = entry.get("junit") or None
+        since = _ev_run_start() if junit else 0
         try:
             proc = subprocess.run(["/bin/bash", "-c", vc], cwd=str(root),
                                   capture_output=True, text=True,
@@ -2183,8 +2208,17 @@ def prove_red(args) -> int:
         except (subprocess.TimeoutExpired, OSError):
             code = -3
         if code != expected:  # RED — the verify fails without the change
+            jfields: dict = {}
+            if junit:
+                from prusik import evidence as _ev
+                jr = _ev.read_junit(junit, root, since)
+                jfields = {"junit": junit, "junit_files": list(jr.files),
+                           "executed": jr.executed,
+                           "failed_tests": list(jr.failed_tests)}
+                if jr.error:
+                    jfields["junit_error"] = jr.error
             ledger.append("criterion_red_baseline", feature=feature, id=cid,
-                          verify_command=vc, exit_code=code)
+                          verify_command=vc, exit_code=code, **jfields)
             print(f"[prusik-gate] ✓ {cid}: RED baseline captured (exit {code} ≠ "
                   f"expected {expected}) — verify is load-bearing.")
         else:
@@ -2398,6 +2432,9 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
                           id=cid, passed=False, exit_code=-1, reason=why)
             continue
 
+        junit = (entry.get("junit") or None) if (
+            not ci_shaped and entry.get("kind") == "tests") else None
+        since = _ev_run_start() if junit else 0
         try:
             proc = subprocess.run(
                 ["/bin/bash", "-c", vc] if not vc.startswith("/")
@@ -2442,11 +2479,21 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
         # `prusik prove`. Local-only (a ci_verify status check has no such output).
         kind = entry.get("kind") or inferred_kind
         executed = None
+        jread = None
         if passed and kind and expected == 0 and not ci_shaped:
             from prusik import evidence as _ev
             min_exec = int(entry.get("min_executed", 1))
-            executed = _ev.executed_count(kind, out_text, vc)
-            proven, why = _ev.prove_verdict(kind, exit_code, executed, min_exec)
+            if junit:
+                jread = _ev.read_junit(junit, root, since)
+                executed = jread.executed
+                proven, why = _ev.junit_verdict(exit_code, jread, min_exec)
+            else:
+                executed = _ev.executed_count(kind, out_text, vc)
+                proven, why = _ev.prove_verdict(kind, exit_code, executed, min_exec)
+                if not proven and kind == "tests" and executed == 0:
+                    hint = _ev.junit_hint(vc)
+                    if hint:
+                        why = f"{why} {hint}"
             if inferred_kind and not entry.get("kind"):
                 # visibility: inference armed a criterion the adopter didn't opt in on
                 # (the fleet signal that criterion_evidence is no longer dormant).
@@ -2485,12 +2532,15 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
             "verify_command": vc, "expected_exit": expected,
             "kind": kind, "executed": executed,
         })
+        jextra = ({"junit": junit,
+                   "junit_files": len(jread.files) if jread else 0}
+                  if junit else {})
         ledger.append("success_criterion_verified", feature=feature,
                       id=cid, passed=passed, exit_code=exit_code,
                       verify_command=vc, expected_exit=expected,
                       kind=kind, executed=executed,
                       verified_via=("ci" if ci_shaped else "local"),
-                      output_path=str(out_path.relative_to(root)))
+                      output_path=str(out_path.relative_to(root)), **jextra)
 
     return all_passed, results
 
@@ -3861,6 +3911,11 @@ def capture(args) -> int:
     if misuse:
         print(misuse, file=sys.stderr)
         return 2
+    junit = getattr(args, "junit", None)
+    if junit is not None and args.kind != "tests":
+        print(f"[prusik-gate] capture: --junit applies only to --kind tests "
+              f"(got --kind {args.kind})", file=sys.stderr)
+        return 2
     # Reconstruct the shell line WITHOUT dropping quoting. A bare `" ".join` mangled
     # any arg with internal spaces — `pytest -m "not browser_smoke"` → argv
     # ["pytest","-m","not browser_smoke"] → "pytest -m not browser_smoke" → pytest
@@ -3892,6 +3947,7 @@ def capture(args) -> int:
     role = _PHASE_ROLE.get(args.phase, "")
     extra = _REVIEWER_INPUTS.get(role, ())
     wt_hash, pre_digests = _judged_snapshot(root, extra)
+    since = _ev_run_start() if junit is not None else 0
     try:
         proc = subprocess.run(["/bin/bash", "-c", cmd_str], cwd=str(exec_dir), env=cap_env,
                                capture_output=True, text=True,
@@ -3909,11 +3965,26 @@ def capture(args) -> int:
     sys.stdout.write(combined)
 
     kind = args.kind
+    jread = None
+    if junit is not None:
+        from prusik import evidence as _ev
+        jread = _ev.read_junit(junit, exec_dir, since)
+        if jread.error and exit_code == 0:
+            # Input validation of the --junit source: refuse BEFORE diagnose, so the
+            # glob / stale count / file name reach the operator verbatim instead of
+            # a generic nothing_counted remedy.
+            print(f"[prusik-gate] capture: --junit: {jread.error}", file=sys.stderr)
+            ledger.append("capture_junit_unread", feature=args.feature,
+                          phase=args.phase, junit=junit, stale=jread.stale,
+                          reason=jread.error)
+            return 1
     if kind == "policy":
         # A policy pipeline has an exit code and no count, and none is made up for it. The
         # advance gate reads a policy entry for its exit code alone, and never as the proof
         # that anything was counted.
         value = 0
+    elif jread is not None:
+        value = 0 if jread.error else jread.executed
     else:
         value = _parse_nonempty_primitive(kind, combined, cmd_str)
 
@@ -3962,7 +4033,24 @@ def capture(args) -> int:
     # field bridge #3: record observed FAILED count for a tests capture, so the
     # advance gate can bound a declared known-failure baseline (a failing command
     # is tolerable only when observed ≤ what's git-stash-proven pre-existing).
-    if kind == "tests":
+    if kind == "tests" and jread is not None:
+        # Counts come from the reports the run wrote, not its stdout. A red run whose
+        # reports are absent/unreadable is still recorded (exit != 0 is never proven).
+        entry["observed_failures"] = 0 if jread.error else jread.failed
+        if jread.failed_tests and not jread.error:
+            entry["failing_tests"] = list(jread.failed_tests)
+        if jread.skipped_tests and not jread.error:
+            entry["skipped_tests"] = list(jread.skipped_tests)
+        entry["junit_files"] = [] if jread.error else list(jread.files)
+        if jread.error:
+            entry["junit_error"] = jread.error
+        from prusik import evidence as _evidence
+        skips = _parse_pytest_skips(combined)
+        if skips:
+            entry["skips"] = skips
+        if _evidence.coverage_gate_only_exit(combined, exit_code):
+            entry["coverage_gate_only"] = True
+    elif kind == "tests":
         from prusik import evidence as _evidence
         entry["observed_failures"] = _evidence.failed_count(combined)
         # fb-80d0a26be528: record the NAMED failing tests so the advance gate can
@@ -4006,7 +4094,7 @@ def capture(args) -> int:
     # side; here we just capture the data the heuristic needs. Format
     # recognized: `SKIPPED [N] <path>:<line>: <reason>` and the variant
     # `<test_id> SKIPPED (<reason>)` from pytest -v output.
-    if kind == "tests":
+    if kind == "tests" and jread is None:
         skips = _parse_pytest_skips(combined)
         if skips:
             entry["skips"] = skips

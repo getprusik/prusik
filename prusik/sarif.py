@@ -164,12 +164,14 @@ def from_prove(verdict: dict, root: Path | None = None,
             },
         })
 
-    return _doc(tool_name, rules, results)
+    run_props = {k: list(verdict[k]) for k in
+                 ("junit_files", "failed_tests", "skipped_tests") if k in verdict}
+    return _doc(tool_name, rules, results, run_props or None)
 
 
-def _doc(tool_name: str, rules: list[dict],
-         results: list[dict]) -> dict[str, Any]:
-    return {
+def _doc(tool_name: str, rules: list[dict], results: list[dict],
+         run_properties: dict | None = None) -> dict[str, Any]:
+    doc: dict[str, Any] = {
         "$schema": SCHEMA_URI,
         "version": SARIF_VERSION,
         "runs": [{
@@ -185,3 +187,6 @@ def _doc(tool_name: str, rules: list[dict],
             "results": results,
         }],
     }
+    if run_properties:
+        doc["runs"][0]["properties"] = run_properties
+    return doc

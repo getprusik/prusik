@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="com.acme.OuterSuite" tests="50" skipped="9" failures="9" errors="9" timestamp="2026-01-01T00:00:00">
+    <testsuite name="com.acme.InnerSuite" tests="40" skipped="9" failures="9" errors="9" timestamp="2026-01-01T00:00:00">
+      <testcase name="addsNumbers" classname="com.acme.MathTest" time="0.01"/>
+      <testcase name="subtractsNumbers" classname="com.acme.MathTest" time="0.01"/>
+      <testcase name="ignoredForNow" classname="com.acme.MathTest" time="0.0">
+        <skipped/>
+      </testcase>
+      <testcase name="dividesByZero" classname="com.acme.MathTest" time="0.02">
+        <failure message="expected 1 but was 0" type="AssertionError">trace</failure>
+      </testcase>
+      <testcase name="blowsUp" classname="com.acme.MathTest" time="0.02">
+        <error message="boom" type="java.lang.IllegalStateException">trace</error>
+      </testcase>
+    </testsuite>
+  </testsuite>
+</testsuites>

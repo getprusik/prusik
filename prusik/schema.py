@@ -779,6 +779,9 @@ def validate_criteria_file(path, project_root: Path | None = None,
             expected_exit: <int 0-255, default 0>
             kind: tests|lint|types           # optional — arms execution-evidence
             min_executed: <int ≥ 1, default 1>  # optional — min real work required
+            junit: <glob>                    # optional (kind: tests only) — read executed/
+                                             #   failed/skipped from JUnit XML reports the
+                                             #   verify wrote; glob is root-relative
             prove_red: true                  # optional — require a captured RED baseline
                                              #   (acceptance-TDD: the verify must FAIL
                                              #   without the change, proving it's
@@ -902,6 +905,17 @@ def validate_criteria_file(path, project_root: Path | None = None,
         if min_exec is not None and (not isinstance(min_exec, int) or min_exec < 1):
             errors.append(f"{prefix} (id={cid!r}): min_executed must be an int ≥ 1; "
                           f"got {min_exec!r}")
+        ju = entry.get("junit")
+        if ju is not None:
+            if kind != "tests":
+                errors.append(f"{prefix} (id={cid!r}): junit requires an explicit "
+                              f"`kind: tests`")
+            if not isinstance(ju, str) or not ju.strip():
+                errors.append(f"{prefix} (id={cid!r}): junit must be a non-empty "
+                              f"glob string; got {ju!r}")
+            elif Path(ju).is_absolute():
+                errors.append(f"{prefix} (id={cid!r}): junit must be relative to "
+                              f"the project root, not absolute; got {ju!r}")
         pr = entry.get("prove_red")
         if pr is not None and not isinstance(pr, bool):
             errors.append(f"{prefix} (id={cid!r}): prove_red must be a boolean; "

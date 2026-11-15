@@ -152,6 +152,10 @@ def main():
                              "CLEAR the evidence — never fake a clear with a no-op "
                              "like `-- echo reset` (it appends a tests=0 entry that "
                              "trips the false-clean guard at every advance).")
+    p_cap.add_argument("--junit", default=None, metavar="GLOB",
+                        help="kind=tests: take executed/failed/skipped from the "
+                             "JUnit XML reports this run wrote (glob resolved "
+                             "against the run directory)")
     p_cap.add_argument("command", nargs=argparse.REMAINDER,
                         help="-- <verbatim command to run>")
     p_scope = gsub.add_parser("scope", help="Validate a scope file")
@@ -939,6 +943,10 @@ def main():
     p_prove.add_argument("--sarif", action="store_true",
                           help="Emit SARIF 2.1.0 verdict (GitHub code-scanning / "
                                "CI); a NOT-PROVEN run is one error result")
+    p_prove.add_argument("--junit", default=None, metavar="GLOB",
+                          help="kind=tests: read executed/failed/skipped from the "
+                               "JUnit XML reports this run wrote (e.g. "
+                               "'build/test-results/**/*.xml')")
     p_prove.add_argument("command", nargs=argparse.REMAINDER,
                           help="-- <verbatim test/lint/type command>")
 
@@ -1187,7 +1195,7 @@ def main():
         from prusik import prove
         return prove.run(args.command, kind=args.kind,
                          min_executed=args.min_executed, json_output=args.json,
-                         sarif_output=args.sarif)
+                         sarif_output=args.sarif, junit=args.junit)
     if args.cmd == "plan-reach":
         from prusik import blast_plan
         return blast_plan.run(args.feature, json_output=args.json)
