@@ -3,6 +3,16 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.242.1] — Outward-facing commands are opt-in, not part of the required baseline
+
+- **sprint-init no longer requires agents to be pre-approved to push (fb-6569762978f2).** The
+  permissions baseline that `gate sprint-init` hard-requires, and that the shipped template allows,
+  included `git push`, `curl`, `docker` and `docker-compose`. No sprint role needs them: building
+  and solo phases deny `git push`, and the integrator pushes only when the operator authorizes it.
+  A project that removed them to keep pushes operator-gated could not start a sprint. They now sit
+  in `permissions.OPT_IN_ALLOW` (with `wget`): not required, not in the template, and listed by
+  `prusik permissions audit` as opt-in. Existing projects keep whatever they already allow.
+
 ## [0.242.0] — A sprint runs from its plan to complete in code
 
 - **`prusik drive <feature>` runs the sprint after planning (fb-13faaeb53496).** The orchestrator

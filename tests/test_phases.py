@@ -1752,6 +1752,30 @@ def test_permissions_missing_zero_after_full_baseline():
         shutil.rmtree(tmp)
 
 
+def test_outward_entries_are_opt_in_not_required():
+    """moat-finding: fb-6569762978f2
+
+    A project that keeps git push / curl / docker
+    operator-gated must still pass the sprint-init baseline, and the shipped
+    template must not pre-approve them."""
+    outward = set(kit_permissions.OPT_IN_ALLOW)
+    assert "Bash(git push *)" in outward
+    assert not outward & set(kit_permissions.RECOMMENDED_ALLOW)
+    tmp = _mktmp_project()
+    try:
+        kit_init.run()
+        settings = tmp / ".claude" / "settings.json"
+        data = json.loads(settings.read_text())
+        allow = data["permissions"]["allow"]
+        assert not outward & set(allow), outward & set(allow)
+        # The baseline alone (no outward entry) leaves nothing missing.
+        data["permissions"]["allow"] = list(kit_permissions.RECOMMENDED_ALLOW)
+        settings.write_text(json.dumps(data))
+        assert kit_permissions.missing(tmp) == []
+    finally:
+        shutil.rmtree(tmp)
+
+
 def test_sprint_init_hard_blocks_on_missing_permissions_baseline():
     """v0.5.9: sprint-init must refuse to start when audit shows missing
     baseline entries — prevents the silent-Bash-denial class of bug from

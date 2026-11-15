@@ -1,0 +1,16 @@
+{
+  "id": "fb-6569762978f2",
+  "created_at": "2026-11-15T19:46:51.836330+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "sprint-init's required permissions baseline forces pre-approval of git push, curl and docker",
+  "detail": "permissions.RECOMMENDED_ALLOW is both the template allow list and what sprint-init hard-requires (gate.py step 6). It includes Bash(git push *), Bash(curl *), Bash(docker *), Bash(docker-compose *). No sprint role needs them: integrator.md makes push opt-in and user-authorized, and building/solo phases deny git push. A project that removes them to keep pushes operator-gated cannot start a sprint (engine repo, 2026-11-15: settings.local.json trimmed to 5 entries, sprint-init rc=1 with 59 missing). Fix: outward-facing entries become opt-in, out of the required set and the shipped template.",
+  "feature": null,
+  "content_hash": "6569762978f2",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

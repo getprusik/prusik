@@ -37,9 +37,11 @@ _DANGEROUS_BASH = ("rm ", "rm-", "sudo", "mkfs", "shutdown", "reboot", ":(){",
                    "dd ", "> /dev/sd", "chmod 777", "| bash", "| sh", "eval ")
 
 
-# Recommended baseline. Prusik's roles realistically need these to function
-# in subagent contexts. Tighter sets are fine — users who want stricter
-# security can prune. Looser sets are fine too — but watch for surprises.
+# Recommended baseline: what prusik's roles need to function in subagent
+# contexts, and what `gate sprint-init` requires. Looser sets are fine — but
+# watch for surprises. Outward-facing commands are deliberately NOT here (see
+# OPT_IN_ALLOW): pre-approving them would let an agent publish without the
+# operator's OK, and no sprint role needs them (fb-6569762978f2).
 RECOMMENDED_ALLOW = [
     # Prusik itself
     "Bash(prusik *)",
@@ -52,7 +54,7 @@ RECOMMENDED_ALLOW = [
     # Git (read + write; prusik gate's deny_commands handles per-phase scoping)
     "Bash(git status)", "Bash(git diff *)", "Bash(git log *)",
     "Bash(git branch *)", "Bash(git checkout *)", "Bash(git add *)",
-    "Bash(git commit *)", "Bash(git merge *)", "Bash(git push *)",
+    "Bash(git commit *)", "Bash(git merge *)",
     "Bash(git fetch *)", "Bash(git pull *)", "Bash(git stash *)",
     "Bash(git rebase *)",
     # Python ecosystem
@@ -66,11 +68,21 @@ RECOMMENDED_ALLOW = [
     # Other languages
     "Bash(go *)", "Bash(cargo *)", "Bash(rustc *)",
     # Build & infra
-    "Bash(make *)", "Bash(docker *)", "Bash(docker-compose *)",
-    "Bash(alembic *)", "Bash(psql *)", "Bash(curl *)",
+    "Bash(make *)", "Bash(alembic *)", "Bash(psql *)",
     # File-tool unscoped — prusik gate enforces phase-specific writable patterns
     "Write(**)", "Edit(**)",
 ]
+
+
+# Outward-facing commands: they publish or reach beyond the machine (`git push`,
+# `docker push`, an HTTP POST). No role needs them to build, review or merge
+# locally; the integrator pushes only when the operator authorizes it for the
+# sprint. So they are never required by sprint-init and never shipped in the
+# template's allow list. A project that wants them adds them deliberately.
+OPT_IN_ALLOW = (
+    "Bash(git push *)", "Bash(curl *)", "Bash(wget *)",
+    "Bash(docker *)", "Bash(docker-compose *)",
+)
 
 
 def _read_allow(path: Path) -> set[str]:
@@ -190,4 +202,7 @@ def audit(root: Path | None = None) -> int:
     print()
     print("Or run `prusik refresh` to bring prusik's template into this project")
     print("(v0.5.8+ surgical-merges baseline entries without clobbering customizations).")
+    print()
+    print("Not required (outward-facing, add only if you intend agents to run them")
+    print(f"without asking): {', '.join(OPT_IN_ALLOW)}")
     return 1
