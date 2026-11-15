@@ -2149,15 +2149,17 @@ def _criterion_junit(root: Path, feature: str, cid: str) -> str | None:
     """The `junit:` glob a criterion declares, or None (no file / no criterion /
     no field) — which keeps today's behavior for every non-junit criterion."""
     from prusik import schema
+    path = schema.criteria_path_for_brief(root / "briefs" / f"{feature}.md")
+    if not path.exists():
+        return None
     try:
-        path = schema.criteria_path_for_brief(root / "briefs" / f"{feature}.md")
-        if not path.exists():
-            return None
         for c in schema.load_criteria(path):
             if c.get("id") == cid:
                 return c.get("junit") or None
-    except Exception:  # noqa: BLE001 — unreadable criteria keep today's behavior
-        return None
+    except (OSError, AttributeError) as e:
+        # Fail closed + loud: a criteria file we cannot read must not silently
+        # fall back to the stdout-count path.
+        raise ValueError(f"cannot read criterion {cid!r} from {path}: {e}") from e
     return None
 
 
