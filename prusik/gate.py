@@ -64,7 +64,11 @@ def pre_tool(args=None) -> int:
         reason = _decide_in_time(event)
     except (Exception, _GateDeadline) as exc:  # noqa: BLE001
         reason = _gate_fault(event, exc)
-    return adapter.deny(reason) if reason is not None else 0
+    if reason is not None:
+        return adapter.deny(reason)
+    if event.command is not None:
+        _observed_pre(event)       # outside the decision deadline; never raises
+    return 0
 
 
 class _GateDeadline(BaseException):
@@ -1736,13 +1740,9 @@ def _bash_succeeded(payload: dict, tool_response) -> bool | None:
 
 
 def post_tool(args=None) -> int:
-    """PostToolUse hook — convergence-stall detector for Bash retries.
-
-    Returns additionalContext via hookSpecificOutput when N=3 consecutive
-    identical fingerprints for the same command-shape are observed within
-    the current sprint. The agent's next turn sees the systemMessage; role
-    specs teach the response pattern (FAIL out, do not retry).
-    """
+    """PostToolUse hook for Bash: the observed-writes report (what this call changed in the
+    shared tree, fb-aa7a6121fcee) and the convergence-stall detector for Bash retries. At
+    most one JSON object is printed, through the platform adapter."""
     payload = _read_stdin_json()
     tool_name = payload.get("tool_name", "")
     if tool_name != "Bash":
@@ -1751,19 +1751,35 @@ def post_tool(args=None) -> int:
     config = phases.load_sprint_config()
     if not config:
         return 0
+    from prusik.platform_adapter import get_adapter
+    adapter = get_adapter()
+    event = adapter.parse_event(payload)
+    try:
+        observed = _observed_post(event, config) if event is not None else None
+    except Exception as exc:  # noqa: BLE001 — the hook must still report, never crash
+        observed = _observed_fail_text(f"{type(exc).__name__}: {exc}"[:200], True)
+        _observed_failed("post", f"{type(exc).__name__}: {exc}", event)
     state = phases.current_sprint_state()
+    msgs = [m for m in (observed, _convergence_message(payload, state)) if m]
+    return adapter.post_tool_context(msgs)
+
+
+def _convergence_message(payload: dict, state: dict | None) -> str | None:
+    """Convergence-stall detector for Bash retries: the message once N=3 consecutive
+    identical fingerprints for the same command-shape are observed within the current
+    sprint, else None. Role specs teach the response pattern (FAIL out, do not retry)."""
     if not state:
-        return 0
+        return None
 
     tool_input = payload.get("tool_input", {})
     tool_response = payload.get("tool_response", {})
     cmd = tool_input.get("command", "")
     if not cmd.strip():
-        return 0
+        return None
 
     token = _command_token(cmd)
     if token in _CONVERGENCE_SKIP_COMMANDS:
-        return 0
+        return None
 
     shape = _normalize_command_shape(cmd)
 
@@ -1789,7 +1805,7 @@ def post_tool(args=None) -> int:
         output = tool_response
     if len(output.strip()) < 80:
         _save_convergence_state(wstate)   # persist the activity, then skip trivial output
-        return 0
+        return None
 
     fp = _fingerprint_output(output)
     watches = wstate.setdefault("watches", {})
@@ -1802,7 +1818,7 @@ def post_tool(args=None) -> int:
         if entry["fingerprints"]:
             entry["fingerprints"] = []
         _save_convergence_state(wstate)
-        return 0
+        return None
 
     fps: list[str] = entry["fingerprints"]
     fps.append(fp)
@@ -1838,13 +1854,346 @@ def post_tool(args=None) -> int:
             f"verbatim. If you are the integrator or a builder, halt and "
             f"surface the stall — operator intervention is required."
         )
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PostToolUse",
-                "additionalContext": msg,
-            }
-        }))
-    return 0
+        return msg
+    return None
+
+
+# ---- observed writes (fb-aa7a6121fcee, fb-c1d2d8dcabac, fb-16c859a406b9) -----------------
+# The pre-tool reader judges a command's TEXT; these read the tree STATE before and after
+# each allowed Bash call (`prusik.observed_writes`), report what changed that the phase may
+# not write or that landed under another session's live lease, and refuse leaving a phase
+# while a path changed since the phase began is outside its writable set.
+
+# Where the observed-writes state lives. Read here without importing observed_writes, so a
+# call with no reason to check costs nothing; observed_writes reads the same constant.
+_OBSERVED_DIR = (".sprint", "observed-writes")
+# The pending key of a call whose payload carried no tool-use id (pre and post must agree).
+_NO_CALL_ID = "no-tool-use-id"
+_PHASE_ENTRY_EVENTS = ("sprint_started", "phase_advance", "phase_rewind")
+_OBSERVED_PREFIX = "[prusik-observed-write]"
+_OBSERVED_MAX_LINES = 20
+# The phase that may not write a path also refuses the commands that revert it, so the
+# remedy says who runs them.
+_OBSERVED_REVERT_NOTE = ("Where the gate refuses those commands in this phase, the operator "
+                         "runs them outside the session.")
+
+
+def _observed_reasons(event) -> dict | None:
+    """Why this call's writes are checked, or None: there is no sprint and no other session
+    holds the live single-writer lease. The ONE definition of "when the check runs", used
+    by pre and post."""
+    from prusik import main_writer
+    root = ledger.project_root()
+    state = phases.current_sprint_state(root) or {}
+    holder = main_writer.foreign_holder(root, getattr(event, "session", None))
+    if not state and holder is None:
+        return None
+    return {"sprint": bool(state), "phase": state.get("phase"),
+            "feature": state.get("feature"),
+            "holder": ({"session": holder.get("session"), "feature": holder.get("feature"),
+                        "phase": holder.get("phase")} if holder else None)}
+
+
+def _observed_failed(stage: str, reason: str, event=None, ctx: dict | None = None,
+                     **extra) -> None:
+    """`observed_write_check_failed`, best effort: the ledger itself may be the fault."""
+    fields = {"stage": stage, "reason": reason[:300],
+              "feature": (ctx or {}).get("feature"), "phase": (ctx or {}).get("phase"),
+              "session": getattr(event, "session", None),
+              "call_id": getattr(event, "call_id", None), **extra}
+    try:
+        ledger.append("observed_write_check_failed",
+                      **{k: v for k, v in fields.items() if v is not None})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _observed_pre(event) -> None:
+    """Record the tree before an allowed Bash call, for `_observed_post` to pair with.
+    Never raises: a failure here surfaces as "could not run" on the post side."""
+    try:
+        reasons = _observed_reasons(event)
+        if reasons is None:
+            return
+        root = ledger.project_root()
+        config = phases.load_sprint_config(root)
+        if not config:
+            return
+        from datetime import datetime, timezone
+        from prusik import observed_writes as ow
+        base = {"session": event.session, "call_id": event.call_id,
+                "ts": datetime.now(timezone.utc).isoformat()}
+        if not event.call_id:
+            reason = "no tool-use id in the hook payload"
+            ow.write_pending(root, ow.pending_key(event.session, _NO_CALL_ID),
+                             {**base, "error": reason})
+            _observed_failed("pre", reason, event, reasons)
+            return
+        try:
+            cache = ow.load_cache(root)
+            snap = ow.snapshot(root, cache, deadline_s=ow.HOOK_SNAPSHOT_DEADLINE_S,
+                               config=config, feature=reasons["feature"])
+            if snap != cache:
+                ow.save_cache(root, snap)      # hashes computed here are not paid again
+            record = {**base, "snapshot": snap, "phase": reasons["phase"],
+                      "feature": reasons["feature"], "sprint": reasons["sprint"],
+                      "holder": reasons["holder"]}
+        except ow.TreeUnreadable as exc:
+            record = {**base, "error": str(exc)}
+            _observed_failed("pre", str(exc), event, reasons)
+        ow.write_pending(root, ow.pending_key(event.session, event.call_id), record)
+    except Exception as exc:  # noqa: BLE001 — never turn an allowed call into a crash
+        _observed_failed("pre", f"{type(exc).__name__}: {exc}", event)
+
+
+def _observed_pending_present(root: Path) -> bool:
+    try:
+        with os.scandir(root.joinpath(*_OBSERVED_DIR, "pending")) as it:
+            return any(e.name.endswith(".json") for e in it)
+    except OSError:
+        return False
+
+
+def _observed_lines(paths: list[str]) -> str:
+    shown = [f"  - {p}" for p in paths[:_OBSERVED_MAX_LINES]]
+    if len(paths) > _OBSERVED_MAX_LINES:
+        shown.append(f"  … +{len(paths) - _OBSERVED_MAX_LINES} more")
+    return "\n".join(shown)
+
+
+def _observed_fail_text(reason: str, sprint: bool) -> str:
+    tail = ("leaving the phase re-checks the tree against the phase-entry baseline."
+            if sprint else "the next checked call reports any unpaired call's changes.")
+    return (f"{_OBSERVED_PREFIX} the change check could not run for this call: {reason}. "
+            f"Its writes, if any, were not checked here; {tail}")
+
+
+def _observed_judge(ow, root: Path, config: dict, rec: dict, after: dict, event,
+                    orphan_key: str | None = None) -> list[str]:
+    """Diff a pending record's snapshot against `after`, judged by the record's own phase
+    and lease holder; ledger and return the report lines. Raises TreeUnreadable."""
+    feature, phase = rec.get("feature"), rec.get("phase")
+    paths = ow.changed(rec["snapshot"], after, root, config, feature)
+    unwritable: list[str] = []
+    if paths and rec.get("sprint") and phase:
+        unwritable = [p for p in paths
+                      if not phases.is_path_writable(p, config, phase, feature, root)[0]]
+        if unwritable:
+            base, _ = ow.load_baseline(root, feature, phase, None)
+            if base is not None:
+                same = ow.matches_baseline(unwritable, after, base)
+                unwritable = [p for p in unwritable if p not in same]
+    holder = rec.get("holder") or None
+    lease = paths if holder else []
+    if not unwritable and not lease:
+        return []
+    hid = str(holder.get("session") or "?") if holder else ""
+    ledger.append("observed_write_reported", feature=feature, phase=phase,
+                  session=rec.get("session"), call_id=rec.get("call_id"),
+                  paths=paths[:50], unwritable=unwritable[:50], holder=hid or None,
+                  orphan=orphan_key is not None)
+    out = []
+    if orphan_key is not None:
+        head = (f"{_OBSERVED_PREFIX} the check for an earlier call (session "
+                f"{str(rec.get('session') or '?')[:12]}…, call {rec.get('call_id') or '?'}, "
+                f"started {rec.get('ts') or '?'}) never completed; since it began, ")
+        if unwritable:
+            out.append(f"{head}{len(unwritable)} path(s) changed that phase '{phase}' may not "
+                       f"write:\n{_observed_lines(unwritable)}\nLater calls' writes may be "
+                       f"included.")
+        if lease:
+            out.append(f"{head}{len(lease)} path(s) were written under session {hid[:12]}…'s "
+                       f"lease:\n{_observed_lines(lease)}\nLater calls' writes may be "
+                       f"included.")
+        return out
+    if unwritable:
+        out.append(f"{_OBSERVED_PREFIX} this Bash call changed {len(unwritable)} path(s) phase "
+                   f"'{phase}' may not write:\n{_observed_lines(unwritable)}\nThey are left on "
+                   f"disk; leaving the phase is refused until each is reverted (tracked: git "
+                   f"checkout -- <path>; new: delete it). {_OBSERVED_REVERT_NOTE}")
+    if lease:
+        out.append(f"{_OBSERVED_PREFIX} this Bash call changed {len(lease)} shared-tree "
+                   f"path(s) while session {hid[:12]}… holds the single-writer lease:\n"
+                   f"{_observed_lines(lease)}")
+    return out
+
+
+def _observed_orphans(ow, root: Path, config: dict, after: dict | None, event,
+                      reasons: dict) -> list[str]:
+    """Report every pending record whose post check never ran (decision 14). Each one
+    popped is reported or ledgered; none is dropped silently."""
+    orphans = ow.pop_orphans(root, ow.ORPHAN_AFTER_S)
+    if not orphans:
+        return []
+    out: list[str] = []
+    unreadable = None
+    if after is None:
+        try:
+            after = ow.snapshot(root, ow.load_cache(root),
+                                deadline_s=ow.HOOK_SNAPSHOT_DEADLINE_S, config=config,
+                                feature=reasons.get("feature"))
+        except ow.TreeUnreadable as exc:
+            unreadable = str(exc)
+    for key, rec in orphans:
+        who = (f"session {str(rec.get('session') or '?')[:12]}…, call "
+               f"{rec.get('call_id') or '?'}, started {rec.get('ts') or '?'}")
+        ctx = {"feature": rec.get("feature"), "phase": rec.get("phase")}
+        problem = rec.get("error") or unreadable
+        if problem is None and not isinstance(rec.get("snapshot"), dict):
+            problem = "pending snapshot unreadable"
+        if problem is None and after is not None:
+            try:
+                out += _observed_judge(ow, root, config, rec, after, event, orphan_key=key)
+            except ow.TreeUnreadable as exc:
+                problem = str(exc)
+        _observed_failed("orphan", problem or "post check never ran", event, ctx,
+                         orphan=key)
+        if problem is not None:
+            out.append(f"{_OBSERVED_PREFIX} the check for an earlier call ({who}) never "
+                       f"completed, and its changes could not be checked: {problem}.")
+    return out
+
+
+def _observed_post(event, config) -> str | None:
+    """Pair this call's pre-call snapshot, report what it changed, and reconcile orphans.
+    None when there is nothing to say."""
+    root = ledger.project_root()
+    reasons = _observed_reasons(event)
+    if reasons is None and not _observed_pending_present(root):
+        return None
+    from prusik import observed_writes as ow
+    key = ow.pending_key(event.session, event.call_id or _NO_CALL_ID)
+    rec = ow.pop_pending(root, key)
+    if rec is None and reasons is None:
+        return None
+    sprint = bool((rec if rec and "error" not in rec else reasons or {}).get("sprint"))
+    msgs: list[str] = []
+    after = None
+    if rec is None:
+        # No id and no pre-call marker: nothing was paired, and nothing claimed a check.
+        if event.call_id:
+            msgs.append(_observed_fail_text(
+                "no pre-call snapshot (the sprint or lease began during this call, or the "
+                "pre-tool hook did not finish)", sprint))
+            _observed_failed("post", "no_pre_snapshot", event, reasons)
+    elif "error" in rec or not isinstance(rec.get("snapshot"), dict):
+        why = rec.get("error") or "pending snapshot unreadable"
+        msgs.append(_observed_fail_text(why, sprint))
+        _observed_failed("post", why, event, reasons)
+    else:
+        try:
+            after = ow.snapshot(root, rec["snapshot"], deadline_s=ow.HOOK_SNAPSHOT_DEADLINE_S,
+                                config=config, feature=rec.get("feature"))
+            msgs += _observed_judge(ow, root, config, rec, after, event)
+            if after != rec["snapshot"]:
+                ow.save_cache(root, after)
+        except ow.TreeUnreadable as exc:
+            after = None
+            msgs.append(_observed_fail_text(str(exc), sprint))
+            _observed_failed("post", str(exc), event, reasons)
+    if reasons is not None:
+        msgs += _observed_orphans(ow, root, config, after, event, reasons)
+    return "\n\n".join(msgs) or None
+
+
+def _phase_entry(feature: str | None) -> tuple[str | None, str | None]:
+    """(ts, phase entered) of the newest sprint_started / phase_advance / phase_rewind for
+    `feature`; (None, None) when there is none."""
+    for e in reversed(ledger.read_all()):
+        if e.get("event") in _PHASE_ENTRY_EVENTS and e.get("feature") == feature:
+            entered = "scoping" if e.get("event") == "sprint_started" else e.get("to_phase")
+            return e.get("ts"), entered
+    return None, None
+
+
+def _phase_entered_at(feature: str | None) -> str | None:
+    """The ts of the newest sprint_started / phase_advance / phase_rewind for `feature`."""
+    return _phase_entry(feature)[0]
+
+
+def _take_phase_baseline(feature: str, phase: str) -> None:
+    """Snapshot the tree as the phase-entry baseline, stamped with the entry event just
+    appended. Never raises: on failure no baseline is left, so the next advance from this
+    phase refuses once and takes one."""
+    from prusik import observed_writes as ow
+    root = ledger.project_root()
+    try:
+        ow.clear_baseline(root)
+        entered_at = _phase_entered_at(feature)
+        if entered_at is None:
+            raise RuntimeError("no phase-entry event for this feature in the ledger")
+        config = phases.load_sprint_config(root) or {}
+        snap = ow.snapshot(root, ow.load_cache(root), deadline_s=None, config=config,
+                           feature=feature)
+        ow.write_baseline(root, feature, phase, entered_at, snap)
+        ow.save_cache(root, snap)
+    except Exception as exc:  # noqa: BLE001 — a failed baseline refuses the next advance
+        reason = f"{type(exc).__name__}: {exc}"
+        print(f"[prusik-gate] (observed writes: the phase-entry baseline for '{phase}' was "
+              f"not taken: {reason}; the next advance from it refuses once and takes one)",
+              file=sys.stderr)
+        _observed_failed("baseline", reason, None, {"feature": feature, "phase": phase})
+
+
+def _observed_advance_block(config: dict, current: str, target_phase: str,
+                            feature: str) -> int | None:
+    """rc 2 when a path changed since `current` began that `current` may not write (or the
+    baseline is missing, corrupt or stale, or the tree is unreadable); None to proceed."""
+    from prusik import observed_writes as ow
+    root = ledger.project_root()
+    entered_at, entered = _phase_entry(feature)
+
+    def refuse(**why) -> int:
+        ledger.append("advance_blocked", from_phase=current, to_phase=target_phase,
+                      feature=feature, gate_class=gate_class.OBSERVED_WRITE, **why)
+        return 2
+
+    if entered_at is None or entered != current:
+        # sprint-start and advance append an entry event for every phase they set. Without
+        # one for `current`, state.json was set by hand, so this phase has no known start to
+        # compare with. Recorded, not silent.
+        _observed_failed("baseline", f"no phase-entry event for '{current}' in the ledger",
+                         None, {"feature": feature, "phase": current})
+        return None
+    base, why = ow.load_baseline(root, feature, current, entered_at)
+    if base is None:
+        try:
+            snap = ow.snapshot(root, ow.load_cache(root), deadline_s=None, config=config,
+                               feature=feature)
+            ow.write_baseline(root, feature, current, entered_at, snap)
+            ow.save_cache(root, snap)
+        except (ow.TreeUnreadable, OSError) as exc:
+            print(f"[prusik-gate] BLOCKED leaving '{current}': the phase-entry baseline is "
+                  f"{why} and a new one could not be taken: {exc}", file=sys.stderr)
+            return refuse(reason=f"baseline {why}; retake failed: {exc}"[:300])
+        ledger.append("phase_baseline_retaken", feature=feature, phase=current, reason=why)
+        print(f"[prusik-gate] BLOCKED leaving '{current}': its phase-entry baseline was {why}, "
+              f"so it was just taken; re-run the advance. Writes earlier in this phase were "
+              f"checked only per call (`observed_write_reported` events in the ledger).",
+              file=sys.stderr)
+        return refuse(reason=f"phase-entry baseline {why}")
+    try:
+        now = ow.snapshot(root, ow.load_cache(root), deadline_s=None, config=config,
+                          feature=feature)
+        moved = ow.changed(base, now, root, config, feature)
+    except ow.TreeUnreadable as exc:
+        print(f"[prusik-gate] BLOCKED leaving '{current}': the tree could not be checked "
+              f"against the phase-entry baseline: {exc}", file=sys.stderr)
+        return refuse(reason=f"tree unreadable: {exc}"[:300])
+    # `changed` against the baseline already leaves out every path that matches it.
+    bad = [p for p in moved
+           if not phases.is_path_writable(p, config, current, feature, root)[0]]
+    if not bad:
+        return None
+    print(f"[prusik-gate] BLOCKED leaving '{current}': {len(bad)} path(s) changed since the "
+          f"phase began that '{current}' may not write:", file=sys.stderr)
+    for p in bad:
+        print(f"  - {p}", file=sys.stderr)
+    print("  → revert each (tracked: git checkout -- <path>; new: delete it).\n"
+          "  → to keep an intended change, move it aside (git stash push -- <path>, or move "
+          "it out of the repo), advance, and restore it in a phase that may write it.\n"
+          f"  → {_OBSERVED_REVERT_NOTE}", file=sys.stderr)
+    return refuse(paths=bad[:50])
 
 
 def session_start(args=None) -> int:
@@ -2214,6 +2563,7 @@ def sprint_start(args) -> int:
     _mc.snapshot(root)
     ledger.append("sprint_started", feature=feature, cleaned_worktrees=cleaned,
                   lane=state.get("lane", "standard"))
+    _take_phase_baseline(feature, "scoping")   # after the entry event that stamps it
     clear_briefing(feature)   # fb-1e3ecda9d011: a later re-brief opens a fresh window
 
     # Charter freshness — ADVISORY, never blocks (a stale vision is a smell, not a
@@ -3496,6 +3846,14 @@ def advance(args) -> int:
                           reason="push_or_park require: unpushed sprint work")
             return 2
 
+    # Observed writes (fb-c1d2d8dcabac): leaving a phase — forward or rewind — is refused
+    # while a path changed since the phase began is outside its writable set. Checked
+    # BEFORE the transition, so a refused advance moves nothing.
+    if current:
+        ow_rc = _observed_advance_block(config, current, target_phase, feature)
+        if ow_rc is not None:
+            return ow_rc
+
     # v0.11.0 #2: preserve the lane across phase transitions (set_sprint_state
     # overwrites the whole dict; the trivial lane must survive every advance).
     new_state = {"phase": target_phase, "feature": feature}
@@ -3510,6 +3868,9 @@ def advance(args) -> int:
         ledger.append("phase_advance", from_phase=current, to_phase=target_phase,
                       feature=feature)
         print(f"[prusik-gate] Advanced: {current} → {target_phase}")
+    # AFTER the entry event, whose ts stamps the baseline (never between set_sprint_state
+    # and the append: that would stamp it with the previous entry).
+    _take_phase_baseline(feature, target_phase)
     if current:
         print(_phase_usage_line(feature, current,
                                 phases.get_phase_spec(config, current) or {}))

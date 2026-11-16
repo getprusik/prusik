@@ -44,6 +44,7 @@ DEFERRED_TIER = "deferred_tier"                       # sprint-complete: deferre
 CLOSE_BEFORE_LAST_PHASE = "close_before_last_phase"   # sprint-complete: run from an earlier phase
 GATE_FAULT = "gate_fault"                             # pre-tool: the gate itself failed or ran out of time
 PIN_MOVED = "pin_moved"                               # advance: a sprint branch changes the version pin
+OBSERVED_WRITE = "observed_write"                     # advance: a path changed this phase that it may not write
 UNCLASSIFIED = "unclassified"                        # recorded nothing identifying — never guessed
 
 # Completeness anchor — the test pins this to the module's constants so a class
@@ -64,6 +65,7 @@ GATE_CLASSES = (
     CLOSE_BEFORE_LAST_PHASE,
     GATE_FAULT,
     PIN_MOVED,
+    OBSERVED_WRITE,
     UNCLASSIFIED,
 )
 

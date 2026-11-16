@@ -628,7 +628,7 @@ def test_escalation_kinds_are_the_documented_set():
         "prove_red_failed", "suite_failed", "fix_round_cap", "permission_denied",
         "spawn_failed", "tier_unresolved", "auth_mismatch", "writer_busy",
         "advance_blocked", "tree_written", "budget_exceeded", "budget_unmeasurable",
-        "builder_stopped", "empty_build"}
+        "builder_stopped", "empty_build", "tree_unreadable"}
     with pytest.raises(ValueError):
         drive.Escalation("made_up", "building", None, "x")
 

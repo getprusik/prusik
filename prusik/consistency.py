@@ -416,7 +416,30 @@ def assemble_worktrees_to_root(project_root: Path,
             copied.append(rel)
         except OSError:
             continue
-    return sorted(set(copied))
+    staged = sorted(set(copied))
+    if staged:
+        _fold_into_phase_baseline(project_root, staged)
+    return staged
+
+
+def _fold_into_phase_baseline(project_root: Path, staged: list[str]) -> None:
+    """The assembly's copies are sanctioned prusik writes: fold them into the observed-writes
+    phase baseline, so neither the fix-round end call's report nor the next advance treats
+    them as damage. Only these paths; never raises into the assembly."""
+    import sys
+    from prusik import ledger
+    try:
+        from prusik import observed_writes
+        observed_writes.fold_baseline(project_root, staged)
+    except Exception as exc:  # noqa: BLE001 — the fold must not undo a done assembly
+        reason = f"{type(exc).__name__}: {exc}"
+        try:
+            ledger.append("observed_write_check_failed", stage="fold", reason=reason[:300],
+                          paths=staged[:50])
+        except Exception:  # noqa: BLE001
+            pass
+        print(f"[prusik] (observed writes: the assembled files were not folded into the "
+              f"phase baseline: {reason}; the next advance may list them)", file=sys.stderr)
 
 
 def _modules_from(artifact_path: Path) -> set[str]:

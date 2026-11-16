@@ -201,6 +201,10 @@ _KIT_INTERNAL_ALWAYS_WRITABLE: tuple[str, ...] = (
     "/tmp/**",             # POSIX scratch (Linux native)
     "/private/tmp/**",     # macOS — /tmp resolves through symlink to here
     ".runtime/**",         # project-local transient-state convention
+    # observed-writes (fb-aa7a6121fcee): `prusik feedback` writes the git-tracked ticket
+    # store in every phase, and the session-start banner invites it at any time. The
+    # tree-state check would otherwise report every feedback call and block advance.
+    "findings/**",
 )
 
 

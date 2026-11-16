@@ -53,7 +53,8 @@ ESCALATION_KINDS = ("scope_rejected", "triage_rejected", "trivial_fix", "plan_re
                     "prove_red_failed", "suite_failed", "fix_round_cap", "permission_denied",
                     "spawn_failed", "tier_unresolved", "auth_mismatch", "writer_busy",
                     "advance_blocked", "tree_written", "budget_exceeded",
-                    "budget_unmeasurable", "builder_stopped", "empty_build")
+                    "budget_unmeasurable", "builder_stopped", "empty_build",
+                    "tree_unreadable")
 DRIVEN = ("scoping", "triage", "planning", "solo_execute", "building", "reviewing",
           "integrating")
 SOLO_WORKTREE = "solo"          # worktrees/solo, branch sprint/<f>-solo
@@ -255,7 +256,7 @@ class _Drive:
             on_tick=self._beat, tick_s=_TICK_S)
         stop = self._stop_file(role)
         stop.unlink(missing_ok=True)       # only this spawn's stop counts
-        before = self._tree_state()
+        before = self._tree_state(role, sid)
         started = time.time()
         try:
             res = self.adapter.spawn(req)
@@ -352,29 +353,38 @@ class _Drive:
                                   f"sprint_cost={u.cost_usd:.2f}", *usage.spend_report(u),
                                   *([prior] if prior else [])], resume=resumable)
 
-    def _tree_state(self) -> dict[str, tuple[int, int]]:
-        """(mtime_ns, size) of every file in the shared tree (`gate.main_tree_files`)."""
-        from prusik import gate
-        state: dict[str, tuple[int, int]] = {}
-        for rel in gate.main_tree_files(self.root):
-            try:
-                st = (self.root / rel).stat()
-            except OSError:
-                continue
-            state[rel] = (st.st_mtime_ns, st.st_size)
-        return state
+    def _tree_state(self, role: str, sid: str) -> dict[str, list]:
+        """The shared tree as `observed_writes.snapshot` sees it: [mtime_ns, size, sha256]
+        per file. A tree that can't be read escalates; it is never skipped."""
+        from prusik import observed_writes
+        try:
+            return observed_writes.snapshot(self.root, observed_writes.load_cache(self.root),
+                                            deadline_s=None)
+        except observed_writes.TreeUnreadable as e:
+            raise Escalation("tree_unreadable", self.phase, role,
+                             f"the shared tree could not be read: {e}", [sid]) from e
 
-    def _check_tree(self, before: dict[str, tuple[int, int]], role: str, sid: str) -> None:
+    def _check_tree(self, before: dict[str, list], role: str, sid: str) -> None:
         """Escalate when the spawn added, removed or rewrote a shared-tree file its phase may
         not write (fb-1303f39d14a6). The hook reads what a command's text says it writes; this
         reads the tree itself, so a write no text reading names (`git apply`, a script's
-        `open()`) still halts the sprint. The files are left as they are, for a person to
+        `open()`) still halts the sprint. Content-confirmed: a touch that leaves the bytes
+        as they were is not a write. The files are left as they are, for a person to
         judge."""
-        after = self._tree_state()
-        changed = sorted(p for p in before.keys() | after.keys() if before.get(p) != after.get(p))
+        from prusik import observed_writes
+        after = self._tree_state(role, sid)
+        config = phases.load_sprint_config(self.root) or {}
+        try:
+            changed = observed_writes.changed(before, after, self.root, config, self.f)
+        except observed_writes.TreeUnreadable as e:
+            raise Escalation("tree_unreadable", self.phase, role,
+                             f"the shared tree could not be read: {e}", [sid]) from e
+        try:
+            observed_writes.save_cache(self.root, after)
+        except OSError:
+            pass                       # the cache only saves re-hashing; it judges nothing
         if not changed:
             return
-        config = phases.load_sprint_config(self.root) or {}
         refused = [p for p in changed
                    if not phases.is_path_writable(p, config, self.phase, self.f, self.root)[0]]
         if not refused:

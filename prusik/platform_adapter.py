@@ -49,12 +49,15 @@ class ToolEvent:
         cross-session serialization (fb-0b9d0a6d1ce6 single-writer lease). None when
         a host can't identify sessions; the lease check is then inapplicable.
       - `cwd`: the directory a shell command starts in, when the host says. Relative paths
-        in `command` start there; with None they start at the project root."""
+        in `command` start there; with None they start at the project root.
+      - `call_id`: the host's per-tool-call id. It pairs the pre-call and post-call hooks of
+        one call (observed writes, fb-aa7a6121fcee). None when the host gives none."""
     tool: str
     file_targets: tuple[str, ...] = field(default_factory=tuple)
     command: str | None = None
     session: str | None = None
     cwd: str | None = None
+    call_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +156,11 @@ class PlatformAdapter(abc.ABC):
         """Express a DENY in the host's native form; return the process exit code."""
 
     @abc.abstractmethod
+    def post_tool_context(self, messages: list[str]) -> int:
+        """Hand `messages` to the agent after a tool call in the host's native form (nothing
+        when empty); return the process exit code."""
+
+    @abc.abstractmethod
     def session_ref(self, payload: dict) -> SessionRef | None:
         """The session + transcript a hook payload identifies, or None."""
 
@@ -215,20 +223,41 @@ class ClaudeCodeAdapter(PlatformAdapter):
         except json.JSONDecodeError:
             return {}
 
+    # Pairing (observed writes, fb-aa7a6121fcee). Verified on Claude Code 2026-11-16 2.1.325
+    # with a headless `claude -p` whose PreToolUse / PostToolUse / PostToolUseFailure hooks
+    # copied stdin:
+    #   - Every PreToolUse and PostToolUse payload carries `tool_use_id` ("toolu_…"), the same
+    #     value for one Bash call; two parallel Bash calls in one message carry different ids.
+    #   - A Bash call that exits non-zero (`sh -c '…; exit 3'`, `python3 -c "…; raise
+    #     SystemExit(1)"`, both after writing a file) fires NO PostToolUse. It fires
+    #     PostToolUseFailure with the matching `tool_use_id`, `"error": "Exit code 3"`,
+    #     `"is_interrupt": false` and no `tool_response`. Until `prusik gate post-tool` is also
+    #     wired to PostToolUseFailure (a template change outside this release), such a call's
+    #     writes are reported by orphan reconciliation on a later checked call, and the
+    #     advance check sees them.
+    #   - A call past its Bash `timeout` (2000 ms on a 30 s sleep) fires PostToolUse with the
+    #     matching id; `tool_response` carries `"timedOutAfterMs": 2000` and a
+    #     `"backgroundTaskId"`: the command keeps running in the background, so its later
+    #     writes fall outside the call's window.
+    #   - The Bash tool's `timeout` maximum is 600000 ms (tool schema).
+    #   - Interrupts cannot be driven headless and were not observed.
     def parse_event(self, payload: dict) -> ToolEvent | None:
         tool = payload.get("tool_name", "")
         ti = payload.get("tool_input", {}) or {}
         session = payload.get("session_id") or None
+        call_id = payload.get("tool_use_id") or None
         if tool in self._WRITE_TOOLS:
             target = (ti.get("file_path") or ti.get("path")
                       or ti.get("notebook_path"))
             return ToolEvent(tool=tool,
                              file_targets=(target,) if target else (),
-                             session=session)
+                             session=session, call_id=call_id)
         if tool == "Bash":
             return ToolEvent(tool=tool, command=ti.get("command", ""),
-                             session=session, cwd=payload.get("cwd") or None)
-        return ToolEvent(tool=tool, session=session)  # non-write, non-shell → nothing to gate
+                             session=session, cwd=payload.get("cwd") or None,
+                             call_id=call_id)
+        return ToolEvent(tool=tool, session=session,
+                         call_id=call_id)  # non-write, non-shell → nothing to gate
 
     def deny(self, reason: str) -> int:
         print(json.dumps({
@@ -236,6 +265,17 @@ class ClaudeCodeAdapter(PlatformAdapter):
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
                 "permissionDecisionReason": reason,
+            }
+        }))
+        return 0
+
+    def post_tool_context(self, messages: list[str]) -> int:
+        if not messages:
+            return 0
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": "\n\n".join(messages),
             }
         }))
         return 0
