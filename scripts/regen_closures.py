@@ -20,15 +20,12 @@ root = Path(__file__).resolve().parent.parent
 # remote is the instrument that tells the truth here. Offline, we can't
 # verify: say so loudly and proceed (regen offline is legitimate; the
 # release flow re-runs it connected).
-import subprocess
-r = subprocess.run(["git", "-C", str(root), "ls-remote", "--tags", "origin",
-                    f"v{__version__}"], capture_output=True, text=True,
-                   timeout=30)
-if r.returncode != 0:
+_, state = changelog.release_state(root)
+if state == "unknown":
     print(f"[regen] WARNING: cannot reach origin to verify v{__version__} "
           f"is unreleased — if it IS released, new findings get a stale "
           f"floor; re-run connected before shipping.", file=sys.stderr)
-elif r.stdout.strip():
+elif state == "released":
     sys.exit(f"regen refused: v{__version__} is already released — bump "
              f"prusik/__init__.py to the NEXT version first, then regen, so "
              f"new findings get the version their fix actually ships in.")

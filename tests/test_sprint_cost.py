@@ -196,6 +196,76 @@ def test_in_flight_is_false_for_no_feature_or_no_items():
     assert gate._in_flight("f", []) is False
 
 
+# ---------- fb-5861062129e7: a live owner holds the phase ----------
+
+def _lease(root: Path, *, driver=None, delegates=(), age_min=0) -> None:
+    from datetime import datetime, timedelta, timezone
+    from prusik import main_writer
+    at = (datetime.now(timezone.utc) - timedelta(minutes=age_min)).isoformat()
+    lease = {"session": "main-1", "feature": _F, "phase": "scoping", "acquired_at": at,
+             "refreshed_at": at, "delegates": list(delegates)}
+    if driver is not None:
+        lease["driver"] = driver
+    main_writer._write(root, lease)
+
+
+def _stop_as(session, phase="scoping") -> int:
+    phases.set_sprint_state({"phase": phase, "feature": _F})
+    saved = sys.stdin
+    sys.stdin = io.StringIO(json.dumps({"stop_hook_active": False, "session_id": session,
+                                        "transcript_path": "/nonexistent/t.jsonl"}))
+    try:
+        with redirect_stdout(io.StringIO()):
+            return gate.stop()
+    finally:
+        sys.stdin = saved
+
+
+def _dead_pid() -> int:
+    import subprocess
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    return proc.pid
+
+
+@pytest.mark.parametrize("phase", ["scoping", "planning", "reviewing", "integrating"])
+def test_a_running_drive_owns_every_exit_artifact(project, phase):
+    # moat-finding: fb-5861062129e7
+    # Field shape 2: drive owns the phase in the background; nothing the hook demands exists,
+    # scope.md included, and the only tier resolved predates the sprint (field shape 1).
+    _ledger(project, [_spawn("scoping", 0), _entered(1)])
+    _lease(project, driver={"pid": os.getpid(), "feature": _F})
+    assert _stop_as("main-1", phase) == 0
+    assert not _reported(project)
+
+
+def test_a_role_drive_delegated_to_stops_freely(project):
+    # moat-finding: fb-5861062129e7
+    _ledger(project, [_entered(0)])
+    _lease(project, delegates=["role-7"])
+    assert _stop_as("role-7") == 0
+    assert _stop_as("someone-else") == 2
+
+
+@pytest.mark.parametrize("lease", [
+    {"driver": "dead"},                                            # drive exited or crashed
+    {"driver": {"feature": "other"}},                              # drives another feature
+    {"driver": {}, "age_min": 31},                                 # the lease went stale
+    {"delegates": ["role-7"], "age_min": 31},                      # a stale delegation
+    {},                                                            # nobody owns it
+])
+def test_without_a_live_owner_the_hook_still_blocks(project, lease):
+    # moat-finding: fb-5861062129e7
+    _ledger(project, [_entered(0)])
+    kw = dict(lease)
+    if kw.get("driver") == "dead":
+        kw["driver"] = {"pid": _dead_pid(), "feature": _F}
+    elif "driver" in kw:
+        kw["driver"] = {"pid": os.getpid(), "feature": _F, **kw["driver"]}
+    _lease(project, **kw)
+    assert _stop_as("role-7" if kw.get("delegates") else "main-1") == 2
+
+
 # ---------- fb-9aaa814f7b3b: scope-critic's tier from scope.md ----------
 
 @pytest.fixture

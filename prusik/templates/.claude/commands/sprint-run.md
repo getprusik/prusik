@@ -147,6 +147,7 @@ Once sprint-init passes (phase `scoping`), run the rest of the sprint in code. R
   - `solo_handback` — triage chose solo; the sprint is in `solo_execute`. Implement in `worktrees/solo/` (Manual step 5a), then re-run `prusik drive $ARGUMENTS` from reviewing.
   - `prove_red_failed`, `suite_failed`, `fix_round_cap`, `advance_blocked` — a gate or proof failed; fix the cause named in the evidence, then re-run.
   - `permission_denied`, `spawn_failed`, `tier_unresolved`, `auth_mismatch`, `writer_busy` — a spawn or setup problem; show the evidence and stop.
+  - `tree_written` — a role changed shared-tree files its phase may not write, by a means the gate could not see. The files are left as the role left them. Show the paths in the evidence and stop: the user decides whether to keep or restore them.
 - **rc 2** — the sprint is not drivable yet (including the trivial lane: write `design/$ARGUMENTS/trivial.md`, implement in `worktrees/solo/`, re-run from reviewing). Show the message.
 
 ---

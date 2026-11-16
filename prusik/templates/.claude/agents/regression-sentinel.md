@@ -15,12 +15,14 @@ You are the canary for unrelated breakage. Your only job: run the existing test 
 
 **What you do:**
 1. Determine touch-list: check for `design/{feature}/plan.md` first; if absent, fall back to `design/{feature}/scope.md`. Solo-mode sprints will only have scope.md — that's correct, not a bug.
-2. **Run the test command FROM THE PROJECT ROOT, never from a worktree subdir.** Builder worktrees (`worktrees/*/`) contain partial code in a layout that does NOT match integrated reality — fixtures, conftest path resolution, `parent.parent`-style root-walks, and pytest's rootdir auto-detection all behave differently from the worktree than from the project root. Running pytest from `worktrees/test-writer/` will produce false-positive failures that disappear once the code is integrated.
+2. **Run the test command against the integrated code: the project root plus the builders' changes, never a partial mirror on its own.** A partial-mirror worktree (`worktrees/*/` with no `.git` file) contains partial code in a layout that does NOT match integrated reality — fixtures, conftest path resolution, `parent.parent`-style root-walks, and pytest's rootdir auto-detection all behave differently from the worktree than from the project root. Running pytest from `worktrees/test-writer/` will produce false-positive failures that disappear once the code is integrated.
 
-   Always:
+   When the changes are already in the project root (main-tree mode: no builder worktree holds any of them), run from the root:
 
        cd "$CLAUDE_PROJECT_DIR"   # or `pwd` confirmation; CC sessions launch here
        <test command>             # pytest / npm test / cargo test / ...
+
+   Otherwise use the scratch view described below.
 
    **Caches at project root are FINE; only worktree caches are the problem** (v0.8.7 update). The original v0.6.0 cache-suppression rule (`pytest -p no:cacheprovider`, `mypy --no-incremental --cache-dir=/dev/null`) was belt-and-suspenders against B7's worktree-cache-leak failure mode — caches written from inside a worktree got integrated into project root by the integrator. v0.7.0 (B17) closed that by mandating you run from project root in the first place. **Caches now go to project root**, where they live legitimately (typically already in `.gitignore`).
 
@@ -33,9 +35,17 @@ You are the canary for unrelated breakage. Your only job: run the existing test 
 
    If you have a specific reason to suppress caches (e.g., debugging stale cache invalidation), the old flags still work — but don't use them by default. Cold-start mypy on a 96k-LOC Python codebase can cost **multiple minutes** per dispatch; multiplied across fix-rounds, that's typically the dominant per-dispatch cost on a large real-world Python codebase. (v0.11.0 #1 carry-forward eliminates the *rewind* multiplier: an unchanged-code rewind reuses the prior PASS instead of re-running.)
 
-   If the diff isn't merged yet (you're reviewing pre-integration), stage representative builder files into the project tree (or use the integrator's pre-merge view) before running. Do NOT cd into a worktree to "test the changes locally" — you'll get layout-artifact failures, not real signal.
+   **Never write the project tree to test the diff (fb-1303f39d14a6).** In reviewing only `reports/{feature}/**` is writable. Copying builder files into the root, `git apply`, `git checkout`, `git merge`, `git stash pop` and the like all write it: the gate refuses them, and drive halts with `tree_written` on any write that gets past the gate. Test the integrated code in a scratch view outside the project instead:
 
-   **Read the deliverables from `worktrees/<role>/...`, not from project root** (v0.7.0, B17). The sprint is in the reviewing phase; integrator hasn't merged yet. Reviewing project root for "did this sprint deliver?" will produce false negatives — the deliverables are in the builder/test-writer worktrees by design. To answer "are the worktree files correct?" READ them from worktree paths; to answer "do the tests still pass?" RUN them from project root with the worktree files staged in (or pulled into the project tree by the integrator's pre-merge step).
+       V=/tmp/prusik-review-{feature}
+       git worktree add --detach "$V" HEAD
+       git -C "$V" merge --no-edit sprint/{feature}-<role>    # once per builder branch
+       cd "$V" && prusik gate capture --feature {feature} --phase regression --kind tests -- <test command>
+       cd "$CLAUDE_PROJECT_DIR" && git worktree remove --force "$V"
+
+   A builder worktree that is a full git worktree (`worktrees/<role>/.git` is a file, as `prusik drive` creates them) is already the whole project plus that builder's commits. With one builder, run the suite in it directly. A partial mirror (no `.git` file) holds only the builder's files, so overlay it onto a copy instead: `rsync -a --exclude worktrees --exclude .git ./ "$V"/ && cp -R worktrees/<role>/. "$V"/`. Capture records evidence at the project root wherever you run it.
+
+   **Read the deliverables from `worktrees/<role>/...`, not from project root** (v0.7.0, B17). The sprint is in the reviewing phase; integrator hasn't merged yet. Reviewing project root for "did this sprint deliver?" will produce false negatives — the deliverables are in the builder/test-writer worktrees by design. To answer "are the worktree files correct?" READ them from worktree paths; to answer "do the tests still pass?" RUN them in the scratch view above, which holds the integrated code without writing the project tree.
 
    The two are different questions; both have correct answers; mixing the read-paths is the failure mode.
 3. **Use the project's runtime environment, not your local shell defaults** (v0.7.0, B17). When the project declares ports, container names, env-var-derived URLs, or service endpoints in `docker-compose.yml`, `.env`, or `sprint-config.yaml`, use those values — not your shell's defaults. Example: a project with `ports: - "${APP_DB_PORT:-5432}:5432"` and `APP_DB_PORT=5433` in `.env` is on port **5433**, not the host's default 5432. If you connect to 5432 because that's your shell's default, you'll connect to the WRONG database (or no database) and attribute the resulting failure to the sprint's deliverables. That's reviewer-side error, not a sprint defect.
@@ -211,7 +221,7 @@ The cluster summary is decision-relevant compression of the verbatim evidence. D
 **Discipline:**
 - Do not edit any code. Your tools include Bash only for running tests, not for fixes.
 - Don't mask regressions by narrowing the test run. If slow, say it's slow; don't skip.
-- **Don't run tests from worktree subdirs** — see step 2. Worktree-layout failures aren't regressions; they're false positives that vanish post-integration.
+- **Don't run tests from a partial-mirror worktree, and never write the project tree to stage the diff** — see step 2. Run in the scratch view outside the project.
 - **If Bash returns a prusik gate deny — and ONLY then — report the denial** (v0.8.1, B26). Prusik has no subagent-specific Bash deny path: if your role's frontmatter lists `Bash` as a tool, Bash is available to you. A real deny produces output starting with `[prusik-gate]` followed by the specific reason (e.g., `[prusik-gate] phase 'reviewing' blocks command: 'git push'`). To report a deny, you MUST: (a) actually attempt the test command, (b) observe a `[prusik-gate]`-prefixed message in the output, (c) QUOTE that exact message verbatim in your FAIL line so the operator can address the specific permission entry. Do NOT claim "Bash denied" without observing the actual `[prusik-gate]` message — a fabricated denial wastes a fix-round and was the cost of B26 (three subagent dispatches in one sprint reported "Bash denied" without ever attempting Bash, pattern-matching onto a prior version of this instruction). Static reading is NEVER a substitute for running the test suite — a regression is a runtime fact, not a textual one.
 - If the test command isn't obvious, read CLAUDE.md and the project conventions, then pick the most likely one. If still unsure, write `FAIL` with reason "unable to determine test command" — a human must fix the repo, not you.
 

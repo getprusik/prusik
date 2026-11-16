@@ -125,6 +125,54 @@ def heartbeat(root: Path, holder: str) -> bool:
     return True
 
 
+def set_driver(root: Path, holder: str, feature: str) -> bool:
+    """Record that this process, a `prusik drive` run by the live holder `holder`, owns
+    `feature`'s phases until `clear_driver` (fb-5861062129e7). False unless `holder` holds the
+    live lease."""
+    lease = load(root)
+    if lease is None or lease.get("session") != holder or _is_stale(
+            lease, datetime.now(timezone.utc)):
+        return False
+    lease["driver"] = {"pid": os.getpid(), "feature": feature}
+    _write(root, lease)
+    return True
+
+
+def clear_driver(root: Path) -> None:
+    """Drop this process's driver record, leaving another process's alone."""
+    lease = load(root)
+    if lease is not None and (lease.get("driver") or {}).get("pid") == os.getpid():
+        del lease["driver"]
+        _write(root, lease)
+
+
+def live_owner(root: Path, feature: str | None, session: str | None) -> bool:
+    """True when the phase work of `feature` is owned by someone other than a person: the
+    lease is live, and either `session` is a session the holder delegated to (a role drive
+    spawned) or a drive process for `feature` is still running."""
+    lease = load(root)
+    if lease is None or _is_stale(lease, datetime.now(timezone.utc)):
+        return False
+    if session and session in (lease.get("delegates") or []):
+        return True
+    driver = lease.get("driver") or {}
+    return bool(feature) and driver.get("feature") == feature and _alive(driver.get("pid"))
+
+
+def _alive(pid: object) -> bool:
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def release(root: Path) -> dict | None:
     """Delete the lease (explicit hand-off / sprint completion). Returns the
     released lease for the audit trail, or None if none was held."""

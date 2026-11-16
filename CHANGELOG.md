@@ -3,6 +3,37 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.245.0] — the shared tree is checked by state, and drive owns its phases
+
+- **A write the gate can't read from a command's text still halts drive (fb-1303f39d14a6).** In
+  the 0.244.0 sprint, regression-sentinel ran `git diff main...<builder branch> | git apply` in the
+  project root during reviewing, where only `reports/<f>/**` is writable. The gate missed it and
+  the builder's diff landed in the main tree. Two fixes:
+  - drive now records the shared tree (git's tracked and untracked-not-ignored files, or a walk
+    outside git) before and after every spawn. A file added, removed or rewritten outside the
+    phase's writable set escalates the new kind `tree_written`, whatever wrote it. The files are
+    left in place for a person to judge.
+  - The gate reads the git subcommands that rewrite the work tree (`apply`, `checkout`,
+    `restore`, `merge`, `stash` pop/apply/push, `reset --hard`, `cherry-pick`, `revert`,
+    `rebase`, `pull`, `switch`, `am`, `clean`, `rm`, `mv`), and `patch`, as writes to the whole
+    tree they run in. That is a builder's own `worktrees/<role>` or the project root. The
+    read-only forms (`apply --check`/`--cached`, `stash list`, a mixed `reset`, `clean -n`,
+    `restore --staged`, `rm --cached`) write nothing. Real git and patch are the test oracle for
+    every case.
+  - regression-sentinel's spec told it to "stage representative builder files into the project
+    tree". It now tests the integrated code in a scratch `git worktree` outside the project.
+- **The stop hook stays quiet while drive owns the phase (fb-5861062129e7).** The 0.244.0 sprint
+  lost 8 main turns to stop-hook blocks while drive worked in the background, about 100K context
+  re-read each. drive now records itself (pid and feature) in the writer lease while it runs. The
+  stop hook defers every exit artifact while that process is alive and the lease is fresh, and
+  never blocks a session the lease delegated to. A dead, stale or other-feature driver still
+  blocks.
+- **`prusik feedback harvest` refuses once the version is released (fb-cb544c3dd67d).** It
+  tagged a moat test after 0.244.0 was cut, which broke the closures manifest that regen then
+  refused to rebuild. In a repo that ships `prusik/_closures.json`, harvest now uses the same
+  origin-tag check as `scripts/regen_closures.py` (`changelog.release_state`), and fails closed
+  when origin can't be reached.
+
 ## [0.244.0] — drive runs scoping through plan approval
 
 - **`prusik drive` takes over at `scoping` (fb-f358daf6e022).** The first driven sprint spent half

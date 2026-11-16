@@ -339,17 +339,36 @@ def harvest_candidate(rec: dict) -> str | None:
     return files.pop() if len(files) == 1 else None
 
 
+class HarvestRefused(Exception):
+    """The tag would land in a release that is already cut (fb-cb544c3dd67d)."""
+
+
 def harvest(root: Path, fb_id: str) -> str | None:
     """Promote a verified-closed finding's dedicated verify-test into the moat by
     tagging it `moat-finding:<id>` (so hq.moat_coverage counts it). No-op (None) unless
     the finding is verified-closed, has a harvestable NEW test (harvest_candidate), and
-    the file isn't already tagged for it. Returns the tagged path, or None."""
+    the file isn't already tagged for it. Returns the tagged path, or None.
+
+    In a repo that ships a closures manifest (`prusik/_closures.json`), a tag is stamped
+    with the version under development, so it raises HarvestRefused unless origin shows
+    that version unreleased: a tag after its release breaks the manifest, which regen
+    then refuses to rebuild (fb-cb544c3dd67d)."""
     rec = load(root, fb_id)
     if rec is None or derive_state(rec) != "verified-closed":
         return None
     cand = harvest_candidate(rec)
     if not cand:
         return None
+    if (root / "prusik" / "_closures.json").exists():
+        from prusik import changelog
+        version, state = changelog.release_state(root)
+        if state != "unreleased":
+            why = ("is already released" if state == "released"
+                   else "can't be confirmed unreleased (origin unreachable or no version)")
+            raise HarvestRefused(
+                f"v{version} {why}. Bump prusik/__init__.py to the next version first, then "
+                f"harvest and run scripts/regen_closures.py, so the tag ships in the release "
+                f"that carries it.")
     p = root / cand
     if not p.exists():
         return None

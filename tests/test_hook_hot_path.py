@@ -51,7 +51,8 @@ _POST_TOOL = {"prusik", "prusik.__main__", "prusik.gate", "prusik.bash_reader", 
 # schema / consistency; session registration (fb-a1b7db140a5e) adds usage + platform_adapter.
 _STOP = {"prusik", "prusik.__main__", "prusik.gate", "prusik.bash_reader", "prusik.ledger",
          "prusik.phases", "prusik.gate_class", "prusik.evidence", "prusik.pause",
-         "prusik.schema", "prusik.consistency", "prusik.usage", "prusik.platform_adapter"}
+         "prusik.schema", "prusik.consistency", "prusik.usage", "prusik.platform_adapter",
+         "prusik.main_writer"}
 # Public stdlib top-levels above the baseline: the union measured on macOS and Linux across
 # 3.10–3.13 (2026-10-30). The names differ by version (ipaddress and urllib up to 3.12, glob
 # and pwd in 3.13), so a list measured on one interpreter reds the others.

@@ -11,6 +11,8 @@ import os
 import stat
 import sys
 
+import pytest
+
 from prusik import feedback_store as fs
 
 
@@ -268,6 +270,75 @@ def test_harvest_tags_only_a_genuinely_new_verified_test(tmp_path):
     assert "moat-finding: fb-h" in (t / "test_dedicated.py").read_text()
     # idempotent: re-harvest is a no-op (one tag per finding, honest count)
     assert fs.harvest(tmp_path, "fb-h") is None
+
+
+def _verified_dedicated(root, fb_id):
+    t = root / "tests"
+    t.mkdir(exist_ok=True)
+    (t / "test_dedicated.py").write_text('"""a finding-derived test."""\n\ndef test_x():\n    assert 1\n')
+    fs.create(root, fb_id=fb_id, kind="bug", title="t", content_hash="h")
+    fs.resolve(root, fb_id, rtype="fix",
+               verify=f"{sys.executable} -m pytest tests/test_dedicated.py -q")
+    fs.verify(root, fb_id)
+
+
+def _engine_repo(root, version="1.2.3"):
+    """A repo that ships a closures manifest, with an origin that has (or lacks) the tag."""
+    import subprocess
+    (root / "prusik").mkdir()
+    (root / "prusik" / "__init__.py").write_text(f'__version__ = "{version}"\n')
+    (root / "prusik" / "_closures.json").write_text("{}\n")
+    origin = root.parent / f"{root.name}-origin.git"
+    run = lambda *a, cwd=root: subprocess.run(  # noqa: E731
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=cwd, check=True,
+        capture_output=True)
+    run("init", "-q", "--bare", str(origin), cwd=root.parent)
+    run("init", "-q")
+    run("remote", "add", "origin", str(origin))
+    run("add", "prusik")
+    run("commit", "-qm", "v")
+    return run
+
+
+@pytest.mark.parametrize("origin", ["released", "unreachable"])
+def test_harvest_refuses_once_the_version_is_cut(tmp_path, origin):
+    # moat-finding: fb-cb544c3dd67d
+    root = tmp_path / "engine"
+    root.mkdir()
+    run = _engine_repo(root)
+    if origin == "released":
+        run("tag", "v1.2.3")
+        run("push", "-q", "origin", "v1.2.3")
+    else:
+        run("remote", "set-url", "origin", str(tmp_path / "missing.git"))
+    _verified_dedicated(root, "fb-c")
+    with pytest.raises(fs.HarvestRefused, match="v1.2.3"):
+        fs.harvest(root, "fb-c")
+    assert "moat-finding" not in (root / "tests/test_dedicated.py").read_text()
+
+
+def test_harvest_tags_while_the_version_is_unreleased(tmp_path):
+    # moat-finding: fb-cb544c3dd67d
+    root = tmp_path / "engine"
+    root.mkdir()
+    run = _engine_repo(root)
+    run("tag", "v1.2.2")
+    run("push", "-q", "origin", "v1.2.2")                 # an older release is no bar
+    _verified_dedicated(root, "fb-c")
+    assert fs.harvest(root, "fb-c") == "tests/test_dedicated.py"
+
+
+def test_the_harvest_command_reports_a_refusal_and_exits_1(tmp_path, monkeypatch, capsys):
+    # moat-finding: fb-cb544c3dd67d
+    from prusik import changelog, feedback
+    (tmp_path / "prusik").mkdir()
+    (tmp_path / "prusik" / "_closures.json").write_text("{}\n")
+    _verified_dedicated(tmp_path, "fb-c")
+    monkeypatch.setattr(changelog, "release_state", lambda root: ("9.9.9", "released"))
+    from types import SimpleNamespace
+    rc = feedback._run_ticket_verb(SimpleNamespace(title="harvest", ref="fb-c"), tmp_path)
+    assert rc == 1
+    assert "harvest refused for fb-c: v9.9.9 is already released" in capsys.readouterr().err
 
 
 def test_harvest_skips_scoped_reuse(tmp_path):

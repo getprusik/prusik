@@ -169,8 +169,8 @@ def test_read_only_operand_is_not_named(cmd, must_not_name):
 
 
 @pytest.mark.parametrize("cmd", [
-    "git rm a.py",
-    "git mv a.py b.py",
+    "git grep rm a.py",
+    "git log mv a.py b.py",
     "docker cp a b",
     "kubectl cp a b",
     "pip install requests",

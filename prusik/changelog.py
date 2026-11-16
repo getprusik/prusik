@@ -89,6 +89,34 @@ def reconcile_closures(existing: dict[str, str], test_moat_ids: frozenset[str],
     return {fid: existing.get(fid, version) for fid in sorted(test_moat_ids)}
 
 
+_VERSION_RE = re.compile(r"""^__version__\s*=\s*["']([^"']+)["']""", re.M)
+
+
+def release_state(root: Path) -> tuple[str | None, str]:
+    """(the version `root/prusik/__init__.py` declares, its release state): "released" when
+    origin has the tag `v<version>`, "unreleased" when it doesn't, "unknown" when origin can't
+    be asked or there is no version. Releases are cut remotely (`gh release create`), so local
+    tags lag and the remote is the instrument. One check for every step that stamps the
+    current version onto a closure: `scripts/regen_closures.py` and `prusik feedback
+    harvest` (fb-cb544c3dd67d)."""
+    import subprocess
+    try:
+        match = _VERSION_RE.search((root / "prusik" / "__init__.py").read_text())
+    except OSError:
+        match = None
+    if not match:
+        return None, "unknown"
+    version = match[1]
+    try:
+        r = subprocess.run(["git", "-C", str(root), "ls-remote", "--tags", "origin",
+                            f"v{version}"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return version, "unknown"
+    if r.returncode != 0:
+        return version, "unknown"
+    return version, "released" if r.stdout.strip() else "unreleased"
+
+
 def installed_closures() -> dict[str, str]:
     """The moat-only closure manifest SHIPPED with this engine (`_closures.json`):
     `{fb-id: version}` for every finding with a captured regression test (a

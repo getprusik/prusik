@@ -380,7 +380,11 @@ def _run_ticket_verb(args, root: Path) -> int:
                       f"`prusik feedback harvest {fid}` to tag it into the moat.")
         return 0 if state == "verified-closed" else 1
     if verb == "harvest":
-        tagged = fs.harvest(root, fid)
+        try:
+            tagged = fs.harvest(root, fid)
+        except fs.HarvestRefused as e:
+            print(f"[prusik-feedback] harvest refused for {fid}: {e}", file=sys.stderr)
+            return 1
         if tagged:
             print(f"[prusik-feedback] harvested {fid} → tagged {tagged} "
                   f"(moat-finding:{fid}); hq.moat_coverage now counts it.")

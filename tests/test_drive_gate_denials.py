@@ -1,6 +1,8 @@
 """drive no longer halts on a gate deny the role recovered from (fb-a5ef442478e8): a spawn
 denial that matches a `gate_blocked` ledger event for the same session and tool is logged and
-drive goes on. criterion: drive-gate-denials."""
+drive goes on. criterion: drive-gate-denials.
+moat-finding: fb-a5ef442478e8
+"""
 
 from __future__ import annotations
 

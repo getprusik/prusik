@@ -1,5 +1,7 @@
 """`prusik drive <feature>`: the deterministic sprint driver (fb-13faaeb53496).
 
+moat-finding: fb-1303f39d14a6
+
 Every test injects a FakeAdapter, so no real `claude` runs. `_gate` is replaced by a recorder
 where a real gate run would need a real suite; the planning, tier and lease paths run for real.
 """
@@ -9,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -439,6 +442,93 @@ def test_not_drivable_exits_2(rig, proj, setup, needle):
     assert rig.adapter.requests == [] and not (proj / "reports/feat/drive-escalation.json").exists()
 
 
+# ── shared-tree writes no command text names (fb-1303f39d14a6) ───────────────────────────
+
+def _git(root, *args):
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+
+def _git_project(root):
+    """proj as a git repo with src/a.py committed, the shape drive runs in."""
+    (root / "src").mkdir(exist_ok=True)
+    (root / "src/a.py").write_text("x = 1\n")
+    _git(root, "init", "-q")
+    _git(root, "-c", "user.email=t@t", "-c", "user.name=t", "add", "src/a.py")
+    _git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base")
+
+
+def test_a_reviewer_git_apply_into_the_root_halts_drive_and_leaves_the_files(rig, proj):
+    """The field shape: regression-sentinel ran `git diff ... | git apply` in the project root
+    during reviewing. Real git writes the files; drive halts and keeps them for a person."""
+    _git_project(proj)
+    set_phase(proj, "reviewing")
+    patch = proj.parent / "builder.diff"
+    patch.write_text("--- a/src/a.py\n+++ b/src/a.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n")
+
+    def sentinel(req):
+        (proj / "reports/feat/regression.txt").write_text("PASS\n")
+        subprocess.run(["git", "apply", str(patch)], cwd=proj, check=True)
+    rig.adapter.scripts["regression-sentinel"] = sentinel
+    assert rig.run() == 3
+    esc = rig.escalation()
+    assert esc["kind"] == "tree_written" and esc["role"] == "regression-sentinel"
+    assert esc["evidence"] == ["src/a.py"]
+    assert (proj / "src/a.py").read_text() == "x = 2\n"          # left in place
+    assert phases.current_sprint_state(proj)["phase"] == "reviewing"
+    assert ("spawn", "conventions-enforcer") not in rig.events
+    written = [e for e in ledger.read_all() if e["event"] == "drive_tree_written"]
+    assert written and written[-1]["paths"] == ["src/a.py"]
+
+
+@pytest.mark.parametrize("change", ["write", "create", "delete"])
+def test_any_change_to_an_unwritable_root_file_halts_drive(rig, proj, change):
+    (proj / "src").mkdir()
+    (proj / "src/a.py").write_text("x = 1\n")
+    set_phase(proj, "reviewing")
+
+    def sentinel(req):
+        (proj / "reports/feat/regression.txt").write_text("PASS\n")
+        if change == "write":
+            (proj / "src/a.py").write_text("x = 22\n")
+        elif change == "create":
+            (proj / "src/new.py").write_text("y = 1\n")
+        else:
+            (proj / "src/a.py").unlink()
+    rig.adapter.scripts["regression-sentinel"] = sentinel
+    assert rig.run() == 3
+    assert rig.escalation()["evidence"] == ["src/new.py" if change == "create" else "src/a.py"]
+
+
+def test_a_builder_root_write_in_building_halts_before_the_suite(rig, proj):
+    (proj / "src").mkdir()
+    (proj / "src/a.py").write_text("x = 1\n")
+    rig.adapter.scripts["backend-builder"] = (
+        lambda req: (proj / "src/a.py").write_text("x = 3\n"))
+    assert rig.run() == 3
+    assert rig.escalation()["kind"] == "tree_written"
+    assert not [e for e in rig.events if e[0] == "prove"]
+
+
+def test_writes_the_phase_allows_never_halt_drive(rig, proj):
+    """What must survive: a builder's own worktree, reports/, and the integrator's root
+    merge all stay silent, in git mode too."""
+    _git_project(proj)
+
+    def builder(req):
+        wt = proj / "worktrees/backend-builder"
+        wt.mkdir(parents=True, exist_ok=True)
+        (wt / "b.py").write_text("b = 1\n")
+        (proj / "reports/feat/build.md").write_text("built\n")
+
+    def integrator(req):
+        (proj / "src/a.py").write_text("x = 9\n")
+        (proj / "src/merged.py").write_text("m = 1\n")
+    rig.adapter.scripts["backend-builder"] = builder
+    rig.adapter.scripts["integrator"] = integrator
+    assert rig.run() == 0, rig.out
+    assert not [e for e in ledger.read_all() if e["event"] == "drive_tree_written"]
+
+
 # ── bounded output, bookkeeping ───────────────────────────────────────────────────────────
 
 def test_clean_run_from_reviewing_completes_and_clears_the_stale_escalation(rig, proj):
@@ -500,11 +590,28 @@ def test_the_tick_heartbeat_refreshes_the_lease(rig, proj):
     assert result["new"] > result["old"] and result["tick_s"] <= 300
 
 
+def test_drive_owns_the_phase_while_it_runs_and_lets_go_after(rig, proj):
+    # moat-finding: fb-5861062129e7
+    seen = []
+    rig.adapter.probe = lambda req: seen.append(main_writer.live_owner(proj, F, None))
+    assert rig.run() == 0
+    assert seen and all(seen)
+    assert "driver" not in main_writer.load(proj)
+    assert not main_writer.live_owner(proj, F, None)
+
+
+def test_an_escalated_drive_lets_go_too(rig, proj):
+    # moat-finding: fb-5861062129e7
+    rig.rcs["prove"] = [1]
+    assert rig.run() == 3
+    assert not main_writer.live_owner(proj, F, None)
+
+
 def test_escalation_kinds_are_the_documented_set():
     assert set(drive.ESCALATION_KINDS) == {
         "scope_rejected", "triage_rejected", "solo_handback", "plan_rejected",
         "prove_red_failed", "suite_failed", "fix_round_cap", "permission_denied",
         "spawn_failed", "tier_unresolved", "auth_mismatch", "writer_busy",
-        "advance_blocked"}
+        "advance_blocked", "tree_written"}
     with pytest.raises(ValueError):
         drive.Escalation("made_up", "building", None, "x")

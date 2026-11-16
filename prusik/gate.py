@@ -307,6 +307,9 @@ _MUTATING_GIT = frozenset((
     "rm", "mv",
 ))
 _GIT = frozenset(("git",))
+# The mutating git subcommands that can rewrite files in the work tree they run in (fb-1303f39d14a6).
+# `commit` and `push` change refs, not files; `pull` merges into the tree.
+_GIT_TREE_WRITERS = (_MUTATING_GIT - {"commit", "push"}) | {"pull"}
 # Git's global flags that take a value: those that say where it runs, then the rest.
 _GIT_DIR_FLAGS = frozenset(("-C", "--git-dir", "--work-tree"))
 _GIT_VALUE_FLAGS = frozenset(("-c", "--namespace", "--config-env", "--attr-source",
@@ -532,7 +535,14 @@ _WRITERS = frozenset(("tee", "sed", "perl"))
 _FILE_VERBS = frozenset(("cp", "mv", "rm", "truncate", "dd", "touch", "install"))
 # Only `_may_write` uses this: a text with none of these needs no parse for the write check.
 _FILE_VERB_RE = re.compile(
-    r"(?<![\w./~-])(?:[\w./~-]*/)?(cp|mv|rm|truncate|dd|touch|install)(?=[ \t\\])")
+    r"(?<![\w./~-])(?:[\w./~-]*/)?(cp|mv|rm|truncate|dd|touch|install|patch)(?=[ \t\\])")
+# Only `_may_write` uses these too: `git`, then, anywhere after its first use, a subcommand that can
+# write the work tree. Two linear searches, never one pattern spanning both. A false hit only
+# costs a parse.
+_GIT_WORD_RE = re.compile(r"(?<![\w.-])git\b")
+_GIT_TREE_WRITE_RE = re.compile(
+    r"(?<![\w-])(?:reset|rebase|merge|checkout|switch|restore|stash|clean|cherry-pick|revert|am"
+    r"|apply|pull)(?![\w-])")
 _MAX_SUBSCRIPT = 256          # bounds a scan that otherwise runs to the end of the line
 _REBINDER_RE = re.compile(
     r"(?<![\w.-])(?:(?:for|select)[ \t]+(\w+)|(?:read|unset|mapfile|readarray|getopts|printf)"
@@ -614,7 +624,13 @@ def _may_write(cmd: str) -> bool:
     never lose one. An ANSI-C escape that spells a name (`$'\\x72m'`) is out of reach and stays
     unread."""
     text = cmd.replace("\\\n", "").translate(_UNQUOTE)
-    return any(hint in text for hint in _WRITE_HINTS) or _FILE_VERB_RE.search(text) is not None
+    return (any(hint in text for hint in _WRITE_HINTS) or _FILE_VERB_RE.search(text) is not None
+            or _git_tree_write_hint(text))
+
+
+def _git_tree_write_hint(text: str) -> bool:
+    git = _GIT_WORD_RE.search(text) if "git" in text else None
+    return git is not None and _GIT_TREE_WRITE_RE.search(text, git.end()) is not None
 
 
 @functools.lru_cache(maxsize=16)
@@ -903,6 +919,12 @@ def _bash_write_targets(cmd: str, start: str = "") -> list[str]:
                 for file in files:
                     _name_target(written, _expand(file, stage.pos, bindings), cwd)
         verb = _stage_name(stage, bindings)
+        if verb in ("git", "patch"):
+            argv = [_expand(w.text, stage.pos, bindings) for w in (words[0], *_arguments(stage))]
+            tree = _tree_written(verb, argv, cwd)
+            if tree is not None:
+                changed.append(tree)
+            continue
         if verb in _FILE_VERBS:
             raw = [w.text for w in _arguments(stage)]
             # Expanded first: a value can be a flag, which changes what the operands mean.
@@ -914,6 +936,80 @@ def _bash_write_targets(cmd: str, start: str = "") -> list[str]:
                 if tok not in _SKIP_TARGETS and not (verb == "rm" and _is_regenerable(path)):
                     changed.append(path)
     return list(dict.fromkeys([*redirected, *written, *changed]))
+
+
+def _tree_written(verb: str, argv: list[str], cwd: str) -> str | None:
+    """The whole work tree, as `<tree>/**`, when a `git` or `patch` call can rewrite files in it,
+    else None (fb-1303f39d14a6). Which files a patch, merge or stash touches is not in the
+    command's text, so the call names every file of the tree it runs in, and the writable check
+    fails closed wherever that tree is not writable as a whole: the shared tree in `reviewing`,
+    while a builder's own worktree stays writable in `building`."""
+    if verb == "patch":
+        directory = cwd
+        for i, arg in enumerate(argv[1:], 1):
+            if arg in ("-d", "--directory"):
+                directory = _landing_path(argv[i + 1] if i + 1 < len(argv) else "", cwd)
+            elif arg.startswith("--directory="):
+                directory = _landing_path(arg.partition("=")[2], cwd)
+            elif arg.startswith("-d") and len(arg) > 2:
+                directory = _landing_path(arg[2:], cwd)
+        if any(a in ("--dry-run", "-C", "--check") for a in argv[1:]):
+            return None
+        return _tree_glob(directory)
+    args, directory = _git_call(argv, cwd)
+    if not args or args[0] not in _GIT_TREE_WRITERS or not _git_writes_files(args[0], args[1:]):
+        return None
+    return _tree_glob(_git_work_tree(directory))
+
+
+def _git_writes_files(sub: str, rest: list[str]) -> bool:
+    """False only for the forms of a tree-writing subcommand that leave every file alone: they
+    read, or touch the index or refs alone."""
+    if "-h" in rest or "--help" in rest:
+        return False
+    short = "".join(a[1:] for a in rest if a.startswith("-") and not a.startswith("--"))
+    if sub == "reset":
+        return any(a in ("--hard", "--merge", "--keep") for a in rest)
+    if sub == "stash":
+        op = next((a for a in rest if not a.startswith("-")), None)
+        return op in (None, "push", "save", "pop", "apply", "branch")
+    if sub == "apply":
+        reports = any(a in ("--check", "--stat", "--numstat", "--summary") for a in rest)
+        return "--cached" not in rest and not (reports and "--apply" not in rest)
+    if sub == "clean":
+        return "--dry-run" not in rest and "n" not in short
+    if sub == "restore":
+        return not (("--staged" in rest or "S" in short)
+                    and not ("--worktree" in rest or "W" in short))
+    if sub == "rm":
+        return "--cached" not in rest
+    if sub == "checkout":
+        return bool(rest)
+    return True
+
+
+def _git_work_tree(directory: str) -> str:
+    """The work tree a git call in `directory` acts on: a builder's worktree under
+    `worktrees/<name>`, the project root ("") anywhere else inside it, and `directory` itself
+    outside the project or when the shell alone can name it."""
+    if _is_unresolved(directory):
+        return directory
+    rel = directory
+    if os.path.isabs(directory):
+        try:
+            rel = str(Path(directory).resolve().relative_to(ledger.project_root().resolve()))
+        except (ValueError, OSError):
+            return directory
+    parts = [part for part in rel.split("/") if part not in ("", ".")]
+    if parts[:1] == [".."]:
+        return rel
+    if len(parts) >= 2 and parts[0] == "worktrees":
+        return "/".join(parts[:2])
+    return ""
+
+
+def _tree_glob(tree: str) -> str:
+    return f"{tree.rstrip('/')}/**" if tree else "**"
 
 
 def _name_target(targets: list[str], tok: str, cwd: str) -> None:
@@ -1387,6 +1483,17 @@ def stop(args=None) -> int:
 
     phase = state["phase"]
     feature = state.get("feature")
+    # fb-5861062129e7: while a drive run owns the phase, or this session is a role it delegated
+    # to, the exit artifacts are not this session's to produce. The owner is read from the
+    # lease, never guessed per role.
+    from prusik import main_writer
+    from prusik.platform_adapter import get_adapter
+    try:
+        ref = get_adapter().session_ref(payload)
+    except Exception:  # noqa: BLE001 — no session id only drops the delegate check
+        ref = None
+    if main_writer.live_owner(ledger.project_root(), feature, ref.session if ref else None):
+        return 0
     phase_spec = phases.get_phase_spec(config, phase) or {}
     # One pass: the evidence validator spawns git, so the items feed both the message and
     # `_in_flight` rather than re-running the check.
@@ -3361,22 +3468,31 @@ def _judged_code_files(root: Path) -> list[tuple[str, bytes]]:
                     continue
     if collected:
         return collected
-    main_rels = _consistency.git_files_under(root)
-    if main_rels is None:                            # not a git project: walk it
-        main_rels = []
-        for dirpath, dirnames, filenames in _os.walk(root):
-            dirnames[:] = [d for d in dirnames
-                           if d not in _DERIVED_DIRS and d not in _MAIN_TREE_PRUNE]
-            for fn in filenames:
-                main_rels.append(str((Path(dirpath) / fn).relative_to(root)))
-    for rel in main_rels:
-        if rel.startswith(skip) or rel.startswith("worktrees/"):
+    for rel in main_tree_files(root):
+        if rel.startswith(skip):
             continue
         try:
             collected.append((rel, (root / rel).read_bytes()))
         except OSError:                              # deleted / a submodule gitlink
             continue
     return collected
+
+
+def main_tree_files(root: Path) -> list[str]:
+    """The project's own files in the shared tree, relative to `root`: git's tracked +
+    untracked-not-ignored files, else a walk that never enters VCS, virtualenv, derived or
+    `worktrees/` dirs. Nothing under `worktrees/`."""
+    import os as _os
+    from prusik import consistency as _consistency
+    rels = _consistency.git_files_under(root)
+    if rels is None:                                 # not a git project: walk it
+        rels = []
+        for dirpath, dirnames, filenames in _os.walk(root):
+            dirnames[:] = [d for d in dirnames
+                           if d not in _DERIVED_DIRS and d not in _MAIN_TREE_PRUNE]
+            for fn in filenames:
+                rels.append(str((Path(dirpath) / fn).relative_to(root)))
+    return [rel for rel in rels if not rel.startswith("worktrees/")]
 
 
 def _worktree_substantive_hash(root: Path, extra: tuple[str, ...] = (),
