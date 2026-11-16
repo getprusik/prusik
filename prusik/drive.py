@@ -11,6 +11,12 @@ at the judgement points with `reports/<f>/drive-escalation.json` and rc 3.
 Stdout is bounded: the auth line, one line per phase, the completion line or an escalation
 block. Gate and tool output goes to `reports/<f>/drive.log`.
 
+Spend is capped, not advised: `drive.budget_tokens` (required) caps the sprint's measured
+tokens, a phase's `budget_tokens` caps that phase, and `drive.session_budget_tokens` caps what
+the host session running drive spends on the feature. Drive measures before and after every
+spawn and escalates `budget_exceeded` at the first cap crossed; a budget it cannot measure
+escalates `budget_unmeasurable`, never a silent pass.
+
 Exit codes: 0 complete, 2 not drivable, 3 escalated.
 """
 
@@ -37,14 +43,15 @@ from prusik.platform_adapter import (
 ESCALATION_KINDS = ("scope_rejected", "triage_rejected", "solo_handback", "plan_rejected",
                     "prove_red_failed", "suite_failed", "fix_round_cap", "permission_denied",
                     "spawn_failed", "tier_unresolved", "auth_mismatch", "writer_busy",
-                    "advance_blocked", "tree_written")
+                    "advance_blocked", "tree_written", "budget_exceeded",
+                    "budget_unmeasurable")
 DRIVEN = ("scoping", "triage", "planning", "building", "reviewing", "integrating")
 BUILDER_ROLES = ("backend-builder", "frontend-builder", "test-writer")
 REVIEWERS = (("regression-sentinel", "regression.txt"),
              ("conventions-enforcer", "conventions.txt"))
 
 _DEFAULTS = {"auth": "claude.ai", "spawn_timeout_min": 60, "suite_command": None,
-             "design_rounds": 3}
+             "design_rounds": 3, "budget_tokens": None, "session_budget_tokens": None}
 _TICK_S = 300
 
 
@@ -85,6 +92,9 @@ class _Drive:
         self.holder = ""
         self.phase = ""
         self.steps: list[str] = []
+        self.session: str | None = None    # the host session running drive, if any
+        self.spawned = False
+        self.hand_off = False              # the session cap stopped drive: release the lease
 
     # ── cli plumbing ────────────────────────────────────────────────────────
     @property
@@ -152,6 +162,7 @@ class _Drive:
         main_writer.heartbeat(self.root, self.holder)
 
     def _spawn(self, role: str, prompt: str) -> tuple[SpawnResult, float]:
+        self._check_budget(role)
         model = self._model(role)
         spec = self._agent_spec(role)
         sid = str(uuid.uuid4())
@@ -180,6 +191,8 @@ class _Drive:
         self._log(f"# spawn {role} session {sid} rc {res.rc} is_error {res.is_error}\n"
                   f"{res.text}\n")
         self._check_tree(before, role, sid)
+        self.spawned = True
+        self._check_budget(role)
         if res.denials:
             unmatched = _unmatched_denials(res.denials, ledger.read_all(), sid)
             if unmatched:
@@ -195,6 +208,42 @@ class _Drive:
                              f"timed out: {first}" if res.timed_out else first, [sid])
         self.steps.append(f"spawn {role}")
         return res, started
+
+    def _check_budget(self, role: str | None) -> None:
+        """Escalate when the feature's measured tokens exceed a cap: the sprint's
+        (`drive.budget_tokens`), the current phase's (`budget_tokens` on its phase spec), or
+        the driving host session's (`drive.session_budget_tokens`). Unmeasurable escalates;
+        the one exception is before drive's first spawn with no session yet registered,
+        where nothing has been spent that a transcript could show."""
+        u = usage.measure(self.f)                      # total: never raises
+        if not u.measured:
+            if not self.spawned and self.session is None and u.reason \
+                    and u.reason.startswith("no registered session"):
+                return
+            raise Escalation("budget_unmeasurable", self.phase, role,
+                             f"the token budget could not be measured: {u.reason}",
+                             [str(usage.registry_path()), str(ledger.ledger_path())])
+        spec = phases.get_phase_spec(phases.load_sprint_config(self.root) or {},
+                                     self.phase) or {}
+        caps = [("sprint", u.tokens, self.cfg["budget_tokens"], "drive.budget_tokens"),
+                (f"phase {self.phase}", u.by_phase.get(self.phase, 0),
+                 spec.get("budget_tokens"), f"phases[{self.phase}].budget_tokens")]
+        if self.session is not None:
+            caps.append(("this session", u.by_session.get(self.session, 0),
+                         self.cfg["session_budget_tokens"], "drive.session_budget_tokens"))
+        from prusik import effort
+        for scope, used, cap, key in caps:
+            if cap and used > int(cap):
+                roles_ = ", ".join(f"{r} {effort.fmt_tokens(n)}" for r, n in
+                                   sorted(u.by_role.items(), key=lambda kv: -kv[1])[:5])
+                self.hand_off = scope == "this session"
+                remedy = ("resume in a fresh session (drive released this session's writer "
+                          "lease)" if self.hand_off else f"raise {key} to continue")
+                raise Escalation("budget_exceeded", self.phase, role,
+                                 f"{scope} used {effort.fmt_tokens(used)} tokens, over its "
+                                 f"cap {effort.fmt_tokens(int(cap))} ({key}); {remedy}",
+                                 [f"{key}={cap}", f"used={used}",
+                                  f"sprint_total={u.tokens}", f"by_role: {roles_}"])
 
     def _tree_state(self) -> dict[str, tuple[int, int]]:
         """(mtime_ns, size) of every file in the shared tree (`gate.main_tree_files`)."""
@@ -434,9 +483,15 @@ class _Drive:
         self._capture_red("building")
         for role in builders:
             self._worktree(role)
+            if self._builder_done(role):
+                self.steps.append(f"{role} already built")
+                continue
             self._spawn(role, f"implement your portion of design/{f}/plan.md in "
                               f"worktrees/{role}/ per your role spec. Commit your work on "
                               f"the worktree branch. Do not run git push or merge.")
+            tip = self._branch_tip(role)
+            if tip:
+                ledger.append("drive_builder_done", feature=f, role=role, commit=tip)
         if (self.root / ".git").exists():
             self._prove_combined(builders, str(suite))
         else:
@@ -449,6 +504,34 @@ class _Drive:
                                      tail.splitlines())
         self.steps.append("prove suite")
         self._advance("reviewing")
+
+    def _branch_tip(self, role: str) -> str | None:
+        """The commit sprint/<f>-<role> points at, or None outside git or without the branch."""
+        if not (self.root / ".git").exists():
+            return None
+        rc, tail = self._cli(["git", "rev-parse", "--verify", "--quiet",
+                              f"refs/heads/sprint/{self.f}-{role}"])
+        return tail.strip().splitlines()[-1] if rc == 0 and tail.strip() else None
+
+    def _builder_done(self, role: str) -> bool:
+        """A builder finished in this visit to building and its branch has not moved since
+        (fb-1e4da436fcfc): a resume must not spawn it again over its own work. The signal is
+        the branch tip drive recorded after that builder's spawn passed every check; any
+        later commit, or a new visit to building (a rewind), spawns it again."""
+        tip = self._branch_tip(role)
+        if tip is None:
+            return False
+        from prusik import effort
+        records = ledger.read_all()
+        visits = [w["start"] for w in effort.phase_windows(records, self.f)
+                  if w["phase"] == "building"]
+        entered = usage._parse_ts(visits[-1]) if visits else None
+        if entered is None:
+            return False
+        done = [r for r in records if r.get("event") == "drive_builder_done"
+                and r.get("feature") == self.f and r.get("role") == role
+                and (usage._parse_ts(r.get("ts")) or entered) > entered]
+        return bool(done) and done[-1].get("commit") == tip
 
     def _prove_combined(self, builders: list[str], suite: str) -> None:
         """Prove the full suite once on every builder branch merged together, never on one
@@ -598,12 +681,21 @@ class _Drive:
                   f"design/{self.f}/trivial.md, implement in worktrees/solo/, then re-run "
                   f"drive from reviewing", file=self.out)
             return 2
-        rounds = ((phases.load_sprint_config(self.root) or {}).get("drive") or {}) \
-            .get("design_rounds", _DEFAULTS["design_rounds"])
+        dcfg = (phases.load_sprint_config(self.root) or {}).get("drive") or {}
+        rounds = dcfg.get("design_rounds", _DEFAULTS["design_rounds"])
         if isinstance(rounds, bool) or not isinstance(rounds, int) or rounds < 1:
             print(f"[drive] drive.design_rounds must be a positive integer (got {rounds})",
                   file=self.out)
             return 2
+        for key, required in (("budget_tokens", True), ("session_budget_tokens", False)):
+            v = dcfg.get(key)
+            if v is None and not required:
+                continue
+            if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+                print(f"[drive] drive.{key} must be a positive integer"
+                      + (" (required: drive spends against a cap, never open-ended)"
+                         if v is None else f" (got {v})"), file=self.out)
+                return 2
         self.phase = str(phase)
         return None
 
@@ -623,7 +715,8 @@ class _Drive:
                              f"(source {source}); unset ANTHROPIC_API_KEY or set drive.auth",
                              [f"method={method}", f"source={source}",
                               "env=ANTHROPIC_API_KEY"])
-        self.holder = self.adapter.current_session_id() or f"drive-{uuid.uuid4()}"
+        self.session = self.adapter.current_session_id()
+        self.holder = self.session or f"drive-{uuid.uuid4()}"
         ok, holder, _ = main_writer.check_and_touch(self.root, self.holder, feature=self.f,
                                                     phase=self.phase)
         if not ok:
@@ -662,6 +755,11 @@ class _Drive:
             return 3
         finally:
             main_writer.clear_driver(self.root)
+            if self.hand_off and (main_writer.load(self.root) or {}).get("session") \
+                    == self.holder:
+                main_writer.release(self.root)
+                ledger.append("writer_lease_released", reason="drive session budget",
+                              prior_holder=self.holder, feature=self.f)
 
     def _escalate(self, e: Escalation) -> None:
         path = self.reports / "drive-escalation.json"

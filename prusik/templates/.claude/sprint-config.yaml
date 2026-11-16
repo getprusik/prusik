@@ -449,3 +449,7 @@ drive:
   spawn_timeout_min: 60    # a role spawned by drive is killed and escalated after this many minutes
   design_rounds: 3         # author/critic rounds per design artifact (scope.md, plan.md); at the cap drive escalates
   # suite_command: "<your full test command>"   # required: drive escalates at building without it
+  # budget_tokens: 8000000          # required: the sprint's measured token cap; drive will not run without one
+  # session_budget_tokens: 2000000  # optional: cap on what the session running drive spends; over it, resume in a fresh session
+  # A phase's own `budget_tokens` (under phases:) caps that phase. Drive measures before and after every spawn
+  # and escalates budget_exceeded at the first cap crossed, or budget_unmeasurable when it cannot read the spend.

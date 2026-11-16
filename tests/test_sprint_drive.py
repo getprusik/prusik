@@ -82,14 +82,17 @@ def proj(tmp_path, monkeypatch):
     set_config(root, suite="true")
     set_phase(root, "building")
     ledger.append("sprint_started", feature=F)
+    # No transcripts exist here: the budget reads a stub (tests below set its numbers).
+    monkeypatch.setattr(usage, "measure", lambda *a, **k: usage.Usage(measured=True))
     return root
 
 
-def set_config(root, *, suite=None, drive_block=True, auth="claude.ai"):
+def set_config(root, *, suite=None, drive_block=True, auth="claude.ai", **drive_keys):
     cfg = yaml.safe_load(_TEMPLATE.read_text())
     cfg.pop("drive", None)
     if drive_block:
-        cfg["drive"] = {"auth": auth, "spawn_timeout_min": 7}
+        cfg["drive"] = {"auth": auth, "spawn_timeout_min": 7, "budget_tokens": 8_000_000,
+                        **drive_keys}
         if suite:
             cfg["drive"]["suite_command"] = suite
     (root / ".claude" / "sprint-config.yaml").write_text(yaml.safe_dump(cfg))
@@ -254,8 +257,14 @@ def test_building_suite_failure_escalates_and_does_not_advance(rig):
     assert not [e for e in rig.events if e[:3] == ("gate", "advance", "reviewing")]
 
 
-def test_no_drive_block_defaults_auth_and_building_needs_a_suite_command(rig, proj):
+def test_no_drive_block_is_not_drivable_without_a_budget(rig, proj):
     set_config(proj, drive_block=False)
+    assert rig.run() == 2 and "drive.budget_tokens" in rig.out
+    assert rig.adapter.requests == []
+
+
+def test_a_drive_block_defaults_auth_and_building_needs_a_suite_command(rig, proj):
+    set_config(proj)
     assert rig.run() == 3
     esc = rig.escalation()
     assert esc["kind"] == "suite_failed" and "drive.suite_command" in esc["reason"]
@@ -617,7 +626,7 @@ def test_escalation_kinds_are_the_documented_set():
         "scope_rejected", "triage_rejected", "solo_handback", "plan_rejected",
         "prove_red_failed", "suite_failed", "fix_round_cap", "permission_denied",
         "spawn_failed", "tier_unresolved", "auth_mismatch", "writer_busy",
-        "advance_blocked", "tree_written"}
+        "advance_blocked", "tree_written", "budget_exceeded", "budget_unmeasurable"}
     with pytest.raises(ValueError):
         drive.Escalation("made_up", "building", None, "x")
 
@@ -763,3 +772,120 @@ def test_conflicting_builder_branches_escalate_naming_the_branch(tmp_path, monke
     assert e.value.role == "test-writer" and "sprint/feat-test-writer" in e.value.reason
     assert seen == [], "no suite runs on a view that did not merge"
     assert len(_git(repo, "worktree", "list").splitlines()) == 1
+
+
+# ── the enforced token budget ─────────────────────────────────────────────────────────────
+
+def _usage(tokens=0, *, phase=None, session=None, reason=None):
+    if reason:
+        return usage.Usage(measured=False, reason=reason)
+    return usage.Usage(measured=True, tokens=tokens, by_phase=phase or {},
+                       by_session=session or {}, by_role={"main": tokens})
+
+
+def _measuring(monkeypatch, *seq):
+    """usage.measure returns seq's items in order, then repeats the last."""
+    calls = []
+
+    def measure(feature, phase=None, now=None):
+        calls.append(feature)
+        return seq[min(len(calls), len(seq)) - 1]
+    monkeypatch.setattr(usage, "measure", measure)
+    return calls
+
+
+@pytest.mark.parametrize("value", [None, 0, -5, True, "8M"])
+def test_drive_without_a_positive_sprint_budget_is_not_drivable(rig, proj, value):
+    set_config(proj, suite="true", budget_tokens=value)
+    assert rig.run() == 2
+    assert "drive.budget_tokens must be a positive integer" in rig.out
+    assert rig.adapter.requests == []
+
+
+def test_a_bad_session_budget_is_not_drivable(rig, proj):
+    set_config(proj, suite="true", session_budget_tokens=0)
+    assert rig.run() == 2 and "drive.session_budget_tokens" in rig.out
+
+
+def test_a_sprint_already_over_budget_spawns_nothing(rig, monkeypatch):
+    _measuring(monkeypatch, _usage(9_000_000))
+    assert rig.run() == 3
+    esc = rig.escalation()
+    assert esc["kind"] == "budget_exceeded" and "drive.budget_tokens" in esc["reason"]
+    assert "raise drive.budget_tokens" in esc["reason"]
+    assert rig.adapter.requests == []
+
+
+def test_a_spawn_that_crosses_the_cap_stops_drive_before_the_next_one(rig, proj, monkeypatch):
+    set_phase(proj, "reviewing")
+    _measuring(monkeypatch, _usage(1), _usage(8_000_001))
+    assert rig.run() == 3
+    assert [r.role for r in rig.adapter.requests] == ["regression-sentinel"]
+    assert rig.escalation()["kind"] == "budget_exceeded"
+    assert ("gate", "advance", "integrating", "--feature", F) not in rig.events
+
+
+def test_the_phase_budget_caps_its_phase(rig, proj, monkeypatch):
+    cfg = yaml.safe_load((proj / ".claude/sprint-config.yaml").read_text())
+    for ph in cfg["phases"]:
+        if ph["name"] == "building":
+            ph["budget_tokens"] = 1000
+    (proj / ".claude/sprint-config.yaml").write_text(yaml.safe_dump(cfg))
+    _measuring(monkeypatch, _usage(5000, phase={"planning": 3000, "building": 2000}))
+    assert rig.run() == 3
+    esc = rig.escalation()
+    assert esc["kind"] == "budget_exceeded" and "phases[building].budget_tokens" in esc["reason"]
+    assert rig.adapter.requests == []
+
+
+def test_the_driving_session_over_its_cap_must_resume_fresh(rig, proj, monkeypatch):
+    set_config(proj, suite="true", session_budget_tokens=1_000_000)
+    _measuring(monkeypatch, _usage(3_000_000, session={"holder-1": 2_000_000, "b": 1_000_000}))
+    assert rig.run() == 3
+    esc = rig.escalation()
+    assert esc["kind"] == "budget_exceeded" and "resume in a fresh session" in esc["reason"]
+    assert rig.adapter.requests == []
+    # The same spend seen from a fresh session is under every cap: drive proceeds.
+    rig.adapter.current_session_id = lambda: "fresh-2"
+    rc = rig.run()
+    assert rc == 0, rig.escalation()
+
+
+def test_an_unmeasurable_budget_escalates_never_passes(rig, monkeypatch):
+    _measuring(monkeypatch, _usage(reason="transcript unreadable: /x"))
+    assert rig.run() == 3
+    esc = rig.escalation()
+    assert esc["kind"] == "budget_unmeasurable" and "transcript unreadable" in esc["reason"]
+    assert rig.adapter.requests == []
+
+
+def test_no_session_yet_is_zero_spend_only_before_drives_first_spawn(rig, monkeypatch):
+    """From a plain terminal nothing is registered until drive's first spawn registers its
+    own session; after that spawn, the same reading is a failure, not zero."""
+    rig.adapter.current_session_id = lambda: None
+    _measuring(monkeypatch, _usage(reason="no registered session was active since x"))
+    assert rig.run() == 3
+    assert [r.role for r in rig.adapter.requests] == ["backend-builder"]
+    assert rig.escalation()["kind"] == "budget_unmeasurable"
+
+
+# ── resume does not re-spawn a finished builder (fb-1e4da436fcfc) ─────────────────────────
+
+def test_resume_skips_a_builder_finished_on_its_current_tip(rig, proj):
+    _git_project(proj)
+    ledger.append("phase_advance", feature=F, from_phase="planning", to_phase="building")
+    rig.rcs["advance"] = [1, 1, 1, 1]
+
+    def builders():
+        return [r.role for r in rig.adapter.requests].count("backend-builder")
+
+    assert rig.run() == 3 and builders() == 1
+    assert rig.run() == 3 and builders() == 1, "finished on this tip: not spawned again"
+    wt = proj / "worktrees/backend-builder"
+    (wt / "b.py").write_text("y = 2\n")
+    subprocess.run(["git", "-C", str(wt), "add", "b.py"], check=True)
+    subprocess.run(["git", "-C", str(wt), "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "later"], check=True)
+    assert rig.run() == 3 and builders() == 2, "the branch moved: spawned again"
+    ledger.append("phase_rewind", feature=F, from_phase="building", to_phase="building")
+    assert rig.run() == 3 and builders() == 3, "a new visit to building: spawned again"
