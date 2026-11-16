@@ -131,6 +131,8 @@ def _walk(records: list[dict]) -> tuple[list[dict], dict[Any, tuple[str, str]]]:
             open_span[feat] = (r.get("to_phase") or "?", ts)
         elif ev == "sprint_complete":
             close(feat, ts, "complete")
+        elif ev == "sprint_abandoned":
+            close(feat, ts, "abandon")
     return spans, open_span
 
 
@@ -165,6 +167,8 @@ def summarize_features(records: list[dict]) -> dict[Any, dict[str, Any]]:
             f(feat)["blocks"] += 1
         elif ev == "fix_round_start":
             f(feat)["fix_rounds"] += 1
+        elif ev == "sprint_abandoned":
+            f(feat)["ended"] = ts
         elif ev == "sprint_complete":
             d = f(feat)
             d["complete"] = True

@@ -2685,6 +2685,54 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
     return all_passed, results
 
 
+def sprint_abandon(args) -> int:
+    """End the active sprint without completing it. A sprint stopped mid-phase otherwise
+    holds its phase's write rules and push denial over the checkout until it completes, and
+    the only other exit, `sprint-start --force-clean`, opens a new sprint whose phase
+    restricts writes too. Abandon clears the phase state and its open fix-round and releases
+    the writer lease, as sprint-complete does; it records `sprint_abandoned` (never
+    `sprint_complete`, so no completion metric counts it) and keeps the sprint's branches and
+    worktrees, so the built work can be reviewed or redone. Refused while a running drive
+    owns the sprint."""
+    import subprocess
+    from prusik import fix_round as _fr, main_writer as _mw, pause as _pause
+    feature = args.feature
+    reason = str(args.reason or "").strip()
+    root = ledger.project_root()
+    state = phases.current_sprint_state(root)
+    if not state or state.get("feature") != feature:
+        print(f"[prusik-gate] No active sprint for feature '{feature}' "
+              f"(current state: {state})", file=sys.stderr)
+        return 1
+    if not reason:
+        print("[prusik-gate] --reason is required: the ledger records why a sprint was "
+              "abandoned", file=sys.stderr)
+        return 2
+    if _mw.live_owner(root, feature, None):
+        print(f"[prusik-gate] a running `prusik drive {feature}` owns this sprint; stop it "
+              f"before abandoning", file=sys.stderr)
+        return 2
+    branches: list[str] = []
+    if (root / ".git").exists():
+        p = subprocess.run(["git", "-C", str(root), "for-each-ref", "--format=%(refname:short)",
+                            f"refs/heads/sprint/{feature}-*"],
+                           capture_output=True, text=True, check=False)
+        branches = sorted(b for b in p.stdout.split() if b) if p.returncode == 0 else []
+    phase = state.get("phase")
+    ledger.append("sprint_abandoned", feature=feature, phase=phase, reason=reason,
+                  branches=branches)
+    phases.clear_sprint_state(root)
+    _fr.reap(root, reason=f"sprint-abandon: {feature!r}")
+    if _pause.is_paused(root):
+        _pause.resume()
+    if _mw.release(root):
+        ledger.append("writer_lease_released", reason=f"sprint-abandon: {feature}")
+    print(f"[prusik-gate] Sprint abandoned: {feature} (was in {phase!r})")
+    for b in branches:
+        print(f"  kept branch {b}")
+    return 0
+
+
 def release_writer(args) -> int:
     """fb-0b9d0a6d1ce6 — explicit, audited hand-off of the shared-tree
     single-writer lease. Operator-initiated (never automatic): use it only when

@@ -95,6 +95,13 @@ def main():
     p_brief = gsub.add_parser("brief", help="Validate a brief file")
     p_brief.add_argument("path", metavar="slug-or-path",
                          help="feature slug (briefs/<slug>.md) or a path")
+    p_abandon = gsub.add_parser(
+        "sprint-abandon",
+        help="End the active sprint without completing it: clears its phase state, keeps "
+             "its sprint/<feature>-* branches and worktrees, records why in the ledger")
+    p_abandon.add_argument("--feature", required=True, type=_slug)
+    p_abandon.add_argument("--reason", required=True,
+                           help="why the sprint is abandoned (recorded in the ledger)")
     gsub.add_parser("release-writer",
                     help="Release the shared-tree single-writer lease "
                          "(fb-0b9d0a6d1ce6) — audited hand-off when the "
