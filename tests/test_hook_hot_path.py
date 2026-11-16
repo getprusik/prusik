@@ -46,9 +46,11 @@ _LAZY = ("schema", "consistency", "discovery")
 # prusik.pin: the engine-pin check every entrypoint runs before dispatch (fb-f381d16021db).
 _PRE_TOOL = {"prusik", "prusik.__main__", "prusik.pin", "prusik.gate", "prusik.bash_reader",
              "prusik.ledger", "prusik.phases", "prusik.platform_adapter", "prusik.gate_class",
-             "prusik.main_writer", "prusik.evidence", "prusik.fix_round"}
+             "prusik.main_writer", "prusik.evidence", "prusik.fix_round",
+             "prusik.observed_writes"}
 _POST_TOOL = {"prusik", "prusik.__main__", "prusik.pin", "prusik.gate", "prusik.bash_reader",
-              "prusik.ledger", "prusik.phases", "prusik.gate_class", "prusik.evidence"}
+              "prusik.ledger", "prusik.phases", "prusik.gate_class", "prusik.evidence",
+              "prusik.observed_writes", "prusik.platform_adapter", "prusik.main_writer"}
 # Stop runs once per turn (measured 2026-10-26 per phase): exit-artifact checks pull pause /
 # schema / consistency; session registration (fb-a1b7db140a5e) adds usage + platform_adapter.
 _STOP = {"prusik", "prusik.__main__", "prusik.pin", "prusik.gate", "prusik.bash_reader",
@@ -147,8 +149,10 @@ def _project(tmp_path: Path, phase: str | None, *, fix_round: bool = False) -> P
 
 
 def _probe(root: Path, hook: str, payload: dict | None,
-           code: str = _PROBE) -> tuple[set[str], list[str]]:
-    out = root / "mods.json"
+           code: str = _PROBE, out: Path | None = None) -> tuple[set[str], list[str]]:
+    # `out` outside `root` when the measured hook diffs the tree: a probe file written
+    # into the project would itself be a tree change.
+    out = out or root / "mods.json"
     env = {**os.environ, "HOOK": hook, "OUT": str(out), "CLAUDE_PROJECT_DIR": str(root)}
     subprocess.run([sys.executable, "-c", code], input=json.dumps(payload or {}), text=True,
                    capture_output=True, cwd=root, env=env, check=False, timeout=60)
@@ -177,18 +181,18 @@ def _baseline(root: Path) -> set[str]:
 
 
 def _assert_hook_cost(root: Path, hook: str, payload: dict, prusik_allowed: set[str],
-                      stdlib_allowed: set[str], *, max_spawns: int = 0,
-                      code: str = _PROBE) -> set[str]:
+                      stdlib_allowed: set[str], *, max_spawns: int = 0, min_spawns: int = 0,
+                      code: str = _PROBE, out: Path | None = None) -> set[str]:
     """One check for every hook run: what it imports and what it spawns. Returns the prusik
     modules it imported."""
-    mods, spawns = _probe(root, hook, payload, code)
+    mods, spawns = _probe(root, hook, payload, code, out)
     baseline = _baseline(root)
     prusik_mods = {m for m in mods if m == "prusik" or m.startswith("prusik.")}
     assert prusik_mods <= prusik_allowed, sorted(prusik_mods - prusik_allowed)
     assert not _third_party(mods, baseline)
     extra_stdlib = _stdlib(mods, baseline) - stdlib_allowed
     assert not extra_stdlib, sorted(extra_stdlib)
-    assert len(spawns) <= max_spawns, spawns
+    assert min_spawns <= len(spawns) <= max_spawns, spawns
     return prusik_mods
 
 
@@ -221,18 +225,86 @@ def test_pre_tool_imports_only_its_allowlist(tmp_path, phase, fix_round, payload
     _assert_hook_cost(root, "pre-tool", payload, _PRE_TOOL, _PRE_TOOL_STDLIB)
 
 
-@pytest.mark.parametrize("phase,payload", [
+# A Bash post-tool parses the payload through the platform adapter (observed writes), so it
+# pays the adapter's imports; Read/Edit post-tool pays nothing new.
+@pytest.mark.parametrize("phase,payload,stdlib", [
     ("building", {"session_id": "p", "hook_event_name": "PostToolUse", "tool_name": "Bash",
                   "tool_input": {"command": "pytest -q"},
-                  "tool_response": {"stdout": "1 failed"}}),
+                  "tool_response": {"stdout": "1 failed"}}, _PRE_TOOL_STDLIB),
     ("building", {"session_id": "p", "hook_event_name": "PostToolUse", "tool_name": "Edit",
-                  "tool_input": {"file_path": "worktrees/solo/a.py"}, "tool_response": {}}),
+                  "tool_input": {"file_path": "worktrees/solo/a.py"}, "tool_response": {}},
+     _POST_TOOL_STDLIB),
     (None, {"session_id": "p", "hook_event_name": "PostToolUse", "tool_name": "Read",
-            "tool_input": {"file_path": "README.md"}, "tool_response": {}}),
+            "tool_input": {"file_path": "README.md"}, "tool_response": {}}, _POST_TOOL_STDLIB),
 ])
-def test_post_tool_imports_only_its_allowlist(tmp_path, phase, payload):
+def test_post_tool_imports_only_its_allowlist(tmp_path, phase, payload, stdlib):
     root = _project(tmp_path, phase)
-    _assert_hook_cost(root, "post-tool", payload, _POST_TOOL, _POST_TOOL_STDLIB)
+    _assert_hook_cost(root, "post-tool", payload, _POST_TOOL, stdlib)
+
+
+# ---- observed writes (fb-aa7a6121fcee): the new paths pinned explicitly -------------------
+# Pre-tool snapshots the tree with a spawn-free walk; post-tool spawns only when a file is a
+# candidate (one `git check-ignore`), so a read-only call stays at zero spawns.
+
+def _bash(event: str, command: str, **extra) -> dict:
+    return {"session_id": "probe", "hook_event_name": event, "tool_name": "Bash",
+            "tool_input": {"command": command}, "tool_use_id": "toolu_probe", **extra}
+
+
+def _pending_files(root: Path) -> list[str]:
+    d = root / ".sprint" / "observed-writes" / "pending"
+    return sorted(os.listdir(d)) if d.is_dir() else []
+
+
+def _run_pre(root: Path, payload: dict) -> None:
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
+    r = subprocess.run([sys.executable, "-m", "prusik", "gate", "pre-tool"],
+                       input=json.dumps(payload), text=True, capture_output=True, cwd=root,
+                       env=env, check=False, timeout=60)
+    assert r.returncode == 0 and not r.stdout.strip(), r.stdout + r.stderr
+
+
+def test_pre_tool_allowed_bash_in_a_sprint_snapshots_without_spawning(tmp_path):
+    root = _project(tmp_path, "building")
+    payload = _bash("PreToolUse", 'python -c "print(1)"')
+    prusik_mods = _assert_hook_cost(root, "pre-tool", payload, _PRE_TOOL, _PRE_TOOL_STDLIB,
+                                    max_spawns=0)
+    assert "prusik.observed_writes" in prusik_mods
+    assert _pending_files(root) == ["probe-toolu_probe.json"]     # the snapshot really ran
+
+
+def test_post_tool_with_a_pending_snapshot_and_no_change_spawns_nothing(tmp_path):
+    root = _project(tmp_path, "building")
+    cmd = 'python -c "print(1)"'
+    _run_pre(root, _bash("PreToolUse", cmd))
+    assert _pending_files(root)
+    prusik_mods = _assert_hook_cost(
+        root, "post-tool", _bash("PostToolUse", cmd, tool_response={"stdout": "1"}),
+        _POST_TOOL, _PRE_TOOL_STDLIB, max_spawns=0, out=tmp_path.parent / "post-mods.json")
+    assert "prusik.observed_writes" in prusik_mods
+    assert _pending_files(root) == []                             # paired and popped
+
+
+def test_post_tool_with_one_changed_file_spawns_exactly_one_git(tmp_path):
+    root = _project(tmp_path, "building")
+    cmd = 'python -c "open(\'new.txt\', \'w\').write(\'x\')"'
+    _run_pre(root, _bash("PreToolUse", cmd))
+    (root / "new.txt").write_text("x")
+    # Exactly one spawn, the `git check-ignore` that decides new.txt is project content.
+    _assert_hook_cost(root, "post-tool", _bash("PostToolUse", cmd, tool_response={}),
+                      _POST_TOOL, _PRE_TOOL_STDLIB | {"fcntl", "locale", "select",
+                                                       "selectors", "signal", "subprocess",
+                                                       "threading"},
+                      min_spawns=1, max_spawns=1, out=tmp_path.parent / "post-mods.json")
+    assert _pending_files(root) == []
+
+
+def test_pre_tool_with_no_sprint_and_no_lease_never_imports_observed_writes(tmp_path):
+    root = _project(tmp_path, None)
+    prusik_mods = _assert_hook_cost(root, "pre-tool", _bash("PreToolUse", "ls"), _PRE_TOOL,
+                                    _PRE_TOOL_STDLIB)
+    assert "prusik.observed_writes" not in prusik_mods
+    assert not (root / ".sprint" / "observed-writes").exists()
 
 
 _STOP_PAYLOAD = {"session_id": "p", "hook_event_name": "Stop",

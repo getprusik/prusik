@@ -544,6 +544,45 @@ def test_writes_the_phase_allows_never_halt_drive(rig, proj):
     assert not [e for e in ledger.read_all() if e["event"] == "drive_tree_written"]
 
 
+@pytest.mark.parametrize("same_bytes", [True, False])
+def test_drive_judges_root_writes_on_content_not_on_stat(rig, proj, same_bytes):
+    """observed-writes decision 9: drive reads the tree through the content-confirmed
+    snapshot, so a spawn that rewrites an unwritable file with identical bytes (a touch) does
+    not escalate, and one that changes its content still escalates tree_written."""
+    _git_project(proj)
+    set_phase(proj, "reviewing")
+
+    def sentinel(req):
+        (proj / "reports/feat/regression.txt").write_text("PASS\n")
+        (proj / "src/a.py").write_text("x = 1\n" if same_bytes else "x = 2\n")
+        os.utime(proj / "src/a.py", ns=(1, 10**18))         # the stat always moves
+    rig.adapter.scripts["regression-sentinel"] = sentinel
+    rc = rig.run()
+    written = [e for e in ledger.read_all() if e["event"] == "drive_tree_written"]
+    if same_bytes:
+        assert rc == 0, rig.out
+        assert not written
+    else:
+        assert rc == 3
+        assert rig.escalation()["kind"] == "tree_written"
+        assert rig.escalation()["evidence"] == ["src/a.py"]
+        assert written and written[-1]["paths"] == ["src/a.py"]
+
+
+def test_drive_escalates_an_unreadable_tree_instead_of_skipping(rig, proj, monkeypatch):
+    from prusik import observed_writes
+    set_phase(proj, "reviewing")
+
+    def unreadable(*a, **k):
+        raise observed_writes.TreeUnreadable("cannot scan the project root (test)")
+    monkeypatch.setattr(observed_writes, "snapshot", unreadable)
+    assert rig.run() == 3
+    esc = rig.escalation()
+    assert esc["kind"] == "tree_unreadable" and esc["phase"] == "reviewing"
+    assert "cannot scan the project root (test)" in esc["reason"]
+    assert rig.adapter.requests == []     # nothing is spawned over a tree it cannot check
+
+
 # ── bounded output, bookkeeping ───────────────────────────────────────────────────────────
 
 def test_clean_run_from_reviewing_completes_and_clears_the_stale_escalation(rig, proj):
@@ -628,7 +667,7 @@ def test_escalation_kinds_are_the_documented_set():
         "prove_red_failed", "suite_failed", "fix_round_cap", "permission_denied",
         "spawn_failed", "tier_unresolved", "auth_mismatch", "writer_busy",
         "advance_blocked", "tree_written", "budget_exceeded", "budget_unmeasurable",
-        "builder_stopped", "empty_build"}
+        "builder_stopped", "empty_build", "tree_unreadable"}
     with pytest.raises(ValueError):
         drive.Escalation("made_up", "building", None, "x")
 
