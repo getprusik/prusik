@@ -32,6 +32,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import prusik
 from prusik import __main__ as cli
 from prusik import gate, phases
 
@@ -42,15 +43,16 @@ _PRESETS = sorted((_ROOT / "prusik" / "templates" / ".claude" / "sprint-config-p
 _LAZY = ("schema", "consistency", "discovery")
 
 # Measured allowlists (design/hook-hot-path/scope.md "## Allowlists").
-_PRE_TOOL = {"prusik", "prusik.__main__", "prusik.gate", "prusik.bash_reader", "prusik.ledger",
-             "prusik.phases", "prusik.platform_adapter", "prusik.gate_class",
+# prusik.pin: the engine-pin check every entrypoint runs before dispatch (fb-f381d16021db).
+_PRE_TOOL = {"prusik", "prusik.__main__", "prusik.pin", "prusik.gate", "prusik.bash_reader",
+             "prusik.ledger", "prusik.phases", "prusik.platform_adapter", "prusik.gate_class",
              "prusik.main_writer", "prusik.evidence", "prusik.fix_round"}
-_POST_TOOL = {"prusik", "prusik.__main__", "prusik.gate", "prusik.bash_reader", "prusik.ledger",
-              "prusik.phases", "prusik.gate_class", "prusik.evidence"}
+_POST_TOOL = {"prusik", "prusik.__main__", "prusik.pin", "prusik.gate", "prusik.bash_reader",
+              "prusik.ledger", "prusik.phases", "prusik.gate_class", "prusik.evidence"}
 # Stop runs once per turn (measured 2026-10-26 per phase): exit-artifact checks pull pause /
 # schema / consistency; session registration (fb-a1b7db140a5e) adds usage + platform_adapter.
-_STOP = {"prusik", "prusik.__main__", "prusik.gate", "prusik.bash_reader", "prusik.ledger",
-         "prusik.phases", "prusik.gate_class", "prusik.evidence", "prusik.pause",
+_STOP = {"prusik", "prusik.__main__", "prusik.pin", "prusik.gate", "prusik.bash_reader",
+         "prusik.ledger", "prusik.phases", "prusik.gate_class", "prusik.evidence", "prusik.pause",
          "prusik.schema", "prusik.consistency", "prusik.usage", "prusik.platform_adapter",
          "prusik.main_writer"}
 # Public stdlib top-levels above the baseline: the union measured on macOS and Linux across
@@ -130,6 +132,9 @@ json.dump({"modules": sorted(sys.modules), "spawns": spawns}, open(os.environ["O
 def _project(tmp_path: Path, phase: str | None, *, fix_round: bool = False) -> Path:
     (tmp_path / ".claude").mkdir()
     shutil.copy(_TEMPLATE_CFG, tmp_path / ".claude" / "sprint-config.yaml")
+    # An adopter's project is pinned, so the measured path reads and checks the pin.
+    (tmp_path / ".claude" / ".prusik-manifest.json").write_text(
+        json.dumps({"template_surface_version": prusik.__version__, "files": []}))
     (tmp_path / ".sprint").mkdir()
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     if phase:

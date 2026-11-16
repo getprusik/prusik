@@ -37,7 +37,7 @@ from typing import Any, Callable, Iterable, TextIO
 
 import yaml
 
-from prusik import fix_round, ledger, main_writer, phases, pricing, roles, usage
+from prusik import fix_round, ledger, main_writer, phases, pin, pricing, roles, usage
 from prusik.platform_adapter import (
     AgentSpec, PlatformAdapter, SpawnError, SpawnRequest, SpawnResult, get_adapter,
 )
@@ -103,10 +103,11 @@ class _Drive:
     def reports(self) -> Path:
         return self.root / "reports" / self.f
 
-    def _cli(self, argv: list[str], cwd: Path | None = None) -> tuple[int, str]:
+    def _cli(self, argv: list[str], cwd: Path | None = None,
+             env: dict[str, str] | None = None) -> tuple[int, str]:
         """Run a command, append its output to drive.log, return (rc, last 20 lines)."""
         p = subprocess.run(argv, cwd=str(cwd or self.root), capture_output=True, text=True,
-                           check=False)
+                           check=False, env=env)
         text = (p.stdout or "") + (p.stderr or "")
         self.reports.mkdir(parents=True, exist_ok=True)
         with open(self.reports / "drive.log", "a", encoding="utf-8") as fh:
@@ -115,10 +116,12 @@ class _Drive:
         return p.returncode, "\n".join(text.strip().splitlines()[-20:])
 
     def _gate(self, *args: str) -> tuple[int, str]:
-        return self._cli([sys.executable, "-m", "prusik", "gate", *args])
+        return self._prusik("gate", *args)
 
     def _prusik(self, *args: str, cwd: Path | None = None) -> tuple[int, str]:
-        return self._cli([sys.executable, "-m", "prusik", *args], cwd)
+        # Through the launcher: the child must import this process's prusik (fb-f381d16021db).
+        argv, env = pin.child_command(*args)
+        return self._cli(argv, cwd, env=env)
 
     def _log(self, text: str) -> None:
         self.reports.mkdir(parents=True, exist_ok=True)

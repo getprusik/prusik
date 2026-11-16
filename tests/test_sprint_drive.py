@@ -278,9 +278,9 @@ def test_building_resume_reuses_an_existing_worktree(rig, proj, monkeypatch):
     called = []
     orig = drive._Drive._cli
 
-    def cli(self, argv, cwd=None):
+    def cli(self, argv, cwd=None, env=None):
         called.append(argv)
-        return (1, "unexpected git") if argv[0] == "git" else orig(self, argv, cwd)
+        return (1, "unexpected git") if argv[0] == "git" else orig(self, argv, cwd, env)
     monkeypatch.setattr(drive._Drive, "_cli", cli)
     rig.run()
     assert ("spawn", "backend-builder") in rig.events
@@ -293,9 +293,9 @@ def test_building_creates_the_worktree_for_a_new_builder(rig, proj, monkeypatch)
     called = []
     orig = drive._Drive._cli
 
-    def cli(self, argv, cwd=None):
+    def cli(self, argv, cwd=None, env=None):
         if argv[0] != "git":
-            return orig(self, argv, cwd)
+            return orig(self, argv, cwd, env)
         called.append(argv)
         if argv[1] == "rev-parse":
             return 1, ""                          # no such branch yet

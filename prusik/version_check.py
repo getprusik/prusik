@@ -11,14 +11,13 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from prusik import __version__
+from prusik import __version__, pin
 
 _REPO = "getprusik/prusik"
 _TAGS_URL = f"https://api.github.com/repos/{_REPO}/tags"
@@ -28,14 +27,8 @@ _TAGS_URL = f"https://api.github.com/repos/{_REPO}/tags"
 # adopter saw "latest 0.196.1" because release tags live on the public repo + PyPI,
 # not the private canonical). Public + auth-free, so it's the primary source.
 _PYPI_URL = "https://pypi.org/pypi/prusik/json"
-_VER_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
-
-
-def _parse(v: str) -> tuple[int, int, int] | None:
-    m = _VER_RE.match((v or "").strip())
-    if not m:
-        return None
-    return int(m.group(1)), int(m.group(2)), int(m.group(3))
+# The version-tuple rule has one definition, in the hot-path-safe pin module.
+_parse = pin.parse_version
 
 
 def is_newer(latest: str, installed: str = __version__) -> bool:

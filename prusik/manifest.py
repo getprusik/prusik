@@ -47,6 +47,8 @@ from datetime import datetime, timezone
 from typing import Any
 from pathlib import Path
 
+from prusik import pin
+
 SCHEMA = 2
 
 # Manifest filename. (Renamed from `.prusik-manifest.json` in prusik→prusik
@@ -240,11 +242,7 @@ def surface_version(m: dict | None) -> str:
     """The version the deployed template surface corresponds to — what
     `prusik doctor` should report. Falls back through the legacy field for a
     not-yet-migrated dict, never to 'unknown' if any evidence exists."""
-    if not m:
-        return "unknown"
-    return (m.get("template_surface_version")
-            or m.get("last_refresh_version")
-            or m.get("kit_version") or "unknown")
+    return pin.surface_version(m)
 
 
 def created_with(m: dict | None) -> str:

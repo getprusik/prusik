@@ -20,12 +20,11 @@ from __future__ import annotations
 import json
 import statistics
 import subprocess
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-from prusik import effort, ledger
+from prusik import effort, ledger, pin
 
 _GATE_EVENTS = ("gate_blocked", "advance_blocked")
 _BENCH_TIMEOUT_SEC = 60
@@ -153,11 +152,11 @@ def hook_bench(n: int = 20) -> dict:
     the bench is read-only by construction."""
     payload = json.dumps({"tool_name": "Read",
                           "tool_input": {"file_path": "/dev/null"}})
+    argv, env = pin.child_command("gate", "pre-tool")   # the child imports this prusik
     times_ms: list[float] = []
     for _ in range(max(1, n)):
         t0 = time.perf_counter()
-        subprocess.run([sys.executable, "-m", "prusik", "gate", "pre-tool"],
-                       input=payload, capture_output=True, text=True,
+        subprocess.run(argv, input=payload, capture_output=True, text=True, env=env,
                        timeout=_BENCH_TIMEOUT_SEC, check=False)
         times_ms.append((time.perf_counter() - t0) * 1000)
     times_ms.sort()

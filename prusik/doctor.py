@@ -44,7 +44,8 @@ def run(json_output: bool = False, suggest_permissions: bool = False,
         suggest_apply: bool = False,
         insights: bool = False, insights_for_brief: str | None = None,
         sprint: str | None = None) -> int:
-    """Main entry. Always exit 0 — informational, not blocking.
+    """Main entry. Exit 0 — informational, not blocking — except exit 1 when the engine
+    resolution fails (fb-f381d16021db: a PATH prusik that is not the pin).
 
     v0.16.0: two new modes that turn the ledger into self-improving
     adoption hygiene — prusik's own derive-from-evidence thesis applied
@@ -97,6 +98,8 @@ def run(json_output: bool = False, suggest_permissions: bool = False,
     }
 
     drift = _detect_drift(manifest, current_detection)
+    engine = _engine_resolution(root)
+    rc = 1 if engine["failures"] else 0
 
     if json_output:
         from prusik import manifest as _manifest
@@ -107,12 +110,56 @@ def run(json_output: bool = False, suggest_permissions: bool = False,
             "scores": {k: {"score": v[0], "evidence": v[1]} for k, v in scores.items()},
             "lowest": _lowest_subsystem(scores),
             "drift": drift,
+            "engine": engine,
         }
         print(json.dumps(out, indent=2))
-        return 0
+        return rc
 
     _print_text_report(root, scores, drift, manifest)
-    return 0
+    _print_engine_resolution(engine)
+    return rc
+
+
+# ---------- Engine resolution (fb-f381d16021db) ----------
+
+def _engine_resolution(root: Path) -> dict:
+    """Which prusik this project runs: the pin and its file, the running version and where
+    it was imported from, and what bare `prusik` resolves to on PATH (what hooks and agents
+    run). A PATH prusik whose version is not the pin, or a running engine the pin check
+    refuses, is a failure: the next hook would refuse or run the wrong engine."""
+    from prusik import pin, preflight
+    verdict = pin.check(root)
+    which, path_version = preflight.path_prusik_version()
+    failures: list[str] = []
+    if not verdict.runs:
+        failures.append(pin.refusal(verdict).splitlines()[0].replace(
+            "[prusik] refusing: ", "running engine refused: "))
+    if verdict.pin and which and path_version != verdict.pin:
+        failures.append(f"PATH prusik {which} is "
+                        f"{path_version or 'of unknown version (`--version` failed)'}, "
+                        f"not the pin {verdict.pin} ({verdict.source}). Install the pinned "
+                        f"version so bare `prusik` resolves to it "
+                        f"(`uv tool install prusik=={verdict.pin}`).")
+    return {**verdict.as_dict(), "path_prusik": which, "path_version": path_version,
+            "failures": failures}
+
+
+def _print_engine_resolution(engine: dict) -> None:
+    print()
+    print("[prusik-doctor] Engine resolution:")
+    pin_line = (f"{engine['pin']} (from {engine['pin_source']})" if engine["pin"]
+                else "none (no manifest, not the prusik source repo: unchecked)")
+    if engine["status"] == "corrupt":
+        pin_line = f"UNREADABLE ({engine['pin_source']})"
+    print(f"  pin:      {pin_line}")
+    print(f"  running:  {engine['running']} (from {engine['origin']})")
+    print(f"  PATH:     {engine['path_prusik'] or '(prusik does not resolve on PATH)'}"
+          + (f" -> {engine['path_version'] or 'unknown version'}"
+             if engine["path_prusik"] else ""))
+    for f in engine["failures"]:
+        print(f"  ✗ {f}")
+    if not engine["failures"] and engine["pin"]:
+        print("  ✓ the running and the PATH prusik match the pin")
 
 
 # ---------- Subsystem scorers ----------

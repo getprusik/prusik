@@ -31,15 +31,63 @@ _HOOK_HELP = {"pre-tool": "PreToolUse hook",
               "stop": "Stop hook",
               "session-start": "SessionStart hook"}
 
+# The pin check (fb-f381d16021db) runs before every command except these: the flags that
+# only describe the binary, and the commands that move or diagnose the pin. Without them a
+# mismatched project could not repair itself.
+PIN_EXEMPT = ("--version", "-h", "--help", "init", "refresh", "doctor", "uninstall",
+              "feedback")
+# Commands that move the pin themselves before acting, so the entrypoint lets them through
+# when the engine is AHEAD of the pin (never BEHIND); each re-checks after its own sync and
+# refuses if the pin still mismatches.
+PIN_SYNCS_WHEN_AHEAD = (("gate", "sprint-start"),)
+
+
+def _pin_exempt(argv: list[str]) -> bool:
+    if argv and argv[0] in PIN_EXEMPT:
+        return True
+    head = argv[:argv.index("--")] if "--" in argv else argv
+    return "-h" in head or "--help" in head
+
+
+def _pin_refusal(argv: list[str], hook: str | None) -> int | None:
+    """None when this process may act in the project, else the exit code to end with (the
+    refusal already printed). A launched child's origin is checked for every command; the pin for all but the
+    exempt ones. Stop under `stop_hook_active` never refuses, so it cannot loop."""
+    from prusik import ledger, pin
+    verdict = pin.check(ledger.project_root())
+    pin.consume_launch_env()
+    if verdict.runs:
+        return None
+    if verdict.status != pin.FOREIGN:
+        if _pin_exempt(argv):
+            return None
+        if verdict.status == pin.AHEAD and tuple(argv[:2]) in PIN_SYNCS_WHEN_AHEAD:
+            return None
+    if hook == "stop":
+        import json
+        try:
+            payload = json.loads(sys.stdin.read() or "{}")
+        except ValueError:
+            payload = {}
+        if isinstance(payload, dict) and payload.get("stop_hook_active"):
+            return 0                 # ends the turn without acting on a mismatched engine
+    print(pin.refusal(verdict), file=sys.stderr)
+    return 2
+
 
 def main():
+    argv = sys.argv[1:]
+    hook = (argv[1] if len(argv) == 2 and argv[0] == "gate" and argv[1] in HOOK_COMMANDS
+            else None)
+    refused = _pin_refusal(argv, hook)
+    if refused is not None:
+        return refused
     # Hot path (platform plan P0): an exact `gate <hook>` argv dispatches before the
     # ~108-subparser tree is built (~22ms per tool call). Hooks take no arguments; any
     # other argv (`--help`, extras) falls through to the full parser unchanged.
-    argv = sys.argv[1:]
-    if len(argv) == 2 and argv[0] == "gate" and argv[1] in HOOK_COMMANDS:
+    if hook:
         from prusik import gate
-        return getattr(gate, argv[1].replace("-", "_"))()
+        return getattr(gate, hook.replace("-", "_"))()
 
     parser = argparse.ArgumentParser(prog="prusik", description="Prusik")
     parser.add_argument("--version", action="version",

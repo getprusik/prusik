@@ -101,6 +101,25 @@ def hook_resolution_warning(which=_UNSET, prefix: str | None = None,
     return ""
 
 
+def path_prusik_version(which=_UNSET, timeout: float = 15.0) -> tuple[str | None, str | None]:
+    """(path, version) of what bare `prusik` resolves to on PATH: the binary every hook and
+    agent instruction runs (fb-f381d16021db). version is None when it does not resolve or
+    `--version` gives no `prusik X.Y.Z` line; path is None when it does not resolve."""
+    if which is _UNSET:
+        which = shutil.which("prusik")
+    if which is None:
+        return None, None
+    try:
+        r = subprocess.run([which, "--version"], capture_output=True, text=True,
+                           timeout=timeout, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return which, None
+    words = (r.stdout or r.stderr or "").split()
+    if r.returncode != 0 or len(words) != 2 or words[0] != "prusik":
+        return which, None
+    return which, words[1]
+
+
 def branch_recommendation(target: Path) -> str:
     """A one-line nudge toward branch isolation, shown after a clean install."""
     status = git_status(target)
