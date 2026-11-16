@@ -1740,7 +1740,7 @@ def _bash_succeeded(payload: dict, tool_response) -> bool | None:
 
 
 def post_tool(args=None) -> int:
-    """PostToolUse hook for Bash: the observed-writes report (what this call changed in the
+    """PostToolUse / PostToolUseFailure hook for Bash: the observed-writes report (what this call changed in the
     shared tree, fb-aa7a6121fcee) and the convergence-stall detector for Bash retries. At
     most one JSON object is printed, through the platform adapter."""
     payload = _read_stdin_json()
@@ -1759,9 +1759,14 @@ def post_tool(args=None) -> int:
     except Exception as exc:  # noqa: BLE001 — the hook must still report, never crash
         observed = _observed_fail_text(f"{type(exc).__name__}: {exc}"[:200], True)
         _observed_failed("post", f"{type(exc).__name__}: {exc}", event)
-    state = phases.current_sprint_state()
-    msgs = [m for m in (observed, _convergence_message(payload, state)) if m]
-    return adapter.post_tool_context(msgs)
+    # PostToolUseFailure (a non-zero exit, DEV-005) runs the observed-writes check only; the
+    # convergence-stall detector keeps reading successful calls, as before.
+    event_name = ("PostToolUseFailure" if payload.get("hook_event_name") == "PostToolUseFailure"
+                  else "PostToolUse")
+    convergence = (None if event_name == "PostToolUseFailure"
+                   else _convergence_message(payload, phases.current_sprint_state()))
+    msgs = [m for m in (observed, convergence) if m]
+    return adapter.post_tool_context(msgs, event_name)
 
 
 def _convergence_message(payload: dict, state: dict | None) -> str | None:

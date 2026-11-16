@@ -156,9 +156,10 @@ class PlatformAdapter(abc.ABC):
         """Express a DENY in the host's native form; return the process exit code."""
 
     @abc.abstractmethod
-    def post_tool_context(self, messages: list[str]) -> int:
+    def post_tool_context(self, messages: list[str], event: str = "PostToolUse") -> int:
         """Hand `messages` to the agent after a tool call in the host's native form (nothing
-        when empty); return the process exit code."""
+        when empty); return the process exit code. `event` is the hook event that fired
+        (`PostToolUse`, or `PostToolUseFailure` for a call that failed)."""
 
     @abc.abstractmethod
     def session_ref(self, payload: dict) -> SessionRef | None:
@@ -231,10 +232,10 @@ class ClaudeCodeAdapter(PlatformAdapter):
     #   - A Bash call that exits non-zero (`sh -c '…; exit 3'`, `python3 -c "…; raise
     #     SystemExit(1)"`, both after writing a file) fires NO PostToolUse. It fires
     #     PostToolUseFailure with the matching `tool_use_id`, `"error": "Exit code 3"`,
-    #     `"is_interrupt": false` and no `tool_response`. Until `prusik gate post-tool` is also
-    #     wired to PostToolUseFailure (a template change outside this release), such a call's
-    #     writes are reported by orphan reconciliation on a later checked call, and the
-    #     advance check sees them.
+    #     `"is_interrupt": false` and no `tool_response`. The template wires
+    #     `prusik gate post-tool` to PostToolUseFailure too (DEV-005), so such a call's writes
+    #     are reported on that call; orphan reconciliation stays the backstop for a project
+    #     whose settings predate the wiring.
     #   - A call past its Bash `timeout` (2000 ms on a 30 s sleep) fires PostToolUse with the
     #     matching id; `tool_response` carries `"timedOutAfterMs": 2000` and a
     #     `"backgroundTaskId"`: the command keeps running in the background, so its later
@@ -269,12 +270,15 @@ class ClaudeCodeAdapter(PlatformAdapter):
         }))
         return 0
 
-    def post_tool_context(self, messages: list[str]) -> int:
+    def post_tool_context(self, messages: list[str], event: str = "PostToolUse") -> int:
+        # hookSpecificOutput.hookEventName must name the event that fired; both PostToolUse
+        # and PostToolUseFailure take additionalContext (code.claude.com/docs/en/hooks,
+        # checked 2026-11-16).
         if not messages:
             return 0
         print(json.dumps({
             "hookSpecificOutput": {
-                "hookEventName": "PostToolUse",
+                "hookEventName": event,
                 "additionalContext": "\n\n".join(messages),
             }
         }))

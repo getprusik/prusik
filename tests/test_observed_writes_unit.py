@@ -492,3 +492,69 @@ def test_fold_failure_never_breaks_the_assembly(proj, monkeypatch, capsys):
     assert consistency.assemble_worktrees_to_root(proj) == ["src/app.py"]
     assert _events("observed_write_check_failed")[-1]["stage"] == "fold"
     assert "not folded" in capsys.readouterr().err
+
+
+# ---- PostToolUseFailure wiring (DEV-005/006) -----------------------------------------------
+
+def test_write_then_failing_exit_is_reported_on_that_call(proj, capsys, monkeypatch):
+    """Claude Code fires only PostToolUseFailure for a Bash call that exits non-zero
+    (verified 2.1.325): a python write followed by `raise SystemExit(1)` is reported on that
+    call, answered under the failure event's name, and the convergence detector stays out."""
+    _enter(proj, "building")
+    monkeypatch.setattr(gate, "_convergence_message",
+                        lambda *a: (_ for _ in ()).throw(AssertionError("convergence ran")))
+    base = {"session_id": "s1", "tool_name": "Bash", "tool_use_id": "toolu_f",
+            "tool_input": {"command": "python3 -c 'w(); raise SystemExit(1)'"},
+            "cwd": str(proj)}
+    _hook(gate.pre_tool, {**base, "hook_event_name": "PreToolUse"}, capsys)
+    (proj / "README.md").write_text("bad\n")
+    out = _hook(gate.post_tool, {**base, "hook_event_name": "PostToolUseFailure",
+                                 "error": "Exit code 1", "is_interrupt": False}, capsys)
+    spec = json.loads(out)["hookSpecificOutput"]
+    assert spec["hookEventName"] == "PostToolUseFailure"
+    assert "[prusik-observed-write]" in spec["additionalContext"]
+    assert "README.md" in spec["additionalContext"]
+    assert _events("observed_write_reported")[-1]["orphan"] is False
+
+
+def test_failure_event_with_nothing_written_prints_nothing(proj, capsys):
+    _enter(proj, "building")
+    base = {"session_id": "s1", "tool_name": "Bash", "tool_use_id": "toolu_g",
+            "tool_input": {"command": "false"}, "cwd": str(proj)}
+    _hook(gate.pre_tool, {**base, "hook_event_name": "PreToolUse"}, capsys)
+    assert _hook(gate.post_tool, {**base, "hook_event_name": "PostToolUseFailure",
+                                  "error": "Exit code 1"}, capsys) == ""
+
+
+def test_adapter_names_the_failure_event(capsys):
+    assert pa.ClaudeCodeAdapter().post_tool_context(["m"], "PostToolUseFailure") == 0
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"] == {
+        "hookEventName": "PostToolUseFailure", "additionalContext": "m"}
+
+
+def _template_hooks() -> dict:
+    import prusik
+    return json.loads((Path(prusik.__file__).parent / "templates/.claude/settings.json")
+                      .read_text())["hooks"]
+
+
+def test_template_wires_post_tool_to_success_and_failure_alike():
+    hooks = _template_hooks()
+    assert hooks["PostToolUseFailure"] == hooks["PostToolUse"]
+    (group,) = hooks["PostToolUseFailure"]
+    assert group["matcher"] == "Bash"
+    assert [h["command"] for h in group["hooks"]] == ["prusik gate post-tool"]
+
+
+def test_refresh_adds_the_failure_hook_and_keeps_a_user_hook():
+    from prusik import refresh_merge
+    user = {"type": "command", "command": "my-audit"}
+    project = {"PostToolUse": [{"matcher": "Bash", "hooks": [
+                   {"type": "command", "command": "prusik gate post-tool", "timeout": 10}]}],
+               "PostToolUseFailure": [{"matcher": "Bash", "hooks": [user]}]}
+    merged, added = refresh_merge._merge_hooks(_template_hooks(), project)
+    assert "PostToolUseFailure" in added
+    cmds = [h["command"] for g in merged["PostToolUseFailure"] for h in g["hooks"]]
+    assert cmds == ["my-audit", "prusik gate post-tool"]
+    again, added2 = refresh_merge._merge_hooks(_template_hooks(), merged)
+    assert "PostToolUseFailure" not in added2 and again == merged

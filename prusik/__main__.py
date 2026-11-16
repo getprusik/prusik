@@ -27,7 +27,7 @@ def _slug(value: str) -> str:
 # both the fast dispatch below and the `gate` subparser registration, so they can't drift.
 HOOK_COMMANDS = ("pre-tool", "post-tool", "stop", "session-start")
 _HOOK_HELP = {"pre-tool": "PreToolUse hook",
-              "post-tool": "PostToolUse hook — convergence-stall detector",
+              "post-tool": "PostToolUse(Failure) hook — observed writes, convergence",
               "stop": "Stop hook",
               "session-start": "SessionStart hook"}
 
