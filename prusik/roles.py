@@ -18,18 +18,24 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_ROLE_RE = re.compile(r"^\s*[-*]\s*\*\*([a-z][\w-]*)\*\*")
+# A role bullet names the role first, then what it owns. Two spellings are in the field:
+# the template's and feature-planner's `- backend-builder → <modules>`, and the bold
+# `- **backend-builder** owns <modules>`. A plain bullet counts only when an ownership
+# marker (→, -> or `owns`) follows the name, so a prose bullet is never a role.
+_ROLE_RE = re.compile(
+    r"^\s*[-*]\s*(?:\*\*([a-z][\w-]*)\*\*"
+    r"|`?([a-z][\w-]*)`?(?=\s*(?:→|->|\bowns\b)))")
 
 
 def proposed_roles(plan_text: str) -> list[str]:
-    """Role names from the plan's `## Proposed roles` bold-bullet list."""
+    """Role names from the plan's `## Proposed roles` bullets (see `_ROLE_RE`)."""
     from prusik import schema
     body = schema.parse_sections(plan_text).get("## Proposed roles", "")
     out: list[str] = []
     for line in body.splitlines():
         m = _ROLE_RE.match(line)
         if m:
-            out.append(m.group(1))
+            out.append(m.group(1) or m.group(2))
     return out
 
 

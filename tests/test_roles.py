@@ -68,3 +68,31 @@ def test_frontend_builder_agent_is_shipped():
     import prusik
     agents = Path(prusik.__file__).parent / "templates" / ".claude" / "agents"
     assert (agents / "frontend-builder.md").exists()
+
+
+def test_proposed_roles_reads_the_template_arrow_form():
+    """The template and feature-planner prescribe `- role → modules` (no bold); drive's
+    builder dispatch read only the bold form and escalated "plan names no builder role"
+    on a plan that followed the spec (observed-writes, 2026-11-16)."""
+    plan = (
+        "## Proposed roles\n"
+        "- backend-builder → `prusik/a.py` (steps 1-3)\n"
+        "- test-writer -> `tests/test_a.py`\n"
+        "- `integrator` → release bookkeeping\n"
+        "- **frontend-builder** owns `worktrees/frontend-builder/`\n"
+        "- solo-builder owns every module above\n"
+    )
+    assert roles.proposed_roles(plan) == [
+        "backend-builder", "test-writer", "integrator", "frontend-builder", "solo-builder"]
+
+
+def test_prose_bullets_under_proposed_roles_are_not_roles():
+    plan = (
+        "## Proposed roles\n"
+        "- backend-builder → `prusik/a.py`\n"
+        "- the builder stops and escalates if step 1 fails\n"
+        "- tests run in the worktree, not the main tree\n"
+        "- see Build order for sequencing: steps 1-9\n"
+        "- note: the builder runs the suite\n"
+    )
+    assert roles.proposed_roles(plan) == ["backend-builder"]
