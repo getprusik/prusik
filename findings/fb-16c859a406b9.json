@@ -1,0 +1,16 @@
+{
+  "id": "fb-16c859a406b9",
+  "created_at": "2026-11-16T07:22:12.091856+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "single-writer lease blocks Write/Edit but not interpreter writes via Bash",
+  "detail": "Session 813b2be0: with the lease still held by finished session 375aeb27, three python3 heredoc edits (pathlib write_text to prusik/gate.py, drive.py, consistency.py) went through via Bash; the next Write tool call was refused by the lease gate. Same class as fb-1303f39d14a6 (shared-tree writes no command text names), but on the main-session lease path rather than drive's role spawns. Fix shape: the lease check should key on tree state (fingerprint before/after a Bash call), not on parsed write targets.",
+  "feature": null,
+  "content_hash": "16c859a406b9",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
