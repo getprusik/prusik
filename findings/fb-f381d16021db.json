@@ -1,0 +1,16 @@
+{
+  "id": "fb-f381d16021db",
+  "created_at": "2026-11-16T17:28:55.899577+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "which prusik runs is decided by accident: hooks use PATH, drive children use cwd shadowing, role specs use PATH",
+  "detail": "observed-writes (2026-11-16): bare 'prusik drive' ran the 0.245.0 wheel (PATH) while drive's children ran 'sys.executable -m prusik' with cwd=root, which in the engine repo imports the working-tree source; one drive mixed two versions, and the wheel's role parser escalated 'plan names no builder role' after the source was fixed. The class: (1) hook commands in templates/.claude/settings.json are bare 'prusik gate ...', resolved via PATH at fire time (an activated venv, a project dependency or a stale pipx install wins; preflight probes once at install); (2) drive.py:106/109 and overhead.py:159 spawn 'sys.executable -m prusik' with cwd=project root, so any prusik/ package there shadows the installed one; (3) ~70 bare 'prusik ...' instructions in role specs resolve via each agent's PATH. Fix shape: one explicitly resolved launcher every hook, child and agent instruction goes through, a version check that fails closed on mismatch, nothing that depends on cwd or PATH order; settings.json is committed, so no machine-absolute path in it. Operator: 'we should avoid by accident mechanics, as prusik needs to be reliable for adopters.'",
+  "feature": "observed-writes",
+  "content_hash": "f381d16021db",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

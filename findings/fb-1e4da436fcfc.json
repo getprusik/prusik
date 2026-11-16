@@ -1,0 +1,16 @@
+{
+  "id": "fb-1e4da436fcfc",
+  "created_at": "2026-11-16T17:49:17.726277+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "drive has no channel for a builder to stop and escalate, and it proves each builder worktree's full suite on its own, so a plan's binding STOP is invisible and split code/test lanes cannot both be green",
+  "detail": "observed-writes plan step 1(c) binds the builder to STOP and escalate when PostToolUse does not fire on a non-zero Bash exit (verified: only PostToolUseFailure fires on Claude Code 2.1.325). drive._building spawns the builder, then proves the suite in worktrees/<role> and advances: a builder that stops with nothing built passes the suite and the sprint advances to reviewing on an empty build. Separately, backend-builder (code) and test-writer (tests) get separate worktrees from HEAD; the plan moves hot-path pins that the code change forces, so the code worktree is red without the test edit and the test worktree is red without the code. backend-builder applied the forced pin edits itself (deviation DEV-003).",
+  "feature": "observed-writes",
+  "content_hash": "1e4da436fcfc",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
