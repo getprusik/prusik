@@ -148,3 +148,5 @@ drive:
   auth: claude.ai          # "claude.ai" (subscription login) or "api_key"; drive stops if the session would use the other
   spawn_timeout_min: 60    # a role spawned by drive is killed and escalated after this many minutes
   suite_command: "uv run python -m pytest tests/ -q -p no:cacheprovider"
+  budget_tokens: 8000000
+  session_budget_tokens: 2000000

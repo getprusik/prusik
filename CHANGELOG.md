@@ -3,6 +3,39 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.247.0] — drive spends against a cap, and a stopped sprint can be abandoned
+
+- **Drive enforces a token budget.** The observed-writes sprint reached 49.9M tokens against
+  an 8M target before a person stopped it. The budget lines printed along the way never
+  stopped anything. Changes:
+  - `drive.budget_tokens` is now required, and drive exits 2 without it.
+  - Before and after every spawn, drive measures the feature's spend. It escalates
+    `budget_exceeded` at the first cap crossed: the sprint's, the current phase's
+    `budget_tokens`, or `drive.session_budget_tokens` for the host session running drive.
+  - A session-cap stop releases that session's writer lease, so a fresh session can resume.
+  - A spend drive cannot read escalates `budget_unmeasurable`. The one exception is before
+    drive's first spawn, when no session is registered yet and nothing has been spent.
+- **`prusik gate sprint-abandon --feature F --reason R`.** A sprint stopped mid-phase kept its
+  write rules and push denial over the checkout until it completed. The only other exit,
+  `sprint-start --force-clean`, opens a new sprint whose phase restricts writes too. Abandon:
+  - clears the phase state, reaps any open fix-round, lifts a pause and releases the writer
+    lease;
+  - records `sprint_abandoned`, which no completion metric counts;
+  - keeps the sprint's `sprint/F-*` branches and worktrees;
+  - is refused while a running drive owns the sprint.
+- **A resume no longer re-spawns a finished builder (fb-1e4da436fcfc).** Drive records each
+  builder's branch tip once its spawn passes every check. Within the same visit to building,
+  it skips that builder while the tip is unchanged.
+- **The building suite is proven on the merged builder branches (fb-1e4da436fcfc).** A plan
+  that splits code and tests across builders leaves each branch red on its own. Drive now
+  merges every builder branch into one scratch worktree outside the project, proves the
+  suite there once, and removes the scratch worktree afterwards.
+- **Builder worktrees recover from an earlier attempt.** A worktree directory deleted without
+  `git worktree remove` no longer blocks the next `git worktree add`. A leftover branch with
+  commits of its own is reused as is, and one with none restarts from HEAD.
+- **Drive reads plan role bullets in the form the template prescribes**
+  (`- backend-builder → <modules>`), as well as the bold form.
+
 ## [0.246.0] — the solo lanes capture RED before the build
 
 - **The solo lanes capture the RED baseline before the build (fb-221b8b5df7e6).** When triage
