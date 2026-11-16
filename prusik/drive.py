@@ -437,15 +437,53 @@ class _Drive:
             self._spawn(role, f"implement your portion of design/{f}/plan.md in "
                               f"worktrees/{role}/ per your role spec. Commit your work on "
                               f"the worktree branch. Do not run git push or merge.")
-        for role in builders:
-            rc, tail = self._prusik("prove", "--kind", "tests", "--", "sh", "-c", str(suite),
-                                    cwd=self.root / "worktrees" / role)
-            if rc != 0:
-                raise Escalation("suite_failed", "building", role,
-                                 f"full suite not proven green in worktrees/{role}",
-                                 tail.splitlines())
+        if (self.root / ".git").exists():
+            self._prove_combined(builders, str(suite))
+        else:
+            for role in builders:
+                rc, tail = self._prusik("prove", "--kind", "tests", "--", "sh", "-c",
+                                        str(suite), cwd=self.root / "worktrees" / role)
+                if rc != 0:
+                    raise Escalation("suite_failed", "building", role,
+                                     f"full suite not proven green in worktrees/{role}",
+                                     tail.splitlines())
         self.steps.append("prove suite")
         self._advance("reviewing")
+
+    def _prove_combined(self, builders: list[str], suite: str) -> None:
+        """Prove the full suite once on every builder branch merged together, never on one
+        builder's branch alone: a plan that splits code and tests across builders leaves
+        each branch red on its own (fb-1e4da436fcfc). The view is a detached scratch
+        worktree outside the project (regression-sentinel's recipe), so the project tree is
+        never written; it is removed whatever the outcome."""
+        import shutil
+        import tempfile
+        scratch = Path(tempfile.mkdtemp(prefix=f"prusik-build-{self.f}-"))
+        view = scratch / "view"
+        try:
+            rc, tail = self._cli(["git", "worktree", "add", "--detach", str(view), "HEAD"])
+            if rc != 0:
+                raise Escalation("suite_failed", "building", None,
+                                 f"could not create the combined view: `git worktree add` "
+                                 f"rc {rc}", tail.splitlines())
+            for role in builders:
+                branch = f"sprint/{self.f}-{role}"
+                rc, tail = self._cli(["git", "-C", str(view), "merge", "--no-edit", branch])
+                if rc != 0:
+                    raise Escalation("suite_failed", "building", role,
+                                     f"{branch} does not merge with the other builders' "
+                                     f"branches", tail.splitlines())
+            rc, tail = self._prusik("prove", "--kind", "tests", "--", "sh", "-c", suite,
+                                    cwd=view)
+            if rc != 0:
+                raise Escalation("suite_failed", "building", None,
+                                 "full suite not proven green on the merged builder "
+                                 f"branches ({', '.join(builders)})", tail.splitlines())
+        finally:
+            if view.exists():
+                self._cli(["git", "worktree", "remove", "--force", str(view)])
+            shutil.rmtree(scratch, ignore_errors=True)
+            self._cli(["git", "worktree", "prune"])
 
     def _report_first_token(self, report: str) -> str | None:
         try:

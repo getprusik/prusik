@@ -275,7 +275,8 @@ def test_building_resume_reuses_an_existing_worktree(rig, proj, monkeypatch):
     monkeypatch.setattr(drive._Drive, "_cli", cli)
     rig.run()
     assert ("spawn", "backend-builder") in rig.events
-    assert not [c for c in called if c[0] == "git"], "no `git worktree add` on resume"
+    assert not [c for c in called if c[:3] == ["git", "worktree", "add"]
+                and "worktrees/backend-builder" in c], "no `git worktree add` on resume"
 
 
 def test_building_creates_the_worktree_for_a_new_builder(rig, proj, monkeypatch):
@@ -289,12 +290,12 @@ def test_building_creates_the_worktree_for_a_new_builder(rig, proj, monkeypatch)
         called.append(argv)
         if argv[1] == "rev-parse":
             return 1, ""                          # no such branch yet
-        if argv[1:3] == ["worktree", "add"]:
+        if argv[1:3] == ["worktree", "add"] and "worktrees/backend-builder" in argv:
             (proj / "worktrees/backend-builder").mkdir()
         return 0, ""
     monkeypatch.setattr(drive._Drive, "_cli", cli)
     rig.run()
-    adds = [c for c in called if c[:3] == ["git", "worktree", "add"]]
+    adds = [c for c in called if c[:3] == ["git", "worktree", "add"] and "--detach" not in c]
     assert adds == [["git", "worktree", "add", "-B", "sprint/feat-backend-builder",
                      "worktrees/backend-builder", "HEAD"]]
 
@@ -697,3 +698,68 @@ def test_worktree_retry_moves_an_empty_leftover_branch_to_head(tmp_path):
     _git(repo, "commit", "-q", "-m", "later")
     wt = _bare_drive(repo)._worktree("backend-builder")
     assert _git(wt, "rev-parse", "HEAD") == _git(repo, "rev-parse", "HEAD")
+
+
+# ── real git: the building proof runs on the merged builder branches (fb-1e4da436fcfc) ───
+
+def _builder_branch(repo, role, path, text, feature="feat"):
+    _git(repo, "checkout", "-q", "-b", f"sprint/{feature}-{role}", "main")
+    (repo / path).write_text(text)
+    _git(repo, "add", path)
+    _git(repo, "commit", "-q", "-m", role)
+    _git(repo, "checkout", "-q", "main")
+
+
+def _proving_drive(repo, monkeypatch, suite_seen):
+    import subprocess
+
+    def fake_prusik(self, *a, cwd=None):
+        assert a[:2] == ("prove", "--kind")
+        suite_seen.append(Path(cwd))
+        p = subprocess.run(list(a[a.index("--") + 1:]), cwd=cwd, capture_output=True,
+                           text=True)
+        return p.returncode, p.stdout + p.stderr
+    monkeypatch.setattr(drive._Drive, "_prusik", fake_prusik)
+    d = _bare_drive(repo)
+    d.reports.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def test_split_code_and_test_builders_prove_green_together(tmp_path, monkeypatch):
+    repo = _real_repo(tmp_path)
+    _builder_branch(repo, "backend-builder", "code.py", "X = 1\n")
+    _builder_branch(repo, "test-writer", "test_code.py", "from code import X\n")
+    seen = []
+    d = _proving_drive(repo, monkeypatch, seen)
+    d._prove_combined(["backend-builder", "test-writer"],
+                      "test -f code.py && test -f test_code.py")
+    (view,) = seen
+    assert not view.is_relative_to(repo), "the view is outside the project tree"
+    assert not view.exists() and not view.parent.exists(), "the scratch view is removed"
+    assert "view" not in _git(repo, "worktree", "list")
+    assert _git(repo, "status", "--porcelain") == "?? reports/", \
+        "only drive's own log is written in the project tree"
+
+
+def test_a_red_merged_suite_escalates_and_still_removes_the_view(tmp_path, monkeypatch):
+    repo = _real_repo(tmp_path)
+    _builder_branch(repo, "backend-builder", "code.py", "X = 1\n")
+    seen = []
+    d = _proving_drive(repo, monkeypatch, seen)
+    with pytest.raises(drive.Escalation) as e:
+        d._prove_combined(["backend-builder"], "test -f test_code.py")
+    assert e.value.kind == "suite_failed" and "merged builder branches" in e.value.reason
+    assert not seen[0].exists() and "view" not in _git(repo, "worktree", "list")
+
+
+def test_conflicting_builder_branches_escalate_naming_the_branch(tmp_path, monkeypatch):
+    repo = _real_repo(tmp_path)
+    _builder_branch(repo, "backend-builder", "a.txt", "backend\n")
+    _builder_branch(repo, "test-writer", "a.txt", "tests\n")
+    seen = []
+    d = _proving_drive(repo, monkeypatch, seen)
+    with pytest.raises(drive.Escalation) as e:
+        d._prove_combined(["backend-builder", "test-writer"], "true")
+    assert e.value.role == "test-writer" and "sprint/feat-test-writer" in e.value.reason
+    assert seen == [], "no suite runs on a view that did not merge"
+    assert len(_git(repo, "worktree", "list").splitlines()) == 1
