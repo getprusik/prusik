@@ -3,6 +3,8 @@
 0.244.0 pushed twice with code edited after its last suite run, and CI found it after the
 push. scripts/pre-push.sh checks each pushed commit's tree hash against the passes that
 scripts/suite.sh records, so an edit after the run blocks the push.
+
+moat-finding: fb-be2b998c642c
 """
 
 from __future__ import annotations

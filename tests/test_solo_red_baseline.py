@@ -3,7 +3,9 @@
 Drive's triage→solo hand-off runs `prove-red` while the shared tree is still pre-change,
 and leaving any build phase (building, solo_execute) without a baseline for every local
 prove_red criterion is refused — so the gap can no longer first surface at
-sprint-complete, after integration, when no honest RED capture is possible."""
+sprint-complete, after integration, when no honest RED capture is possible.
+moat-finding: fb-221b8b5df7e6
+"""
 
 from __future__ import annotations
 

@@ -3,6 +3,23 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.246.0] — the solo lanes capture RED before the build
+
+- **The solo lanes capture the RED baseline before the build (fb-221b8b5df7e6).** When triage
+  chose solo, drive handed the sprint back without running `prove-red`, which it ran only in
+  `building`. The missing baseline first surfaced at `sprint-complete`, after integration, when
+  the old code was gone and no honest RED capture was possible. Two fixes:
+  - drive's `solo_handback` now runs `prove-red` while the shared tree is still pre-change. A
+    capture that records nothing escalates `prove_red_failed`.
+  - Leaving `building` or `solo_execute` is refused until every local `prove_red` criterion has
+    a baseline for its current verify. This covers the trivial lane and the manual solo path,
+    and the block names `prusik gate prove-red --feature F`, which is still honest there
+    because the shared tree changes only at `integrating`.
+- **Pushing commits that change only non-test inputs no longer reruns the suite
+  (fb-be2b998c642c).** `scripts/pre-push.sh` carries a recorded suite pass across commits whose
+  changes fall entirely under the paths declared in `scripts/non-test-inputs.txt` (findings
+  tickets and the like). A findings-only push now takes about 2s instead of about 3m.
+
 ## [0.245.0] — the shared tree is checked by state, and drive owns its phases
 
 - **A write the gate can't read from a command's text still halts drive (fb-1303f39d14a6).** In
