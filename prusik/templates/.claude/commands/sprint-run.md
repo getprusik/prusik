@@ -144,11 +144,11 @@ Once sprint-init passes (phase `scoping`), run the rest of the sprint in code. R
 - **rc 3** — drive stopped at a judgement point. Read `reports/$ARGUMENTS/drive-escalation.json` and act on that file only. Report its `kind`, `reason` and `evidence` to the user, with the remedy for the kind:
   - `scope_rejected` / `plan_rejected` — the critic did not approve within `drive.design_rounds`. Read the critic report in the evidence, fix the artifact or raise the cap, then re-run `prusik drive $ARGUMENTS`.
   - `triage_rejected` — triage rejected the sprint or its decision was unreadable. Fix the brief or `decisions/$ARGUMENTS.json`, then re-run.
-  - `solo_handback` — triage chose solo; the sprint is in `solo_execute`. Implement in `worktrees/solo/` (Manual step 5a), then re-run `prusik drive $ARGUMENTS` from reviewing.
+  - `solo_handback` — triage chose solo; the sprint is in `solo_execute` and drive has captured the RED baselines. Implement in `worktrees/solo/` (Manual step 5a), then re-run `prusik drive $ARGUMENTS` from reviewing.
   - `prove_red_failed`, `suite_failed`, `fix_round_cap`, `advance_blocked` — a gate or proof failed; fix the cause named in the evidence, then re-run.
   - `permission_denied`, `spawn_failed`, `tier_unresolved`, `auth_mismatch`, `writer_busy` — a spawn or setup problem; show the evidence and stop.
   - `tree_written` — a role changed shared-tree files its phase may not write, by a means the gate could not see. The files are left as the role left them. Show the paths in the evidence and stop: the user decides whether to keep or restore them.
-- **rc 2** — the sprint is not drivable yet (including the trivial lane: write `design/$ARGUMENTS/trivial.md`, implement in `worktrees/solo/`, re-run from reviewing). Show the message.
+- **rc 2** — the sprint is not drivable yet (including the trivial lane: write `design/$ARGUMENTS/trivial.md`, run `prusik gate prove-red --feature $ARGUMENTS`, implement in `worktrees/solo/`, re-run from reviewing). Show the message.
 
 ---
 
@@ -197,7 +197,11 @@ Read `decisions/$ARGUMENTS.json`'s `mode`:
 
 ### Manual step 5a — solo build (if mode=solo)
 
-Read `design/$ARGUMENTS/scope.md`'s Modules touched. Implement the feature in `worktrees/solo/` — mirror the repo structure under worktrees/solo/ for files you touch. Respect the writable gate (nothing outside worktrees/solo/**).
+Read `design/$ARGUMENTS/scope.md`'s Modules touched. Before writing any code, capture the RED baselines (skip if drive's `solo_handback` already did; leaving `solo_execute` is refused without them):
+
+    prusik gate prove-red --feature $ARGUMENTS
+
+Implement the feature in `worktrees/solo/` — mirror the repo structure under worktrees/solo/ for files you touch. Respect the writable gate (nothing outside worktrees/solo/**).
 
 Run the project's smoke/unit tests. If passing, advance:
 

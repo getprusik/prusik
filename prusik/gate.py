@@ -2258,6 +2258,21 @@ def _red_baseline_exists(root: Path, feature: str, cid: str, vc: str) -> bool:
     return False
 
 
+def missing_red_baselines(root: Path, feature: str) -> list[str]:
+    """Ids of the feature's local prove_red criteria that have no captured RED
+    baseline for their current verify — the one source of truth drive's building
+    step, its solo hand-off, and the building/solo_execute exit check all read."""
+    from prusik import schema
+    path = schema.criteria_path_for_brief(root / "briefs" / f"{feature}.md")
+    if not path.exists():
+        return []
+    return [str(c.get("id")) for c in schema.load_criteria(path)
+            if c.get("prove_red") and str(c.get("verify_in", "")).lower() != "ci"
+            and c.get("verify_command")
+            and not _red_baseline_exists(root, feature, str(c.get("id")),
+                                         c.get("verify_command", ""))]
+
+
 def _criterion_junit(root: Path, feature: str, cid: str) -> str | None:
     """The `junit:` glob a criterion declares, or None (no file / no criterion /
     no field) — which keeps today's behavior for every non-junit criterion."""

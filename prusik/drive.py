@@ -358,8 +358,11 @@ class _Drive:
             self._advance("planning")
         elif mode == "solo":
             self._advance("solo_execute")
+            # The solo build runs outside drive, so capture RED here, before it starts
+            # (fb-221b8b5df7e6); solo_execute's exit check refuses to advance without it.
+            self._capture_red("solo_execute")
             raise Escalation("solo_handback", "triage", None,
-                             f"triage chose solo: implement in worktrees/solo/, then "
+                             f"triage chose solo; RED baselines captured: implement in worktrees/solo/, then "
                              f"re-run prusik drive {f} from reviewing", [str(path)])
         else:
             raise Escalation("triage_rejected", "triage", None,
@@ -376,15 +379,22 @@ class _Drive:
         return found
 
     def _missing_red_baselines(self) -> list[str]:
-        from prusik import gate, schema
-        path = schema.criteria_path_for_brief(self.root / "briefs" / f"{self.f}.md")
-        if not path.exists():
-            return []
-        return [str(c.get("id")) for c in schema.load_criteria(path)
-                if c.get("prove_red") and str(c.get("verify_in", "")).lower() != "ci"
-                and c.get("verify_command")
-                and not gate._red_baseline_exists(self.root, self.f, str(c.get("id")),
-                                                  c.get("verify_command", ""))]
+        from prusik import gate
+        return gate.missing_red_baselines(self.root, self.f)
+
+    def _capture_red(self, phase: str) -> None:
+        """Capture every missing RED baseline while the shared tree is still pre-change
+        (before any builder runs), or escalate prove_red_failed."""
+        if not self._missing_red_baselines():
+            self.steps.append("prove-red satisfied")
+            return
+        rc, tail = self._gate("prove-red", "--feature", self.f)
+        still = self._missing_red_baselines()
+        if rc != 0 or still:
+            raise Escalation("prove_red_failed", phase, None,
+                             "prove-red did not capture a RED baseline for every "
+                             "prove_red criterion", [*still, *tail.splitlines()[-5:]])
+        self.steps.append("prove-red")
 
     def _worktree(self, role: str) -> Path:
         wt = self.root / "worktrees" / role
@@ -408,16 +418,7 @@ class _Drive:
                              "drive.suite_command is not set; drive proves the full suite "
                              "before advancing building", [".claude/sprint-config.yaml"])
         builders = self._builders()
-        if self._missing_red_baselines():
-            rc, tail = self._gate("prove-red", "--feature", f)
-            still = self._missing_red_baselines()
-            if rc != 0 or still:
-                raise Escalation("prove_red_failed", "building", None,
-                                 "prove-red did not capture a RED baseline for every "
-                                 "prove_red criterion", [*still, *tail.splitlines()[-5:]])
-            self.steps.append("prove-red")
-        else:
-            self.steps.append("prove-red satisfied")
+        self._capture_red("building")
         for role in builders:
             self._worktree(role)
             self._spawn(role, f"implement your portion of design/{f}/plan.md in "
