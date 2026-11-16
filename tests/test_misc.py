@@ -1924,3 +1924,26 @@ def test_sprint_advance_template_parses_arguments_into_two_tokens():
     assert "prusik gate advance $ARGUMENTS" not in text
 
 
+
+
+def test_clean_worktrees_unregisters_removed_git_worktrees(tmp_path):
+    """rmtree alone left the worktree registered, and the next sprint's
+    `git worktree add` at that path failed rc 128 (observed-writes, 2026-11-16)."""
+    import subprocess as sp
+    def git(*a):
+        return sp.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True,
+                      check=True).stdout
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.invalid")
+    git("config", "user.name", "t")
+    (tmp_path / "a.txt").write_text("a\n")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "init")
+    git("worktree", "add", "-q", "-b", "sprint/old-backend-builder",
+        "worktrees/backend-builder", "HEAD")
+    assert gate._clean_worktrees(tmp_path) == ["backend-builder"]
+    assert "worktrees/backend-builder" not in git("worktree", "list")
+    git("worktree", "add", "-q", "-b", "sprint/new-backend-builder",
+        "worktrees/backend-builder", "HEAD")
+    assert "sprint/old-backend-builder" in git("branch", "--list", "sprint/*"), \
+        "the old branch (and any work on it) is kept"

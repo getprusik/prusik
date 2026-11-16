@@ -2376,6 +2376,16 @@ def _clean_worktrees(root) -> list[str]:
         if child.is_dir():
             _shutil.rmtree(child)
             cleaned.append(child.name)
+    if cleaned and (root / ".git").exists():
+        # rmtree leaves each git worktree registered, and the next `git worktree add` at
+        # that path then fails ("missing but already registered"). Prune drops only the
+        # registrations whose directory is gone.
+        import subprocess as _sp
+        r = _sp.run(["git", "-C", str(root), "worktree", "prune"], capture_output=True,
+                    text=True, check=False)
+        if r.returncode != 0:
+            print(f"[prusik-gate] git worktree prune failed (rc {r.returncode}): "
+                  f"{(r.stderr or r.stdout).strip()[:200]}")
     return cleaned
 
 

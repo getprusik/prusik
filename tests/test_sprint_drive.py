@@ -287,12 +287,16 @@ def test_building_creates_the_worktree_for_a_new_builder(rig, proj, monkeypatch)
         if argv[0] != "git":
             return orig(self, argv, cwd)
         called.append(argv)
-        (proj / "worktrees/backend-builder").mkdir()
+        if argv[1] == "rev-parse":
+            return 1, ""                          # no such branch yet
+        if argv[1:3] == ["worktree", "add"]:
+            (proj / "worktrees/backend-builder").mkdir()
         return 0, ""
     monkeypatch.setattr(drive._Drive, "_cli", cli)
     rig.run()
-    assert called[0] == ["git", "worktree", "add", "-b", "sprint/feat-backend-builder",
-                         "worktrees/backend-builder", "HEAD"]
+    adds = [c for c in called if c[:3] == ["git", "worktree", "add"]]
+    assert adds == [["git", "worktree", "add", "-b", "sprint/feat-backend-builder",
+                     "worktrees/backend-builder", "HEAD"]]
 
 
 def test_plan_without_a_builder_role_escalates(rig, proj):
@@ -615,3 +619,69 @@ def test_escalation_kinds_are_the_documented_set():
         "advance_blocked", "tree_written"}
     with pytest.raises(ValueError):
         drive.Escalation("made_up", "building", None, "x")
+
+
+# ── real git: worktree recovery (observed-writes, 2026-11-16) ─────────────────────────────
+
+def _git(root, *args):
+    import subprocess
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                          check=True).stdout.strip()
+
+
+def _real_repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "t@example.invalid")
+    _git(repo, "config", "user.name", "t")
+    (repo / "a.txt").write_text("a\n")
+    _git(repo, "add", "a.txt")
+    _git(repo, "commit", "-q", "-m", "init")
+    return repo
+
+
+def _bare_drive(repo, feature="feat"):
+    import io
+    d = drive._Drive(feature, None, io.StringIO())
+    d.root = repo
+    return d
+
+
+def test_worktree_add_recovers_a_removed_but_registered_worktree(tmp_path):
+    """A prior sprint's worktree dir deleted without `git worktree remove` stays
+    registered; `git worktree add` at that path then fails rc 128."""
+    import shutil
+    repo = _real_repo(tmp_path)
+    _git(repo, "worktree", "add", "-q", "-b", "sprint/old-backend-builder",
+         "worktrees/backend-builder", "HEAD")
+    shutil.rmtree(repo / "worktrees/backend-builder")
+    wt = _bare_drive(repo)._worktree("backend-builder")
+    assert (wt / "a.txt").is_file()
+    assert _git(wt, "rev-parse", "--abbrev-ref", "HEAD") == "sprint/feat-backend-builder"
+
+
+def test_worktree_retry_reuses_the_branch_and_keeps_its_commits(tmp_path):
+    """A branch left by an earlier attempt is reused, never reset: a builder commit on it
+    survives the retry."""
+    import shutil
+    repo = _real_repo(tmp_path)
+    _git(repo, "worktree", "add", "-q", "-b", "sprint/feat-backend-builder",
+         "worktrees/backend-builder", "HEAD")
+    (repo / "worktrees/backend-builder/b.txt").write_text("builder work\n")
+    _git(repo / "worktrees/backend-builder", "add", "b.txt")
+    _git(repo / "worktrees/backend-builder", "commit", "-q", "-m", "builder")
+    work = _git(repo, "rev-parse", "sprint/feat-backend-builder")
+    shutil.rmtree(repo / "worktrees/backend-builder")
+    wt = _bare_drive(repo)._worktree("backend-builder")
+    assert _git(wt, "rev-parse", "HEAD") == work
+    assert (wt / "b.txt").read_text() == "builder work\n"
+
+
+def test_worktree_prune_keeps_a_live_worktree_registered(tmp_path):
+    repo = _real_repo(tmp_path)
+    _git(repo, "worktree", "add", "-q", "-b", "sprint/feat-test-writer",
+         "worktrees/test-writer", "HEAD")
+    _bare_drive(repo)._worktree("backend-builder")
+    listed = _git(repo, "worktree", "list")
+    assert "worktrees/test-writer" in listed and "worktrees/backend-builder" in listed
