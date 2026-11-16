@@ -1,0 +1,16 @@
+{
+  "id": "fb-221b8b5df7e6",
+  "created_at": "2026-11-16T06:56:54.073903+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "solo_handback never captures the prove_red baseline; sprint-complete then fails with no honest recovery",
+  "detail": "push-carries-suite-pass: triage fell through to solo, drive escalated solo_handback at triage. drive captures RED only in _building (drive.py ~409), which the solo path never runs, and neither the solo_handback reason, sprint-run step 5a, nor the solo_execute->reviewing advance mentions or requires prove-red. The gap surfaced only at gate sprint-complete in integrating ('no captured RED baseline'), after the change was already integrated, so the baseline had to be captured by temporarily restoring the old scripts/pre-push.sh. Fix: capture prove-red at the solo hand-off (before the build) or block solo_execute->reviewing without it, keyed to the ledger's criterion_red_baseline events.",
+  "feature": "push-carries-suite-pass",
+  "content_hash": "221b8b5df7e6",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

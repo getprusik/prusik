@@ -9,7 +9,13 @@
   "content_hash": "f358daf6e022",
   "repro": "",
   "duplicate_of": null,
-  "thread": [],
+  "thread": [
+    {
+      "at": "2026-11-16T07:01:04.202968+00:00",
+      "role": "adopter",
+      "body": "Data point, not the closing measurement: push-carries-suite-pass (2026-11-16) triaged solo, so drive's planning loop never ran. Measured total 3.86M (<8M), main 2.25M = 58%. Main cost: briefing 0.64M, the solo hand-off build relay + gate reconcile (solo_execute 1.21M phase total), and an integrating-phase recovery (prove-red never captured on the solo path, fb-221b8b5df7e6). Scoping+scope-critic ran headless at 0.32M combined. Close this only on a team-lane driven sprint."
+    }
+  ],
   "resolution": null,
   "verify_history": [],
   "status": "open"
