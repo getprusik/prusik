@@ -403,15 +403,18 @@ class _Drive:
         if (self.root / ".git").exists():
             # A worktree dir removed without `git worktree remove` stays registered and
             # blocks `add` at that path; prune drops only registrations whose dir is gone.
-            # A branch left by an earlier attempt is reused as is, never reset, so a
-            # builder's commits on it survive a retry.
+            # A branch left by an earlier attempt that carries commits of its own is reused
+            # as is, so a builder's work survives a retry. One with no commits beyond HEAD's
+            # history holds nothing to lose and starts again from HEAD (-B).
             branch = f"sprint/{self.f}-{role}"
             rc, tail = self._cli(["git", "worktree", "prune"])
             if rc == 0:
                 exists, _ = self._cli(["git", "rev-parse", "--verify", "--quiet",
                                        f"refs/heads/{branch}"])
-                add = (["git", "worktree", "add", f"worktrees/{role}", branch] if exists == 0
-                       else ["git", "worktree", "add", "-b", branch, f"worktrees/{role}", "HEAD"])
+                spent = exists != 0 or self._cli(
+                    ["git", "merge-base", "--is-ancestor", branch, "HEAD"])[0] == 0
+                add = (["git", "worktree", "add", "-B", branch, f"worktrees/{role}", "HEAD"]
+                       if spent else ["git", "worktree", "add", f"worktrees/{role}", branch])
                 rc, tail = self._cli(add)
             if rc != 0:
                 raise Escalation("spawn_failed", "building", role,

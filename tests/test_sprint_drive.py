@@ -295,7 +295,7 @@ def test_building_creates_the_worktree_for_a_new_builder(rig, proj, monkeypatch)
     monkeypatch.setattr(drive._Drive, "_cli", cli)
     rig.run()
     adds = [c for c in called if c[:3] == ["git", "worktree", "add"]]
-    assert adds == [["git", "worktree", "add", "-b", "sprint/feat-backend-builder",
+    assert adds == [["git", "worktree", "add", "-B", "sprint/feat-backend-builder",
                      "worktrees/backend-builder", "HEAD"]]
 
 
@@ -685,3 +685,15 @@ def test_worktree_prune_keeps_a_live_worktree_registered(tmp_path):
     _bare_drive(repo)._worktree("backend-builder")
     listed = _git(repo, "worktree", "list")
     assert "worktrees/test-writer" in listed and "worktrees/backend-builder" in listed
+
+
+def test_worktree_retry_moves_an_empty_leftover_branch_to_head(tmp_path):
+    """A leftover branch with no commits of its own (a failed add) restarts from HEAD, so
+    the builder does not build on a base that lacks commits made since."""
+    repo = _real_repo(tmp_path)
+    _git(repo, "branch", "sprint/feat-backend-builder")
+    (repo / "c.txt").write_text("later\n")
+    _git(repo, "add", "c.txt")
+    _git(repo, "commit", "-q", "-m", "later")
+    wt = _bare_drive(repo)._worktree("backend-builder")
+    assert _git(wt, "rev-parse", "HEAD") == _git(repo, "rev-parse", "HEAD")
