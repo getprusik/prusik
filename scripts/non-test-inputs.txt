@@ -1,0 +1,5 @@
+# Paths no test in the suite reads: git path prefixes, one per line, each ending in "/".
+# scripts/pre-push.sh lets a commit whose diff from a locally passed tree touches only these
+# paths carry that tree's suite pass. tests/test_pre_push_suite_stamp.py fails if any test
+# builds a repo-root path into one of them. Add a prefix only with evidence no test reads it.
+findings/
