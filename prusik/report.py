@@ -167,14 +167,15 @@ def _usage_block(records: list[dict], full_detail: bool) -> dict[str, Any]:
         return rolled
     keep = usage.packaged_roles() | {"main", "subagent"}
 
-    def roles(by_role: dict[str, int]) -> dict[str, int]:
-        out: dict[str, int] = {}
+    def roles(by_role: dict[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
         for k, n in by_role.items():
             key = k if k in keep else "other"
             out[key] = out.get(key, 0) + n
         return out
 
     rolled["by_role"] = roles(rolled["by_role"])
+    rolled["cost_by_role"] = roles(rolled["cost_by_role"])
     rolled["per_sprint"] = [
         {**{k: v for k, v in e.items() if k != "feature"}, "by_role": roles(e["by_role"])}
         for e in rolled["per_sprint"]]

@@ -4,6 +4,7 @@
 graft prusik/templates
 recursive-include prusik/templates *
 recursive-include prusik/templates .*
+include prusik/prices.json
 include LICENSE NOTICE README.md CHANGELOG.md
 
 # NEVER publish internal / HQ / strategy material — explicit defense-in-depth

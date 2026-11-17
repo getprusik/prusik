@@ -78,6 +78,10 @@ class UsageRecord:
     output: int
     cache_write: int
     cache_read: int
+    # The cache_creation sub-counters. A row without them has 0 here, and the cache writes
+    # they do not account for are priced at the 1h rate (prusik.pricing).
+    cache_write_5m: int = 0
+    cache_write_1h: int = 0
 
 
 @dataclass
@@ -415,10 +419,15 @@ class ClaudeCodeAdapter(PlatformAdapter):
             raise TypeError("assistant row without a string id and timestamp")
         if not any(counts):
             return None                             # synthetic / zero-usage rows
+        split = usage.get("cache_creation")
+        split = split if isinstance(split, dict) else {}
+        w5m = int(split.get("ephemeral_5m_input_tokens") or 0)
+        w1h = int(split.get("ephemeral_1h_input_tokens") or 0)
         return UsageRecord(message_id=mid, ts=ts,
                            model=model if isinstance(model, str) and model else "unknown",
                            role=role, input=counts[0], output=counts[1],
-                           cache_write=counts[2], cache_read=counts[3])
+                           cache_write=counts[2], cache_read=counts[3],
+                           cache_write_5m=w5m, cache_write_1h=w1h)
 
     @classmethod
     def _subagent_role(cls, meta_path: Path, role_names: set[str]) -> str:

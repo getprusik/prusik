@@ -2857,11 +2857,13 @@ def sprint_complete(args) -> int:
     measured = usage.measure(feature)
     if measured.measured:
         actual["tokens"] = measured.tokens
+        actual["cost_usd"] = round(measured.cost_usd, 6)
         actual["usage"] = measured.breakdown()
-        print(f"[prusik-gate] tokens measured: {measured.tokens:,}", file=sys.stderr)
+        print(f"[prusik-gate] tokens measured: {measured.tokens:,}; cost "
+              f"${measured.cost_usd:,.2f} (API list price)", file=sys.stderr)
     else:
         actual["tokens_unmeasured"] = measured.reason
-        print(f"[prusik-gate] tokens UNMEASURED: {measured.reason}", file=sys.stderr)
+        print(f"[prusik-gate] tokens and cost UNMEASURED: {measured.reason}", file=sys.stderr)
 
     # v0.3.11: if the operator didn't pass --duration-min, fall back to
     # ledger-derived wall-clock (sprint_started timestamp to now). Digest
@@ -3103,6 +3105,12 @@ def advance(args) -> int:
     if not config:
         print("No sprint-config.yaml found. Run 'prusik init' first.", file=sys.stderr)
         return 1
+    from prusik import pricing
+    _legacy = pricing.legacy_budget_keys(config)
+    if _legacy:                  # a leftover token cap is refused, never read as a cap
+        for _m in _legacy:
+            print(f"[prusik-gate] {_m}", file=sys.stderr)
+        return 2
     target_spec = phases.get_phase_spec(config, target_phase)
     if not target_spec:
         valid = [p["name"] for p in config.get("phases", [])]
@@ -3319,16 +3327,20 @@ def advance(args) -> int:
 
 
 def _phase_usage_line(feature: str, phase: str, phase_spec: dict) -> str:
-    """One advisory line: the measured usage of the phase just left (every visit), against
-    its budget when one is set (fb-a1b7db140a5e). Never blocks the advance."""
+    """One advisory line: the measured cost (API list price) and raw tokens of the phase just
+    left (every visit), against its `budget_usd` when one is set (fb-1d6f8de5b8d3). Never
+    blocks the advance."""
     from prusik import effort, usage
     u = usage.measure(feature, phase=phase)        # total: never raises
     if not u.measured:
-        return f"[prusik-gate] {phase} token usage UNMEASURED: {u.reason}"
-    budget = phase_spec.get("budget_tokens")
-    tail = (f" / budget {effort.fmt_tokens(budget)}"
-            + (" — EXCEEDED" if u.tokens > budget else "")) if budget else ""
-    return f"[prusik-gate] {phase} used {effort.fmt_tokens(u.tokens)} tokens{tail}"
+        return f"[prusik-gate] {phase} cost UNMEASURED: {u.reason}"
+    budget = phase_spec.get("budget_usd")
+    tail = (f" / budget {effort.fmt_usd(budget)}"
+            + (" — EXCEEDED" if u.cost_usd > budget else "")) if budget else ""
+    return (f"[prusik-gate] {phase} cost {effort.fmt_usd(u.cost_usd)} (API list price){tail}; "
+            f"tokens {effort.fmt_tokens(u.tokens)} (input {effort.fmt_tokens(u.input)}, "
+            f"output {effort.fmt_tokens(u.output)}, cache write {effort.fmt_tokens(u.cache_write)}, "
+            f"cache read {effort.fmt_tokens(u.cache_read)})")
 
 
 def _plan_boundary_line(feature: str) -> str | None:

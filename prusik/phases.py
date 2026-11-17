@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 import yaml
@@ -310,6 +311,12 @@ def print_status() -> int:
     feature = state.get("feature")
     print(f"Sprint:   {feature}")
     print(f"Phase:    {phase}")
+    from prusik import pricing
+    _legacy = pricing.legacy_budget_keys(config)
+    if _legacy:
+        for _m in _legacy:
+            print(_m, file=sys.stderr)
+        return 2
     # v0.6.3 (B8): surface pause state and reason if active. Useful when an
     # operator returns to a stale CC session and is wondering why the Stop
     # hook isn't firing on phase exits.
@@ -325,8 +332,8 @@ def print_status() -> int:
         spec = get_phase_spec(config, phase)
         if spec:
             print(f"Writable: {spec.get('writable', [])}")
-            if "budget_tokens" in spec:
-                print(f"Budget:   {spec['budget_tokens']:,} tokens")
+            if "budget_usd" in spec:
+                print(f"Budget:   ${spec['budget_usd']:,.2f} (API list price)")
             if "exit_artifacts" in spec:
                 print("Exit artifacts required:")
                 for art in spec["exit_artifacts"]:

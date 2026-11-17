@@ -212,6 +212,7 @@ def run(force: bool = False, no_auto_adopt: bool = False,
     merged: list[tuple[str, dict]] = []  # v0.5.8: (path, summary) for surgical merges
     merge_failed: list[tuple[str, str]] = []  # v0.14.0: hard fail-closed (path, reason)
     unretirable: list[str] = []  # fb-a1b7db140a5e: retired budgets a layout can't drop
+    custom_tokens: list[str] = []  # fb-1d6f8de5b8d3: operator token caps, now refused
 
     # Walk every template file
     template_src_roots = [
@@ -370,6 +371,9 @@ def run(force: bool = False, no_auto_adopt: bool = False,
                     merged_text, summary["retired_budgets"], _unret = (
                         refresh_merge.retire_budget_defaults(merged_text))
                     unretirable.extend(_unret)
+                    custom_tokens.extend(
+                        lb for lb in refresh_merge.leftover_budget_tokens(merged_text)
+                        if lb not in _unret)
                     ok_merge = True
                 except Exception as _e:  # unparseable / unrecognized shape
                     ok_merge = False
@@ -454,7 +458,7 @@ def run(force: bool = False, no_auto_adopt: bool = False,
             if top_adds:
                 bits.append(f"+top-level: {top_adds}")
             for rb in summary.get("retired_budgets") or []:
-                bits.append(f"-{rb} (retired default; tokens are now measured)")
+                bits.append(f"-{rb} (retired default; budgets are now USD)")
             print(f"    ⊕ {path}  ({', '.join(bits) if bits else 'no-op'})")
         print("  (pass --no-merge-additions to skip surgical merge instead)")
     print(f"  unchanged:{len(unchanged)}")
@@ -462,8 +466,15 @@ def run(force: bool = False, no_auto_adopt: bool = False,
     # budget, so it must never pass silently.
     for rb in unretirable:
         print(f"  ! {rb} is a retired shipped default this file's layout can't remove "
-              f"safely — delete it by hand (budgets are now enforced against measured "
-              f"usage)")
+              f"safely — delete it by hand (budgets are now in USD)")
+    for cb in custom_tokens:
+        owner, rest = cb.split(".", 1)
+        old = rest.split("=", 1)[0]
+        new = old.replace("tokens", "usd")
+        where = f"phase {owner}'s {new}" if owner != "drive" else f"drive.{new}"
+        print(f"  ! {cb} is a token cap you set; budgets are now USD and drive refuses "
+              f"{old}. Replace it with {where} (a dollar amount; nothing is converted for "
+              f"you, a token count has no single price)")
     if skipped_modified:
         print(f"  skipped:  {len(skipped_modified)} (user-modified; pass --force to overwrite)")
         for p in skipped_modified:

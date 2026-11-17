@@ -214,6 +214,11 @@ def fmt_tokens(n: int | None) -> str:
     return f"{n / 1000:.0f}k" if n >= 1000 else str(n)
 
 
+def fmt_usd(n: float | None) -> str:
+    """'$1.23', or '—' when the cost is unmeasured (never $0.00 for an unread cost)."""
+    return "—" if n is None else f"${n:,.2f}"
+
+
 def fmt_duration(sec: float | None) -> str:
     """Human-readable duration: '45s' / '12m' / '1.5h'. Public — composed by
     the showcase lens (instrument layer)."""
@@ -234,10 +239,14 @@ def run(json_output: bool = False) -> int:
     phase_tokens = rolled["by_phase"]
     # ts-sorted, so a feature's latest completion wins
     peaks = {e["feature"]: e["peak_context"] for e in rolled["per_sprint"]}
+    costs = {e["feature"]: e["cost_usd"] for e in rolled["per_sprint"]}
+    phase_costs = rolled["cost_by_phase"]
 
     if json_output:
         print(json.dumps({"features": feats, "by_phase": phases,
                           "tokens_by_phase": phase_tokens,
+                          "cost_usd_by_feature": costs,
+                          "cost_usd_by_phase": phase_costs,
                           "peak_context": peaks}, indent=2, default=str))
         return 0
 
@@ -246,29 +255,32 @@ def run(json_output: bool = False) -> int:
         return 0
 
     print(f"Effort-telemetry — {len(feats)} journeys\n")
-    print(f"  {'feature':24s} {'wall':>6s} {'tokens':>7s} {'peak':>7s} {'rwnd':>5s} {'blk':>4s} "
+    print(f"  {'feature':24s} {'wall':>6s} {'tokens':>7s} {'cost':>8s} {'peak':>7s} {'rwnd':>5s} {'blk':>4s} "
           f"{'fix':>4s}  status")
     for feat in sorted(feats, key=lambda k: -(feats[k]["wall_clock_sec"] or 0)):
         d = feats[feat]
         status = "done" if d["complete"] else "open"
         print(f"  {str(feat)[:24]:24s} {fmt_duration(d['wall_clock_sec']):>6s} "
-              f"{fmt_tokens(d['tokens']):>7s} "
+              f"{fmt_tokens(d['tokens']):>7s} {fmt_usd(costs.get(feat)):>8s} "
               f"{fmt_tokens(peaks.get(feat)):>7s} "
               f"{d['rewinds']:5d} {d['blocks']:4d} {d['fix_rounds']:4d}  {status}")
 
     if phases:
         print("\n  where the effort goes (per phase, across all journeys):")
-        print(f"    {'phase':14s} {'total':>7s} {'visits':>7s} {'mean':>7s} {'tokens':>7s}")
+        print(f"    {'phase':14s} {'total':>7s} {'visits':>7s} {'mean':>7s} {'tokens':>7s} {'cost':>8s}")
         for ph in sorted(phases, key=lambda k: -phases[k]["total_sec"]):
             a = phases[ph]
             print(f"    {ph:14s} {fmt_duration(a['total_sec']):>7s} "
                   f"{a['visits']:7d} {fmt_duration(a['mean_sec']):>7s} "
-                  f"{fmt_tokens(phase_tokens.get(ph)):>7s}")
+                  f"{fmt_tokens(phase_tokens.get(ph)):>7s} "
+                  f"{fmt_usd(phase_costs.get(ph)):>8s}")
 
     print("\nDerived from the append-only ledger (zero hot-path cost). "
           "rwnd=rewinds, blk=writable-gate blocks, fix=fix-rounds. "
           "tokens = measured from session transcripts at sprint-complete (input + output + "
-          "cache writes + cache reads); set a phase's budget_tokens from these. "
+          "cache writes + cache reads), a count for reference. cost = those tokens priced per "
+          "model from prusik/prices.json at API list price (not a claude.ai plan limit); "
+          "set a phase's budget_usd from these. "
           "peak = the largest main-thread context of one turn in the sprint, what each turn "
           "re-reads. "
           "Wall-clock includes any pause time.")

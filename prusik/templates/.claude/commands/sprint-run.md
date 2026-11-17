@@ -148,8 +148,8 @@ Once sprint-init passes (phase `scoping`), run the rest of the sprint in code. R
   - `prove_red_failed`, `suite_failed`, `fix_round_cap`, `advance_blocked` — a gate or proof failed; fix the cause named in the evidence, then re-run.
   - `permission_denied`, `spawn_failed`, `tier_unresolved`, `auth_mismatch`, `writer_busy` — a spawn or setup problem; show the evidence and stop.
   - `tree_written` — a role changed shared-tree files its phase may not write, by a means the gate could not see. The files are left as the role left them. Show the paths in the evidence and stop: the user decides whether to keep or restore them.
-  - `budget_exceeded` — measured spend crossed a cap; the reason names the key (`drive.budget_tokens`, `phases[<phase>].budget_tokens` or `drive.session_budget_tokens`) and the evidence carries the spend by role. For the session cap, drive has released this session's writer lease: re-run `prusik drive $ARGUMENTS` from a fresh session. For the others, show the numbers and stop: only the user raises a cap.
-  - `budget_unmeasurable` — drive could not read the spend a cap needs (registry or transcript unreadable). Show the reason and stop; drive never runs past a budget it cannot read.
+  - `budget_exceeded` — measured cost (USD, API list price) crossed a cap; the reason names the key (`drive.budget_usd`, `phases[<phase>].budget_usd` or `drive.session_budget_usd`) and the evidence carries the cost by role and the raw tokens by category. For the session cap, drive has released this session's writer lease: re-run `prusik drive $ARGUMENTS` from a fresh session. For the others, show the numbers and stop: only the user raises a cap.
+  - `budget_unmeasurable` — drive could not read the cost a cap needs (registry or transcript unreadable, or a model with no price in prusik/prices.json). Show the reason and stop; drive never runs past a budget it cannot read.
 - **rc 2** — the sprint is not drivable yet (including the trivial lane: write `design/$ARGUMENTS/trivial.md`, run `prusik gate prove-red --feature $ARGUMENTS`, implement in `worktrees/solo/`, re-run from reviewing). Show the message.
 
 ---

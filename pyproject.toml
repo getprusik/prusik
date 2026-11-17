@@ -58,6 +58,7 @@ prusik = [
     "templates/.claude/*",
     "templates/**/.*",
     "templates/.*",
+    "prices.json",      # the one price table: budgets are priced from it
     "_closures.json",   # shipped closure map (id→version+moat) for the update closer
 ]
 

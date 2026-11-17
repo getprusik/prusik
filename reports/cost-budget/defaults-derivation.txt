@@ -1,0 +1,72 @@
+Defaults derivation: drive.budget_usd and per-phase budget_usd
+Prices: prusik/prices.json, https://platform.claude.com/docs/en/about-claude/pricing, as of 2026-11-16 (API list price)
+Method: each completed sprint's registered transcripts re-priced per row by usage.measure;
+p90 = nearest-rank 90th percentile of per-sprint (or per-phase) cost, rounded UP to the next whole dollar.
+Completed sprints in the ledger: 47; priced from transcripts: 40; excluded (no transcript rows): 7
+
+sprint                                        cost       tokens  unsplit-write tok
+deferred-tier-destination                    15.97   42,948,818                  0
+feedback-discoverability                      3.97    9,967,883                  0
+hook-hot-path                                 9.00   26,542,321                  0
+verdict-hash-main-tree                       18.18   59,036,323                  0
+python-from-import-edges                      7.77   21,090,092                  0
+python-src-layout                             7.62   19,627,457                  0
+carry-forward-fresh-fail                      6.29   11,751,537                  0
+hermetic-test-ledger                          9.56   20,908,099                  0
+measured-token-usage                         18.02   45,916,941                  0
+usage-rollup                                 23.70   55,309,355                  0
+capture-hash-before-run                       2.81    6,152,066                  0
+model-tier-policy                            21.87   56,282,328                  0
+full-suite-credits-capture                    2.98    8,638,469                  0
+boundary-registry-discovery                   1.97    5,209,159                  0
+hook-cost-deterministic-gate                  1.96    4,148,553                  0
+one-modules-parser                            2.75    6,691,369                  0
+gate-side-effect-order                        1.96    5,701,018                  0
+quote-aware-redirects                         4.12   12,155,046                  0
+mechanical-check-ownership                    2.18    5,329,930                  0
+pytest-any-invocation                         1.64    4,054,357                  0
+bash-write-targets                            4.34    9,271,159                  0
+boundary-path-segments                        2.33    5,817,317                  0
+bash-file-verbs                              10.92   21,929,831                  0
+deviation-names-one-file                      2.50    8,020,194                  0
+close-requires-exit-artifacts                 2.70    6,940,804                  0
+gate-reads-every-statement                    4.89   12,523,009                  0
+gate-reads-commands                           6.18   20,832,484                  0
+heredocs-read-as-bash                         5.85   15,316,330                  0
+feedback-says-something                       2.73    5,598,679                  0
+capture-refuses-zero-count                    5.62   12,197,074                  0
+three-small-frictions                         1.99    4,577,820                  0
+one-bash-lexer                               37.74  110,823,173                  0
+stop-blocks-once                              3.81   12,924,935                  0
+session-size-warning                          5.43   15,292,039                  0
+sprint-cost                                   7.99   19,163,977                  0
+worktree-probe-import                         1.58    3,864,729                  0
+sprint-drive                                  7.84   22,383,129                  0
+junit-xml-evidence                            8.93   17,523,754                  0
+drive-design-phases                           4.93    9,885,531                  0
+push-carries-suite-pass                       1.98    3,863,243                  0
+
+Excluded sprints (reported, not skipped silently):
+  overhead-accounting: measured but no transcript rows fall in its phase windows (transcripts predate registration or are gone); excluded
+  list-parser-ordered-items: measured but no transcript rows fall in its phase windows (transcripts predate registration or are gone); excluded
+  push-or-park: measured but no transcript rows fall in its phase windows (transcripts predate registration or are gone); excluded
+  phase-entry-reality: measured but no transcript rows fall in its phase windows (transcripts predate registration or are gone); excluded
+  ci-execution-credit: measured but no transcript rows fall in its phase windows (transcripts predate registration or are gone); excluded
+  convention-rules-sweep: measured but no transcript rows fall in its phase windows (transcripts predate registration or are gone); excluded
+  map-reverify: measured but no transcript rows fall in its phase windows (transcripts predate registration or are gone); excluded
+
+Sprint cost: n=40 p90=18.02 -> drive.budget_usd = 19
+Largest single-session cost per sprint (this repo's own config only): n=40 p90=18.02 -> drive.session_budget_usd = 19
+
+Per-phase cost (every visit of the phase, per sprint that had one):
+  planning       n=  9 p90=    6.88 max=    6.88 -> budget_usd = 7
+  solo_execute   n= 31 p90=    2.00 max=    5.14 -> budget_usd = 3
+  building       n=  9 p90=    9.07 max=    9.07 -> budget_usd = 10
+  reviewing      n= 40 p90=    7.15 max=   18.02 -> budget_usd = 8
+
+Derived: {"drive.budget_usd": 19, "drive.session_budget_usd": 19, "planning": 7, "solo_execute": 3, "building": 10, "reviewing": 8}
+
+Notes: in this repo a sprint's main session usually runs the whole sprint, so the session p90 equals the
+sprint p90; drive.session_budget_usd is set to the same figure here. The template ships it as a
+commented example. Prices were read from the official page on 2026-11-16; every row in the registered
+transcripts carries the cache_creation split (0 unsplit write tokens in every sprint above).

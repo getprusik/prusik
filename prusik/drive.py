@@ -11,11 +11,13 @@ at the judgement points with `reports/<f>/drive-escalation.json` and rc 3.
 Stdout is bounded: the auth line, one line per phase, the completion line or an escalation
 block. Gate and tool output goes to `reports/<f>/drive.log`.
 
-Spend is capped, not advised: `drive.budget_tokens` (required) caps the sprint's measured
-tokens, a phase's `budget_tokens` caps that phase, and `drive.session_budget_tokens` caps what
-the host session running drive spends on the feature. Drive measures before and after every
-spawn and escalates `budget_exceeded` at the first cap crossed; a budget it cannot measure
-escalates `budget_unmeasurable`, never a silent pass.
+Spend is capped, not advised, and capped in USD at API list price (priced per model from
+prusik/prices.json): `drive.budget_usd` (required) caps the sprint's measured cost, a phase's
+`budget_usd` caps that phase, and `drive.session_budget_usd` caps what the host session running
+drive spends on the feature. Raw tokens are reported beside the cost, never compared. Drive
+measures before and after every spawn and escalates `budget_exceeded` at the first cap
+crossed; a budget it cannot measure (including a model with no price) escalates
+`budget_unmeasurable`, never a silent pass. A leftover `budget_tokens` key is refused.
 
 Exit codes: 0 complete, 2 not drivable, 3 escalated.
 """
@@ -35,7 +37,7 @@ from typing import Any, Callable, Iterable, TextIO
 
 import yaml
 
-from prusik import fix_round, ledger, main_writer, phases, roles, usage
+from prusik import fix_round, ledger, main_writer, phases, pricing, roles, usage
 from prusik.platform_adapter import (
     AgentSpec, PlatformAdapter, SpawnError, SpawnRequest, SpawnResult, get_adapter,
 )
@@ -51,7 +53,7 @@ REVIEWERS = (("regression-sentinel", "regression.txt"),
              ("conventions-enforcer", "conventions.txt"))
 
 _DEFAULTS = {"auth": "claude.ai", "spawn_timeout_min": 60, "suite_command": None,
-             "design_rounds": 3, "budget_tokens": None, "session_budget_tokens": None}
+             "design_rounds": 3, "budget_usd": None, "session_budget_usd": None}
 _TICK_S = 300
 
 
@@ -210,40 +212,38 @@ class _Drive:
         return res, started
 
     def _check_budget(self, role: str | None) -> None:
-        """Escalate when the feature's measured tokens exceed a cap: the sprint's
-        (`drive.budget_tokens`), the current phase's (`budget_tokens` on its phase spec), or
-        the driving host session's (`drive.session_budget_tokens`). Unmeasurable escalates;
-        the one exception is before drive's first spawn with no session yet registered,
-        where nothing has been spent that a transcript could show."""
+        """Escalate when the feature's measured cost (API list price) exceeds a cap: the
+        sprint's (`drive.budget_usd`), the current phase's (`budget_usd` on its phase spec),
+        or the driving host session's (`drive.session_budget_usd`). Unmeasurable, including a
+        model with no price, escalates; the one exception is before drive's first spawn with
+        no session yet registered, where nothing has been spent that a transcript could show."""
         u = usage.measure(self.f)                      # total: never raises
         if not u.measured:
             if not self.spawned and self.session is None and u.reason \
                     and u.reason.startswith("no registered session"):
                 return
             raise Escalation("budget_unmeasurable", self.phase, role,
-                             f"the token budget could not be measured: {u.reason}",
+                             f"the cost budget could not be measured: {u.reason}",
                              [str(usage.registry_path()), str(ledger.ledger_path())])
         spec = phases.get_phase_spec(phases.load_sprint_config(self.root) or {},
                                      self.phase) or {}
-        caps = [("sprint", u.tokens, self.cfg["budget_tokens"], "drive.budget_tokens"),
-                (f"phase {self.phase}", u.by_phase.get(self.phase, 0),
-                 spec.get("budget_tokens"), f"phases[{self.phase}].budget_tokens")]
+        caps = [("sprint", u.cost_usd, self.cfg["budget_usd"], "drive.budget_usd"),
+                (f"phase {self.phase}", u.cost_by_phase.get(self.phase, 0.0),
+                 spec.get("budget_usd"), f"phases[{self.phase}].budget_usd")]
         if self.session is not None:
-            caps.append(("this session", u.by_session.get(self.session, 0),
-                         self.cfg["session_budget_tokens"], "drive.session_budget_tokens"))
+            caps.append(("this session", u.cost_by_session.get(self.session, 0.0),
+                         self.cfg["session_budget_usd"], "drive.session_budget_usd"))
         from prusik import effort
         for scope, used, cap, key in caps:
-            if cap and used > int(cap):
-                roles_ = ", ".join(f"{r} {effort.fmt_tokens(n)}" for r, n in
-                                   sorted(u.by_role.items(), key=lambda kv: -kv[1])[:5])
+            if cap and used > float(cap):
                 self.hand_off = scope == "this session"
                 remedy = ("resume in a fresh session (drive released this session's writer "
                           "lease)" if self.hand_off else f"raise {key} to continue")
                 raise Escalation("budget_exceeded", self.phase, role,
-                                 f"{scope} used {effort.fmt_tokens(used)} tokens, over its "
-                                 f"cap {effort.fmt_tokens(int(cap))} ({key}); {remedy}",
-                                 [f"{key}={cap}", f"used={used}",
-                                  f"sprint_total={u.tokens}", f"by_role: {roles_}"])
+                                 f"{scope} cost {effort.fmt_usd(used)} ({pricing.LABEL}), over "
+                                 f"its cap {effort.fmt_usd(float(cap))} ({key}); {remedy}",
+                                 [f"{key}={cap}", f"cost={used:.2f}",
+                                  f"sprint_cost={u.cost_usd:.2f}", usage.spend_detail(u)])
 
     def _tree_state(self) -> dict[str, tuple[int, int]]:
         """(mtime_ns, size) of every file in the shared tree (`gate.main_tree_files`)."""
@@ -681,18 +681,25 @@ class _Drive:
                   f"design/{self.f}/trivial.md, implement in worktrees/solo/, then re-run "
                   f"drive from reviewing", file=self.out)
             return 2
-        dcfg = (phases.load_sprint_config(self.root) or {}).get("drive") or {}
+        sprint_cfg = phases.load_sprint_config(self.root) or {}
+        legacy = pricing.legacy_budget_keys(sprint_cfg)
+        if legacy:
+            for msg in legacy:
+                print(f"[drive] {msg}", file=self.out)
+            return 2
+        dcfg = sprint_cfg.get("drive") or {}
         rounds = dcfg.get("design_rounds", _DEFAULTS["design_rounds"])
         if isinstance(rounds, bool) or not isinstance(rounds, int) or rounds < 1:
             print(f"[drive] drive.design_rounds must be a positive integer (got {rounds})",
                   file=self.out)
             return 2
-        for key, required in (("budget_tokens", True), ("session_budget_tokens", False)):
+        for key, required in (("budget_usd", True), ("session_budget_usd", False)):
             v = dcfg.get(key)
             if v is None and not required:
                 continue
-            if isinstance(v, bool) or not isinstance(v, int) or v < 1:
-                print(f"[drive] drive.{key} must be a positive integer"
+            if isinstance(v, bool) or not isinstance(v, (int, float)) \
+                    or not math.isfinite(v) or v <= 0:
+                print(f"[drive] drive.{key} must be a positive dollar amount"
                       + (" (required: drive spends against a cap, never open-ended)"
                          if v is None else f" (got {v})"), file=self.out)
                 return 2
