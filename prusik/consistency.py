@@ -17,6 +17,16 @@ from pathlib import Path
 from prusik import schema
 
 
+class UnmeasuredChangeSet(Exception):
+    """A worktree's builder change set cannot be measured (no recorded fork point, a
+    detached HEAD, a base git cannot diff). Never read as "nothing changed"
+    (fb-109c7034f558)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 # Dependency / build / artifact directories that are never a sprint deliverable.
 # A worktree set up for a JS/TS build (prusik worktree-setup, findings #10/#11)
 # legitimately contains node_modules/ + dist/; the boundary and cache scans must
@@ -115,27 +125,53 @@ def _credit_deviations(outside: set[str], declared: set[str]) -> tuple[set[str],
     return credited, ambiguous
 
 
-def _git_worktree_changed_files(teammate_dir: Path) -> list[str] | None:
-    """For a REAL git worktree (full tree, e.g. a JS/TS build worktree), the
-    builder's responsibility is exactly what they CHANGED — tracked diffs vs HEAD
-    plus untracked-not-gitignored files. Returns those worktree-relative paths,
-    or None when `teammate_dir` is not a git-worktree root (a partial-mirror dir,
-    whose every file IS a builder write — caller walks it instead).
+def is_git_worktree_root(teammate_dir: Path) -> bool:
+    """`teammate_dir` is a real git worktree (the top of its own work tree), not a partial
+    mirror inside the project's tree. Resolves no base."""
+    from prusik import worktrees as _worktrees
+    return _worktrees.is_git_worktree_root(teammate_dir)
 
-    This excludes node_modules/lockfiles (gitignored) AND unchanged config/readme
-    files (not in the diff) precisely, without a denylist guess."""
-    top = _git(teammate_dir, "rev-parse", "--show-toplevel")
-    if top.returncode != 0:
-        return None
-    try:
-        if Path(top.stdout.strip()).resolve() != teammate_dir.resolve():
-            return None        # the project root, not this dir → partial mirror
-    except OSError:
-        return None
-    changed = _git(teammate_dir, "diff", "--name-only", "HEAD").stdout.splitlines()
-    untracked = _git(teammate_dir, "ls-files", "--others",
-                     "--exclude-standard").stdout.splitlines()
-    return [p for p in (changed + untracked) if p.strip()]
+
+def builder_change_set(teammate_dir: Path, project_root: Path) -> list[str]:
+    """THE builder change set of one worktree, as worktree-relative paths (fb-109c7034f558).
+
+    A real git worktree: every file that differs between its recorded fork point
+    (`refs/prusik/base/<branch>`, see `prusik.worktrees`) and its working tree — committed on
+    the branch, staged, unstaged and deleted — plus untracked files git does not ignore.
+    Gitignored files are never in it. A worktree with no recorded base, a detached HEAD, or
+    a base git cannot diff raises `UnmeasuredChangeSet`; there is no HEAD or merge-base
+    fallback, because a fallback that reads committed work as unchanged is the blind spot.
+
+    A partial mirror (not a git worktree): every file written into it, minus build/dep and
+    derived/cache dirs and files the project's .gitignore ignores, the same exclusion
+    `gate._judged_code_files` applies."""
+    if is_git_worktree_root(teammate_dir):
+        from prusik import worktrees as _worktrees
+        base = _worktrees.recorded_base(teammate_dir)
+        diff = _git(teammate_dir, "diff", "--name-only", "--no-renames", "-z", base, "--")
+        if diff.returncode != 0:
+            raise UnmeasuredChangeSet(
+                f"worktrees/{teammate_dir.name}: `git diff {base[:12]}` rc "
+                f"{diff.returncode}: {(diff.stderr or '').strip()[:200]}")
+        untracked = _git(teammate_dir, "ls-files", "-z", "--others", "--exclude-standard")
+        if untracked.returncode != 0:
+            raise UnmeasuredChangeSet(
+                f"worktrees/{teammate_dir.name}: `git ls-files --others` rc "
+                f"{untracked.returncode}")
+        return sorted({p for p in (diff.stdout + untracked.stdout).split("\0") if p.strip()})
+    import os as _os
+    # The one derived/cache list lives in gate (its hook hot path cannot import this module).
+    from prusik.gate import _DERIVED_DIRS
+    walked: list[str] = []
+    for dirpath, dirnames, filenames in _os.walk(teammate_dir):
+        dirnames[:] = [d for d in dirnames
+                       if d not in _DERIVED_DIRS and d not in _BUILD_DEP_DIRS]
+        for fn in filenames:
+            f = Path(dirpath) / fn
+            if f.is_file():
+                walked.append(str(f.relative_to(teammate_dir)))
+    ignored = gitignored_subset(project_root, walked)
+    return sorted(r for r in walked if r not in ignored)
 
 
 def git_project_files(teammate_dir: Path) -> list[str] | None:
@@ -144,7 +180,7 @@ def git_project_files(teammate_dir: Path) -> list[str] | None:
     (`ls-files --others --exclude-standard`). Returns worktree-relative paths, or
     None when `teammate_dir` is not a git-worktree root (a partial mirror).
 
-    Unlike `_git_worktree_changed_files` (only the diff), this is the whole judged
+    Unlike `builder_change_set` (only what changed), this is the whole judged
     file-set — what the reviewer-evidence hash must cover. Crucially it EXCLUDES
     gitignored build artifacts BY CONSTRUCTION (a tsc `tsbuildinfo`, `dist/`,
     `coverage/`, lockfiles), so a build-/typecheck-triggering capture can't drift the
@@ -153,14 +189,8 @@ def git_project_files(teammate_dir: Path) -> list[str] | None:
     inverting the doomed derived-dir denylist into a git-tracked allowlist. Genuinely
     NEW source (untracked, not ignored) is still included, so a stale PASS can't survive
     a real code addition."""
-    top = _git(teammate_dir, "rev-parse", "--show-toplevel")
-    if top.returncode != 0:
-        return None
-    try:
-        if Path(top.stdout.strip()).resolve() != teammate_dir.resolve():
-            return None        # the project root, not this dir → partial mirror
-    except OSError:
-        return None
+    if not is_git_worktree_root(teammate_dir):
+        return None            # a partial mirror
     tracked = _git(teammate_dir, "ls-files").stdout.splitlines()
     untracked = _git(teammate_dir, "ls-files", "--others",
                      "--exclude-standard").stdout.splitlines()
@@ -168,28 +198,25 @@ def git_project_files(teammate_dir: Path) -> list[str] | None:
 
 
 def sprint_changed_files(project_root: Path) -> set[str]:
-    """Union of root-relative files changed across all builder worktrees this
-    sprint — git-diff for a real (TS) worktree, the written-file walk for a
-    partial mirror, build/dep dirs excluded. The "what did this sprint actually
-    touch" set used to VERIFY a plan-time blast-radius prediction was consumed
-    (field retro #1: predicted-regressing tests that were never updated)."""
+    """Union of the builder change sets (`builder_change_set`) of every worktree this
+    sprint, as worktree-relative paths. The "what did this sprint actually touch" set used to
+    VERIFY a plan-time blast-radius prediction was consumed (field retro #1). Raises
+    `UnmeasuredChangeSet` when any worktree's change set cannot be measured; a caller never
+    reads that as "nothing touched"."""
     out: set[str] = set()
-    worktrees = project_root / "worktrees"
-    if not worktrees.exists():
-        return out
-    for teammate_dir in sorted(worktrees.iterdir()):
-        if not teammate_dir.is_dir():
-            continue
-        changed = _git_worktree_changed_files(teammate_dir)
-        if changed is not None:
-            out.update(changed)
-        else:
-            for f in teammate_dir.rglob("*"):
-                if f.is_file():
-                    rel = str(f.relative_to(teammate_dir))
-                    if not _under_build_dep_dir(rel):
-                        out.add(rel)
+    for _dir, changed in worktree_change_sets(project_root):
+        out.update(changed)
     return out
+
+
+def worktree_change_sets(project_root: Path) -> list[tuple[Path, list[str]]]:
+    """`[(worktrees/<role>, its builder change set)]` for every worktree dir, sorted.
+    Raises `UnmeasuredChangeSet` for the first one that cannot be measured."""
+    wt = project_root / "worktrees"
+    if not wt.exists():
+        return []
+    return [(d, builder_change_set(d, project_root))
+            for d in sorted(wt.iterdir()) if d.is_dir()]
 
 
 def git_files_under(root: Path) -> list[str] | None:
@@ -230,7 +257,7 @@ def _assemblable_worktree_files(project_root: Path):
     for teammate_dir in sorted(worktrees.iterdir()):
         if not teammate_dir.is_dir():
             continue
-        if _git_worktree_changed_files(teammate_dir) is not None:
+        if is_git_worktree_root(teammate_dir):
             continue                      # real git worktree → not a partial mirror
         for f in sorted(teammate_dir.rglob("*")):
             if f.is_symlink() or not f.is_file():
@@ -471,26 +498,19 @@ def builder_writes_within_plan(project_root: Path, feature: str) -> list[str]:
         boundary_src = "plan.md"
     else:
         return []
-    worktrees = project_root / "worktrees"
-    if not worktrees.exists():
+    if not (project_root / "worktrees").exists():
         return []
     build_report_glob = f"reports/{feature}/build-*.txt"
     declared = _declared_deviations(project_root, feature)   # #17 — sanctioned drift
     fan_out = _fan_out_prediction(project_root, feature)      # fb-7ab319116f42 — predicted
     outside: list[tuple[str, str]] = []
-    for teammate_dir in worktrees.iterdir():
-        if not teammate_dir.is_dir():
-            continue
-        # A real git worktree (full tree) → only the builder's CHANGED files; a
-        # partial-mirror dir → every written file, minus build/dep dirs (#15).
-        changed = _git_worktree_changed_files(teammate_dir)
-        if changed is not None:
-            rel_strs = changed
-        else:
-            rel_strs = [str(f.relative_to(teammate_dir))
-                        for f in teammate_dir.rglob("*")
-                        if f.is_file()
-                        and not _under_build_dep_dir(str(f.relative_to(teammate_dir)))]
+    # The builder change set (fb-109c7034f558): committed, staged, unstaged and untracked
+    # work since the fork, never gitignored caches. Unmeasured is a violation, never a pass.
+    try:
+        change_sets = worktree_change_sets(project_root)
+    except UnmeasuredChangeSet as e:
+        return [f"Builder change set unmeasured, so the boundary cannot be checked: {e.reason}"]
+    for teammate_dir, rel_strs in change_sets:
         for rel_str in rel_strs:
             if rel_str.startswith("tests/") or "/tests/" in rel_str:
                 continue

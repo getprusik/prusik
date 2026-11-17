@@ -52,7 +52,9 @@ def _is_tier_spanning_conftest(rel: str) -> bool:
 def touched_shared_test_infra(root: Path, config: dict | None = None,
                               changed: set[str] | None = None) -> list[dict]:
     """`[{file, reason}]` for each touched file that is shared test-infra; empty when
-    the sprint touched no such surface (the common case — zero cost then).
+    the sprint touched no such surface (the common case — zero cost then). Raises
+    `consistency.UnmeasuredChangeSet` when the builder change set cannot be measured: the
+    caller refuses, never reading it as "nothing touched".
 
     Three tells, most-specific first:
       1. a root/`tests`-level `conftest.py` (tier-spanning by location);

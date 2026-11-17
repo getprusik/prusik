@@ -38,6 +38,10 @@ def test_git_worktree_only_changed_files_checked():
         (wt / "node_modules" / "dep.js").write_text("x = 1\n")
         _git(wt, "add", "-A")
         _git(wt, "commit", "-qm", "base")
+        # The fork point prusik records at creation (fb-109c7034f558): the change set is
+        # measured from it, and a worktree without it is refused, never diffed vs HEAD.
+        branch = _git(wt, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        _git(wt, "update-ref", f"refs/prusik/base/{branch}", "HEAD")
         # the builder's actual changes:
         (wt / "src").mkdir()
         (wt / "src" / "x.ts").write_text("export const x = 1\n")     # in scope

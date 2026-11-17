@@ -765,6 +765,20 @@ def _behavior_run_unscoped(vc: str,
     return not _verify_excludes_markers(vc, markers)
 
 
+TIMEOUT_SEC_MAX = 7200
+
+
+def timeout_sec_error(value: object) -> str | None:
+    """Why `value` is not a valid criterion `timeout_sec`, or None. The one rule the schema
+    validator and the runners' timeout resolver share: an int from 1 to 7200, bool and
+    numeric strings rejected (fb-32d2fbb70859)."""
+    if isinstance(value, bool) or not isinstance(value, int) \
+            or not 1 <= value <= TIMEOUT_SEC_MAX:
+        return (f"timeout_sec must be an int from 1 to {TIMEOUT_SEC_MAX} (seconds); "
+                f"got {value!r}")
+    return None
+
+
 def validate_criteria_file(path, project_root: Path | None = None,
                            defer_markers: tuple[str, ...] = DEFAULT_DEFER_MARKERS
                            ) -> tuple[bool, list[str]]:
@@ -786,6 +800,10 @@ def validate_criteria_file(path, project_root: Path | None = None,
                                              #   (acceptance-TDD: the verify must FAIL
                                              #   without the change, proving it's
                                              #   load-bearing, not vacuous-green)
+            timeout_sec: <int 1-7200, default 300>  # optional — how long the verify may
+                                             #   run; past it the run is stopped and
+                                             #   recorded timed_out (an instrument
+                                             #   limit, not a red run)
 
     Rules (errors, not warnings):
         - schema_version must be exactly "1.0"
@@ -798,6 +816,7 @@ def validate_criteria_file(path, project_root: Path | None = None,
           bare token that looks like a project script path (has a dir part or a
           .sh/.py/… suffix) is required to exist at lint time, to catch typos.
         - expected_exit if present must be int in [0, 255]
+        - timeout_sec if present must be an int in [1, 7200] (a bool is not an int here)
     """
     p = Path(path)
     if not p.exists():
@@ -916,6 +935,10 @@ def validate_criteria_file(path, project_root: Path | None = None,
             elif Path(ju).is_absolute():
                 errors.append(f"{prefix} (id={cid!r}): junit must be relative to "
                               f"the project root, not absolute; got {ju!r}")
+        if "timeout_sec" in entry:
+            why = timeout_sec_error(entry.get("timeout_sec"))
+            if why:
+                errors.append(f"{prefix} (id={cid!r}): {why}")
         pr = entry.get("prove_red")
         if pr is not None and not isinstance(pr, bool):
             errors.append(f"{prefix} (id={cid!r}): prove_red must be a boolean; "

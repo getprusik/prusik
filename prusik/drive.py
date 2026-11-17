@@ -38,6 +38,7 @@ from typing import Any, Callable, Iterable, TextIO
 import yaml
 
 from prusik import fix_round, ledger, main_writer, phases, pin, pricing, roles, usage
+from prusik import worktrees as _worktrees
 from prusik.platform_adapter import (
     AgentSpec, PlatformAdapter, SpawnError, SpawnRequest, SpawnResult, get_adapter,
 )
@@ -413,8 +414,12 @@ class _Drive:
             # The solo build runs outside drive, so capture RED here, before it starts
             # (fb-221b8b5df7e6); solo_execute's exit check refuses to advance without it.
             self._capture_red("solo_execute")
+            # The solo worktree records its fork point like every builder's, so the
+            # reviewing checks can measure what the solo build changed (fb-e4f46ed05574).
+            self._worktree("solo")
             raise Escalation("solo_handback", "triage", None,
-                             f"triage chose solo; RED baselines captured: implement in worktrees/solo/, then "
+                             f"triage chose solo; RED baselines captured and worktrees/solo/ "
+                             f"created: implement in worktrees/solo/, then "
                              f"re-run prusik drive {f} from reviewing", [str(path)])
         else:
             raise Escalation("triage_rejected", "triage", None,
@@ -449,31 +454,28 @@ class _Drive:
         self.steps.append("prove-red")
 
     def _worktree(self, role: str) -> Path:
-        wt = self.root / "worktrees" / role
-        if wt.exists():
-            return wt
-        if (self.root / ".git").exists():
-            # A worktree dir removed without `git worktree remove` stays registered and
-            # blocks `add` at that path; prune drops only registrations whose dir is gone.
-            # A branch left by an earlier attempt that carries commits of its own is reused
-            # as is, so a builder's work survives a retry. One with no commits beyond HEAD's
-            # history holds nothing to lose and starts again from HEAD (-B).
-            branch = f"sprint/{self.f}-{role}"
-            rc, tail = self._cli(["git", "worktree", "prune"])
-            if rc == 0:
-                exists, _ = self._cli(["git", "rev-parse", "--verify", "--quiet",
-                                       f"refs/heads/{branch}"])
-                spent = exists != 0 or self._cli(
-                    ["git", "merge-base", "--is-ancestor", branch, "HEAD"])[0] == 0
-                add = (["git", "worktree", "add", "-B", branch, f"worktrees/{role}", "HEAD"]
-                       if spent else ["git", "worktree", "add", f"worktrees/{role}", branch])
-                rc, tail = self._cli(add)
-            if rc != 0:
-                raise Escalation("spawn_failed", "building", role,
-                                 f"`git worktree add` rc {rc}", tail.splitlines())
-        else:
-            wt.mkdir(parents=True)
-        return wt
+        """worktrees/<role>, created and its fork point recorded by the one creation
+        function (prusik.worktrees.create), with every git call logged to drive.log."""
+        try:
+            return _worktrees.create(self.root, self.f, role,
+                                     run=lambda argv: self._cli(argv))
+        except _worktrees.WorktreeError as e:
+            raise Escalation("spawn_failed", self.phase or "building", role, e.reason,
+                             e.tail) from e
+
+    def _is_solo(self) -> bool:
+        """This sprint is solo: the ledger records a `phase_advance` to `solo_execute` for
+        this feature after its latest `sprint_started`. plan.md's presence is not the
+        signal (fb-e4f46ed05574)."""
+        solo = False
+        for r in ledger.read_all():
+            if r.get("feature") != self.f:
+                continue
+            if r.get("event") == "sprint_started":
+                solo = False
+            elif r.get("event") == "phase_advance" and r.get("to_phase") == "solo_execute":
+                solo = True
+        return solo
 
     def _building(self) -> None:
         f = self.f
@@ -580,6 +582,14 @@ class _Drive:
             pass
         return None
 
+    def _solo_handback(self, report: str, n: object) -> Escalation:
+        return Escalation(
+            "solo_handback", "reviewing", None,
+            f"fix round {n} is open: reports/{self.f}/{report} FAILED. Address its findings "
+            f"in worktrees/solo/ and commit there, then re-run `prusik drive {self.f}`; it "
+            f"ends the round and re-reviews.",
+            [str(self.reports / report), str(self.root / "worktrees" / "solo")])
+
     def _fix_builders(self, report: str, n: object) -> None:
         for role in self._builders():
             self._spawn(role, f"fix round {n}: address the findings in "
@@ -592,7 +602,8 @@ class _Drive:
         if st is not None and st.get("feature") == f:          # step 0: resume the round
             failing = next((rep for _, rep in REVIEWERS
                             if self._report_first_token(rep) == "FAIL"), None)
-            if failing:
+            # Solo: the person fixed it after the hand-back; end the round and re-review.
+            if failing and not self._is_solo():
                 self._fix_builders(failing, st.get("round"))
             rc, tail = self._gate("fix-round", "end", "--feature", f)
             if rc != 0:
@@ -631,6 +642,8 @@ class _Drive:
                                  "`gate fix-round start` failed", tail.splitlines())
             rnd = (fix_round.current_state(self.root) or {}).get("round")
             self.steps.append(f"fix round {rnd}")
+            if self._is_solo():
+                raise self._solo_handback(failed, rnd)
             self._fix_builders(failed, rnd)
             rc, tail = self._gate("fix-round", "end", "--feature", f)
             if rc != 0:

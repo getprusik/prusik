@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -138,7 +139,12 @@ def run(feature: str, json_output: bool = False, strict: bool = False) -> int:
     root = ledger.project_root()
     from prusik import calibration
     strict = strict or calibration.is_promoted("ui_coverage_detector", root)
-    rep = ui_coverage_check(feature, root)
+    try:
+        rep = ui_coverage_check(feature, root)
+    except consistency.UnmeasuredChangeSet as e:
+        print(f"[prusik-ui] '{feature}': the builder change set is unmeasured, so UI "
+              f"coverage cannot be judged: {e.reason}", file=sys.stderr)
+        return 2
     if json_output:
         print(json.dumps(rep, indent=2))
         return 1 if (strict and rep["flagged"]) else 0

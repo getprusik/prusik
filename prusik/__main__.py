@@ -344,6 +344,20 @@ def main():
                               "ratify it — this arms the imperative fit gate.")
     p_pfit.add_argument("--json", action="store_true",
                          help="Emit machine-readable JSON instead of text")
+    p_chg = gsub.add_parser("changed-files",
+                            help="Print the builder change set every check judges, one "
+                                 "worktrees/<role>/<path> per line: committed, staged, "
+                                 "unstaged and untracked work since each worktree's fork "
+                                 "point, never gitignored caches. Exit 2 when unmeasured.")
+    p_chg.add_argument("--feature", required=True, type=_slug)
+    p_wta = gsub.add_parser("worktree-add",
+                            help="Create worktrees/<role> on sprint/<feature>-<role> and "
+                                 "record its fork point (the base its change set is "
+                                 "measured from); on an existing worktree, record a "
+                                 "missing fork point.")
+    p_wta.add_argument("--feature", required=True, type=_slug)
+    p_wta.add_argument("--role", required=True,
+                       help="worktree role, e.g. solo or backend-builder")
     p_pred = gsub.add_parser("prove-red",
                              help="Acceptance-TDD: capture the RED baseline for "
                                   "prove_red criteria — prove each verify FAILS "
