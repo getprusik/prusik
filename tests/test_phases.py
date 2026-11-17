@@ -378,15 +378,15 @@ def test_v0100_fix3_substantive_hash_stable_across_reformatting():
 
 
 def test_v0100_fix3_modules_touched_excluded_from_hash():
-    """Fix 1 made Modules-touched derived/non-gating. A rewind that only
-    churns that block must NOT bust the verdict (else Tier 3 waste returns)."""
+    """Fix 1 made plan.md's Modules-touched derived/non-gating. A rewind that only
+    churns that block must NOT bust the plan verdict (else Tier 3 waste returns)."""
     tmp = _mktmp_project()
     try:
         a = tmp / "plan.md"
         a.write_text("## Goal\nX\n\n## Modules touched\n- api/a/\n")
-        h1 = schema.substantive_hash(a)
+        h1 = schema.substantive_hash(a, "plan")
         a.write_text("## Goal\nX\n\n## Modules touched\n- api/a/\n- api/b/\n- api/c/\n")
-        assert schema.substantive_hash(a) == h1, \
+        assert schema.substantive_hash(a, "plan") == h1, \
             "Modules-touched churn must not change the substantive hash"
     finally:
         shutil.rmtree(tmp)

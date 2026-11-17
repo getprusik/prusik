@@ -3,6 +3,36 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.251.0] — a scope verdict covers the module list its critic judged; the engine releases in one command
+
+- **A scope verdict is bound to `## Modules touched` (fb-809e62a470ec).** The critic verdict
+  hash left `## Modules touched` out of every artifact. Only plan-critic treats that section
+  as derived; scope-critic judges scope.md's module list (checks 2, 3, 5, 8, 9). An APPROVED
+  scope therefore carried forward through any rewrite of the list, including undoing a change
+  the critic had forced. Changes:
+  - Each artifact schema declares the sections its critic does not judge (`critic_judged:
+    false`). The hash reads that declaration for the critic that recorded the verdict.
+    plan.md's `## Modules touched` stays excluded. scope.md's is hashed. An artifact with no
+    schema, such as a folded-in CLAUDE.md, hashes every section.
+  - A test checks that each critic spec agrees with its schema: an excluded section is
+    described in the spec as excluded, and no numbered check judges an excluded section.
+  - Upgrading invalidates scope verdicts recorded under the old hash. Each scope-critic
+    re-runs once.
+- **`scripts/release.sh` releases the engine in one command (fb-c713dc6530a9).** In this
+  repo the pin is `prusik/__init__.py`. Once the bump was committed, the installed engine was
+  behind the pin and every hook refused, so push, release, publish and install had to be
+  relayed to the operator. The script takes the version, title and notes from the top
+  CHANGELOG heading and refuses a dirty tree. It bumps the version and the README Action pin,
+  then runs the full suite on that tree and reverts the bump if the suite fails. It then
+  commits, pushes, creates the GitHub release, watches the publish run, waits for PyPI, and
+  installs into the interpreter on bare `prusik`'s shebang. Rerunning resumes from the first
+  step not yet done. In the source repo, the refusal for a bumped checkout names the script
+  (`!` runs it outside hooks) instead of an editable install of unreleased code.
+  - Closure rows and moat tags are committed before the bump, so `scripts/regen_closures.py`
+    and `prusik feedback harvest` stamp the version under development. That is the top
+    CHANGELOG heading when it is newer than `prusik/__init__.py`, otherwise `__init__`'s
+    version. Both still refuse a version origin has already released.
+
 ## [0.250.0] — review rounds judge what the builder changed; solo fix rounds hand back; a slow suite is not a failing one
 
 - **The builder change set includes committed work (fb-109c7034f558).** Boundary, blast and

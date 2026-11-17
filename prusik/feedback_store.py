@@ -350,7 +350,7 @@ def harvest(root: Path, fb_id: str) -> str | None:
     the file isn't already tagged for it. Returns the tagged path, or None.
 
     In a repo that ships a closures manifest (`prusik/_closures.json`), a tag is stamped
-    with the version under development, so it raises HarvestRefused unless origin shows
+    with the version under development (`changelog.development_version`), so it raises HarvestRefused unless origin shows
     that version unreleased: a tag after its release breaks the manifest, which regen
     then refuses to rebuild (fb-cb544c3dd67d)."""
     rec = load(root, fb_id)
@@ -366,9 +366,9 @@ def harvest(root: Path, fb_id: str) -> str | None:
             why = ("is already released" if state == "released"
                    else "can't be confirmed unreleased (origin unreachable or no version)")
             raise HarvestRefused(
-                f"v{version} {why}. Bump prusik/__init__.py to the next version first, then "
-                f"harvest and run scripts/regen_closures.py, so the tag ships in the release "
-                f"that carries it.")
+                f"v{version} {why}. Add the next version's `## [X.Y.Z]` heading to "
+                f"CHANGELOG.md first, then harvest and run scripts/regen_closures.py, so the "
+                f"tag ships in the release that carries it.")
     p = root / cand
     if not p.exists():
         return None

@@ -14,6 +14,9 @@ required_fields:
     section: "## Modules touched"
     type: list
     min_items: 1
+    # Derived (v0.10.0 Fix 1): plan-critic does not judge it, so it is left out
+    # of the plan verdict hash. scope.md's Modules touched IS judged and hashed.
+    critic_judged: false
   build_order:
     section: "## Build order"
     type: list

@@ -77,30 +77,44 @@ def parse_sections(text: str) -> dict[str, str]:
     return sections
 
 
-# v0.10.0 (Fix 3, design-passes/v0.10.0-derive-and-delta-regate.md):
-# sections that are non-gating / derived / volatile and MUST be excluded
-# from the substantive hash so a rewind that only touches them does not
-# bust a still-valid critic verdict. `## Modules touched` is derived as of
-# Fix 1 — it is no longer something a critic judges, so hashing it would
-# re-trigger the exact 13-scope-critic-rerun waste this fix eliminates.
-_NON_SUBSTANTIVE_SECTIONS: tuple[str, ...] = (
-    "## Modules touched",
-)
+# v0.10.0 (Fix 3, design-passes/v0.10.0-derive-and-delta-regate.md): a critic
+# verdict binds to the hash of what the critic JUDGES, so a rewind that only
+# touches an unjudged section does not bust a still-valid verdict. Which sections
+# a critic does not judge is declared ONCE, per artifact kind, in that kind's
+# schema (`critic_judged: false` on the field), and the critic spec states the
+# same exclusion. plan.md's `## Modules touched` is derived (Fix 1), so
+# plan-critic does not judge it; scope.md's IS the declared boundary scope-critic
+# judges, so it is hashed (fb-809e62a470ec: excluding it everywhere let an
+# APPROVED scope survive any rewrite of its module list).
+def unjudged_sections(kind: str | None) -> frozenset[str]:
+    """Section headings of artifact `kind` that its critic does not judge.
+
+    `kind` None (an artifact with no schema, e.g. a folded-in CLAUDE.md) excludes
+    nothing: an undeclared exclusion would let a verdict outlive a real change.
+    """
+    if kind is None:
+        return frozenset()
+    sch = load_schema(kind)
+    return frozenset(
+        spec["section"]
+        for group in ("required_fields", "optional_fields")
+        for spec in (sch.get(group) or {}).values()
+        if spec.get("critic_judged") is False)
 
 
-def substantive_hash(path: Path, extra_exclude: tuple[str, ...] = ()) -> str:
+def substantive_hash(path: Path, kind: str | None = None) -> str:
     """Deterministic 16-hex hash of an artifact's *substantive* sections.
 
     Content-addresses what a critic actually judges: section bodies with
     whitespace canonicalized (so trivial reformatting across a rewind does
-    not bust a valid verdict) and non-gating/derived sections excluded.
-    Stable: sections are sorted, whitespace collapsed. A change here means
-    a *substantive* change — exactly when a re-gate is warranted; no change
-    means the prior verdict carries forward (Tier 3 cure).
+    not bust a valid verdict) and the sections `kind`'s critic does not judge
+    excluded (`unjudged_sections`). Stable: sections are sorted, whitespace
+    collapsed. A change here means a *substantive* change, exactly when a
+    re-gate is warranted; no change means the prior verdict carries forward.
     """
     text = Path(path).read_text()
     sections = parse_sections(text)
-    excluded = set(_NON_SUBSTANTIVE_SECTIONS) | set(extra_exclude)
+    excluded = unjudged_sections(kind)
     parts: list[str] = []
     for name in sorted(sections):
         if name in excluded:

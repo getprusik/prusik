@@ -215,8 +215,16 @@ def install_fix(v: Verdict) -> str:
     PreToolUse hook blocks the agent's own tools, so each fix is runnable with Claude Code's
     `!` prefix, which does not go through hooks."""
     if v.kind == "source" and v.source is not None:
-        return (f"run this checkout's prusik (`! uv pip install -e {v.source.parent.parent}`"
-                f" into the interpreter bare `prusik` uses, or `uv run prusik ...` from it).")
+        # The source repo's pin is a release version, so the fix is a released engine, never
+        # an editable install of unreleased code (fb-c713dc6530a9).
+        repo = v.source.parent.parent
+        if v.status == BEHIND:
+            return (f"this checkout is bumped to {v.pin} ahead of the installed engine. A "
+                    f"release in progress resumes with `! {repo}/scripts/release.sh` (push, "
+                    f"release, publish, install); a published {v.pin} installs with "
+                    f"`! <the python on bare prusik's shebang> -m pip install prusik=={v.pin}`.")
+        return (f"the installed engine is newer than this checkout; update it "
+                f"(`! git -C {repo} pull`).")
     if v.status != BEHIND:
         return ("run `prusik refresh` from the terminal (`! prusik refresh` inside Claude "
                 "Code), then restart Claude Code.")

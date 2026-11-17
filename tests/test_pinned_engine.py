@@ -215,7 +215,8 @@ def test_source_repo_pin_is_its_source_version(tmp_path):
     elsewhere.mkdir()
     init.write_text(f'__version__ = "{_BEHIND_PIN}"\n')
     p = _run(root, "status", cwd=elsewhere)
-    _assert_refused(p, _BEHIND_PIN, str(init), "pip install -e")
+    _assert_refused(p, _BEHIND_PIN, str(init), "scripts/release.sh")
+    assert "pip install -e" not in p.stderr     # never an editable install of unreleased code
     init.write_text(f'__version__ = "{_RUNNING}"\n')
     _assert_ran(_run(root, "status", cwd=elsewhere))
     assert pin.resolve(root) == (_RUNNING, init, "source")

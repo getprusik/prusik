@@ -92,21 +92,42 @@ def reconcile_closures(existing: dict[str, str], test_moat_ids: frozenset[str],
 _VERSION_RE = re.compile(r"""^__version__\s*=\s*["']([^"']+)["']""", re.M)
 
 
-def release_state(root: Path) -> tuple[str | None, str]:
-    """(the version `root/prusik/__init__.py` declares, its release state): "released" when
-    origin has the tag `v<version>`, "unreleased" when it doesn't, "unknown" when origin can't
-    be asked or there is no version. Releases are cut remotely (`gh release create`), so local
-    tags lag and the remote is the instrument. One check for every step that stamps the
-    current version onto a closure: `scripts/regen_closures.py` and `prusik feedback
-    harvest` (fb-cb544c3dd67d)."""
-    import subprocess
+_PENDING_RE = re.compile(r"^## \[(\d+\.\d+\.\d+)\]", re.M)
+
+
+def development_version(root: Path) -> str | None:
+    """The version a fix in `root` ships in: the top `## [X.Y.Z]` heading of CHANGELOG.md
+    when it is newer than `prusik/__init__.py` (a release being prepared; scripts/release.sh
+    bumps `__init__` to it as its last local edit, fb-c713dc6530a9), else `__init__`'s
+    version. None when `__init__` has none."""
     try:
         match = _VERSION_RE.search((root / "prusik" / "__init__.py").read_text())
     except OSError:
         match = None
     if not match:
+        return None
+    current = match[1]
+    try:
+        top = _PENDING_RE.search((root / "CHANGELOG.md").read_text())
+    except OSError:
+        top = None
+    from prusik import pin
+    if top and (pin.parse_version(top[1]) or (0,)) > (pin.parse_version(current) or (0,)):
+        return top[1]
+    return current
+
+
+def release_state(root: Path) -> tuple[str | None, str]:
+    """(the version under development, `development_version`, and its release state):
+    "released" when origin has the tag `v<version>`, "unreleased" when it doesn't,
+    "unknown" when origin can't be asked or there is no version. Releases are cut remotely
+    (`gh release create`), so local tags lag and the remote is the instrument. One check
+    for every step that stamps the current version onto a closure:
+    `scripts/regen_closures.py` and `prusik feedback harvest` (fb-cb544c3dd67d)."""
+    import subprocess
+    version = development_version(root)
+    if version is None:
         return None, "unknown"
-    version = match[1]
     try:
         r = subprocess.run(["git", "-C", str(root), "ls-remote", "--tags", "origin",
                             f"v{version}"], capture_output=True, text=True, timeout=30)
