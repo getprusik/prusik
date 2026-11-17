@@ -24,8 +24,6 @@ from pathlib import Path
 
 from prusik import ledger, schema
 
-_TIMEOUT_SEC = 600
-
 
 def _criteria_path(feature: str, root: Path) -> Path:
     return root / "briefs" / f"{feature}.criteria.yaml"
@@ -80,16 +78,25 @@ def resolve(feature: str, criterion_id: str, root: Path | None = None,
               f"verify_command to run.", file=sys.stderr)
         return 2
 
+    # The one timeout resolver every criterion runner uses (fb-32d2fbb70859).
+    from prusik.gate import CriterionTimeoutInvalid, criterion_timeout, timeout_note
+    try:
+        limit = criterion_timeout(target)
+    except CriterionTimeoutInvalid as e:
+        print(f"[prusik-criterion] {e}", file=sys.stderr)
+        return 2
+
     # Run the real command — same rigor as the reviewing evidence-gate.
+    timed_out = False
     try:
         proc = subprocess.run(["/bin/bash", "-c", vc], cwd=str(root),
                               capture_output=True, text=True,
-                              timeout=_TIMEOUT_SEC, check=False)
+                              timeout=limit, check=False)
         exit_code = proc.returncode
         combined = (proc.stdout or "") + "\n--- stderr ---\n" + (proc.stderr or "")
     except subprocess.TimeoutExpired:
-        exit_code = -2
-        combined = f"[prusik-criterion] verify_command exceeded {_TIMEOUT_SEC}s\n"
+        exit_code, timed_out = -2, True
+        combined = f"[prusik-criterion] {timeout_note(limit)}\n"
     except OSError as e:
         exit_code = -3
         combined = f"[prusik-criterion] verify_command failed to spawn: {e}\n"
@@ -109,8 +116,14 @@ def resolve(feature: str, criterion_id: str, root: Path | None = None,
         return 0
     ledger.append("success_criterion_verified", feature=feature, id=criterion_id,
                   passed=False, exit_code=exit_code, verify_command=vc,
-                  expected_exit=expected, resolution="from_blocked_external_unmet")
-    print(f"\n[prusik-criterion] ✗ NOT RESOLVED — {criterion_id!r} exited "
-          f"{exit_code}, expected {expected}. The external setup didn't make it "
-          f"pass; it stays deferred (verify and re-run when it's truly ready).")
+                  expected_exit=expected, resolution="from_blocked_external_unmet",
+                  **({"timed_out": True, "timeout_sec": limit} if timed_out else {}))
+    if timed_out:
+        print(f"\n[prusik-criterion] ✗ NOT RESOLVED — {criterion_id!r} TIMEOUT after "
+              f"{limit}s: no verdict, so it stays deferred. Raise its `timeout_sec` "
+              f"(1..7200) if it needs longer.")
+    else:
+        print(f"\n[prusik-criterion] ✗ NOT RESOLVED — {criterion_id!r} exited "
+              f"{exit_code}, expected {expected}. The external setup didn't make it "
+              f"pass; it stays deferred (verify and re-run when it's truly ready).")
     return 1 if strict else 0

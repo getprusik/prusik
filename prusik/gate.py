@@ -2225,7 +2225,9 @@ def sprint_start(args) -> int:
     if state.get("lane") == "trivial":
         print(f"Trivial lane: write design/{feature}/trivial.md "
               f"(## Change + ## How verified), then /sprint-advance solo_execute "
-              f"(skips scope-critic/triage/plan-critic). Reviewing gate UNCHANGED.")
+              f"(skips scope-critic/triage/plan-critic). Create the solo worktree with "
+              f"`prusik gate worktree-add --feature {feature} --role solo` and implement "
+              f"there. Reviewing gate UNCHANGED.")
     else:
         print(f"Next: run scoping role (reads briefs/{feature}.md + design/map.md),"
               f" produce design/{feature}/scope.md, then /sprint-advance triage.")
@@ -2350,6 +2352,11 @@ def prove_red(args) -> int:
         print(f"[prusik-gate] no local prove_red criteria for {feature!r}"
               + (f" (id={want_id!r})" if want_id else ""))
         return 0
+    try:
+        limits = {id(c): criterion_timeout(c) for c in targets}
+    except CriterionTimeoutInvalid as e:
+        print(f"[prusik-gate] {e}", file=sys.stderr)
+        return 2
     all_red = True
     for entry in targets:
         cid = entry.get("id")
@@ -2357,12 +2364,22 @@ def prove_red(args) -> int:
         expected = entry.get("expected_exit", 0)
         junit = entry.get("junit") or None
         since = _ev_run_start() if junit else 0
+        limit = limits[id(entry)]
         try:
             proc = subprocess.run(["/bin/bash", "-c", vc], cwd=str(root),
                                   capture_output=True, text=True,
-                                  timeout=_VERIFY_DEFAULT_TIMEOUT_SEC, check=False)
+                                  timeout=limit, check=False)
             code = proc.returncode
-        except (subprocess.TimeoutExpired, OSError):
+        except subprocess.TimeoutExpired:
+            # A timeout is no verdict: the verify never finished, so it proves nothing
+            # about RED. Never captured as a baseline (fb-32d2fbb70859).
+            all_red = False
+            ledger.append("criterion_prove_red_timed_out", feature=feature, id=cid,
+                          verify_command=vc, timed_out=True, timeout_sec=limit)
+            print(f"[prusik-gate] ✗ {cid}: no RED baseline captured. {timeout_note(limit)}",
+                  file=sys.stderr)
+            continue
+        except OSError:
             code = -3
         if code != expected:  # RED — the verify fails without the change
             jfields: dict = {}
@@ -2428,6 +2445,33 @@ def _clean_worktrees(root) -> list[str]:
 _VERIFY_DEFAULT_TIMEOUT_SEC = 300
 
 
+class CriterionTimeoutInvalid(ValueError):
+    """A criterion's `timeout_sec` is not an int from 1 to 7200."""
+
+
+def criterion_timeout(entry: dict) -> int:
+    """The seconds a criterion's verify_command may run: its `timeout_sec`, else 300. The
+    ONE resolver for every runner (sprint-complete, prove-red, `criterion resolve`), so a
+    criterion that raises its limit gets it everywhere (fb-32d2fbb70859). An invalid value
+    raises `CriterionTimeoutInvalid` naming the criterion, never a silent default."""
+    from prusik import schema
+    value = entry.get("timeout_sec")
+    if value is None:
+        return _VERIFY_DEFAULT_TIMEOUT_SEC
+    why = schema.timeout_sec_error(value)
+    if why:
+        raise CriterionTimeoutInvalid(f"criterion {entry.get('id')!r}: {why}")
+    return int(value)
+
+
+def timeout_note(limit: int) -> str:
+    """How a timed-out verify reads: an instrument limit, not a red run."""
+    return (f"TIMEOUT: verify_command exceeded its {limit}s limit; the run was stopped, "
+            f"so this is no verdict on the code. Raise the criterion's `timeout_sec` "
+            f"(an int from 1 to 7200; default {_VERIFY_DEFAULT_TIMEOUT_SEC}) if it needs "
+            f"longer.")
+
+
 def _head_sha(root: Path) -> str:
     """The integration commit an observed-green CI credit is bound to, or
     'working-tree' when unavailable — so a `ci_observed_green` record names the
@@ -2452,7 +2496,8 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
       - Run the script from project root with a per-criterion timeout.
       - Capture stdout+stderr to reports/<feature>/verify-<id>.txt.
       - exit_code != expected_exit → criterion FAILED.
-      - Timeout → criterion FAILED with explicit stderr marker.
+      - Timeout (`criterion_timeout`: the criterion's `timeout_sec`, else 300) → criterion
+        FAILED, recorded `timed_out: true`: an instrument limit, shown as TIMEOUT.
       - Ledger event `success_criterion_verified` emitted per criterion.
     """
     import subprocess
@@ -2498,6 +2543,9 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
                 "infra_down": [r["name"] for r in down],
             }]
 
+    # Every limit resolves before anything runs: an invalid `timeout_sec` refuses the whole
+    # run (CriterionTimeoutInvalid), never a silent fall back to the default.
+    limits = {id(c): criterion_timeout(c) for c in criteria if isinstance(c, dict)}
     results: list[dict] = []
     all_passed = True
     for entry in criteria:
@@ -2602,21 +2650,23 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
         junit = (entry.get("junit") or None) if (
             not ci_shaped and entry.get("kind") == "tests") else None
         since = _ev_run_start() if junit else 0
+        limit = limits[id(entry)]
         try:
             proc = subprocess.run(
                 ["/bin/bash", "-c", vc] if not vc.startswith("/")
                     else [vc],
                 cwd=str(root),
                 capture_output=True, text=True,
-                timeout=_VERIFY_DEFAULT_TIMEOUT_SEC, check=False,
+                timeout=limit, check=False,
             )
             exit_code = proc.returncode
             out_text = (proc.stdout or "") + "\n--- stderr ---\n" + (proc.stderr or "")
             timed_out = False
         except subprocess.TimeoutExpired:
+            # An instrument limit, not a verdict: fails closed, recorded and shown as
+            # TIMEOUT, never as a red run (fb-32d2fbb70859).
             exit_code = -2
-            out_text = (f"[prusik-gate] verify_command exceeded "
-                        f"{_VERIFY_DEFAULT_TIMEOUT_SEC}s timeout\n"
+            out_text = (f"[prusik-gate] {timeout_note(limit)}\n"
                         f"verify_command: {vc}\n")
             timed_out = True
         except OSError as e:
@@ -2698,10 +2748,14 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
             "output_path": str(out_path.relative_to(root)),
             "verify_command": vc, "expected_exit": expected,
             "kind": kind, "executed": executed,
+            **({"timed_out": True, "timeout_sec": limit} if timed_out else {}),
         })
         jextra = ({"junit": junit,
                    "junit_files": len(jread.files) if jread else 0}
                   if junit else {})
+        if timed_out:
+            jextra.update(timed_out=True, timeout_sec=limit,
+                          reason=timeout_note(limit))
         ledger.append("success_criterion_verified", feature=feature,
                       id=cid, passed=passed, exit_code=exit_code,
                       verify_command=vc, expected_exit=expected,
@@ -2710,6 +2764,71 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
                       output_path=str(out_path.relative_to(root)), **jextra)
 
     return all_passed, results
+
+
+def _prune_base_refs(root: Path) -> None:
+    """Drop the fork-point refs of sprint branches that no longer exist."""
+    from prusik import worktrees as _wt
+    removed = _wt.prune_base_refs(root)
+    if removed:
+        ledger.append("worktree_base_refs_pruned", branches=removed)
+
+
+def changed_files(args) -> int:
+    """`prusik gate changed-files --feature F`: the builder change set every check judges,
+    one `worktrees/<role>/<path>` per line (fb-109c7034f558). Reviewers read this, never a
+    walk of the worktree that would list caches another reviewer's run wrote. Exit 2 when
+    a worktree's change set is unmeasured, naming why."""
+    from prusik import consistency as _cons
+    feature = args.feature
+    root = ledger.project_root()
+    state = phases.current_sprint_state(root) or {}
+    if state.get("feature") and state.get("feature") != feature:
+        print(f"[prusik-gate] the active sprint is {state.get('feature')!r}, not "
+              f"{feature!r}; worktrees/ holds its builders' work", file=sys.stderr)
+        return 2
+    try:
+        sets = _cons.worktree_change_sets(root)
+    except _cons.UnmeasuredChangeSet as e:
+        print(f"[prusik-gate] change set unmeasured: {e.reason}", file=sys.stderr)
+        return 2
+    for d, rels in sets:
+        for rel in rels:
+            print(f"worktrees/{d.name}/{rel}")
+    return 0
+
+
+def worktree_add(args) -> int:
+    """`prusik gate worktree-add --feature F --role R`: create `worktrees/<R>` on branch
+    `sprint/<F>-<R>` and record its fork point, through the same function drive uses
+    (prusik.worktrees.create). On an existing worktree it records a missing fork point,
+    refusing a branch already contained in HEAD."""
+    import re as _re
+    from prusik import consistency as _cons, worktrees as _wt
+    feature, role = args.feature, args.role
+    if not _re.fullmatch(r"[a-z0-9][a-z0-9-]*", role):
+        print(f"[prusik-gate] invalid role {role!r}: lowercase letters, digits and hyphens",
+              file=sys.stderr)
+        return 2
+    root = ledger.project_root()
+    try:
+        wt = _wt.create(root, feature, role)
+    except _wt.WorktreeError as e:
+        print(f"[prusik-gate] worktree-add refused: {e.reason}", file=sys.stderr)
+        for line in e.tail[-5:]:
+            print(f"  {line}", file=sys.stderr)
+        return 2
+    if _wt.is_git_worktree_root(wt):
+        try:
+            base = _wt.recorded_base(wt)
+        except _cons.UnmeasuredChangeSet as e:
+            print(f"[prusik-gate] worktree-add refused: {e.reason}", file=sys.stderr)
+            return 2
+        print(f"[prusik-gate] worktrees/{role}: fork point {base[:12]} recorded")
+    else:
+        print(f"[prusik-gate] worktrees/{role} is a partial mirror (no git worktree): its "
+              f"change set is every file written into it")
+    return 0
 
 
 def sprint_abandon(args) -> int:
@@ -2754,6 +2873,7 @@ def sprint_abandon(args) -> int:
         _pause.resume()
     if _mw.release(root):
         ledger.append("writer_lease_released", reason=f"sprint-abandon: {feature}")
+    _prune_base_refs(root)
     print(f"[prusik-gate] Sprint abandoned: {feature} (was in {phase!r})")
     for b in branches:
         print(f"  kept branch {b}")
@@ -2830,7 +2950,12 @@ def sprint_complete(args) -> int:
     # sprint_complete. If any criterion FAILED, refuse the close. The
     # integrator writes reports/<feature>/integration-failure.txt naming
     # which criteria failed; operator must address or remove the criteria.
-    all_passed, verify_results = _run_success_criteria(feature, root)
+    try:
+        all_passed, verify_results = _run_success_criteria(feature, root)
+    except CriterionTimeoutInvalid as e:
+        print(f"[prusik-gate] {e}. Fix briefs/{feature}.criteria.yaml, then retry.",
+              file=sys.stderr)
+        return 2
     # v0.81.0 (field finding #16) — blocked-on-external criteria are DEFERRED, not failed:
     # surface them so the deferral is visible, never silently swallowed.
     blocked = [r for r in verify_results if r.get("blocked")]
@@ -2851,8 +2976,13 @@ def sprint_complete(args) -> int:
     if failed:
         lines = [f"[prusik-gate] success_criteria not met for sprint '{feature}':"]
         for r in failed:
-            lines.append(f"  - {r['id']}: exit={r['exit_code']} "
-                         f"(expected {r['expected_exit']}); output: {r['output_path']}")
+            if r.get("timed_out"):
+                lines.append(f"  - {r['id']}: TIMEOUT after {r['timeout_sec']}s (an "
+                             f"instrument limit, not a red run; raise `timeout_sec`, "
+                             f"1..7200); output: {r['output_path']}")
+            else:
+                lines.append(f"  - {r['id']}: FAIL exit={r['exit_code']} "
+                             f"(expected {r['expected_exit']}); output: {r['output_path']}")
         lines.append("Resolve the failing criteria, or remove them from "
                      f"briefs/{feature}.criteria.yaml if no longer applicable, "
                      "then retry /sprint-complete.")
@@ -2911,9 +3041,13 @@ def sprint_complete(args) -> int:
     # not gateable (honest-limits); the flag names its evidence for a human.
     from prusik import consistency as _cons, map_check as _mc
     try:
-        _stale = _mc.stale_sections(root, _cons.sprint_changed_files(root))
-    except Exception:  # noqa: BLE001 — advisory must never block completion
-        _stale = []
+        _touched = _cons.sprint_changed_files(root)
+    except _cons.UnmeasuredChangeSet as e:
+        # Still advisory, but visible: an unmeasured change set is never an empty success.
+        print(f"[prusik-gate] map re-verify UNMEASURED: {e.reason}")
+        ledger.append("map_staleness_unmeasured", feature=feature, reason=e.reason)
+        _touched = set()
+    _stale = _mc.stale_sections(root, _touched)
     if _stale:
         print("[prusik-gate] map re-verify ADVISORY — these map sections "
               "name files this sprint touched but were NOT updated:")
@@ -2957,6 +3091,7 @@ def sprint_complete(args) -> int:
     from prusik import main_writer as _mw
     if _mw.release(root):
         ledger.append("writer_lease_released", reason=f"sprint-complete: {feature}")
+    _prune_base_refs(root)
     print(f"[prusik-gate] Sprint complete: {feature}")
     print(f"  predicted: {predicted}")
     print(f"  actual:    {actual}")
@@ -3054,8 +3189,18 @@ def _full_suite_gate(current: str, target_phase: str, feature: str) -> int | Non
         # set green is exactly the false confidence that hides cross-tier breakage —
         # so the full-suite requirement is MANDATORY here regardless of the advisory
         # config flag. This shifts fb-90cfcfa8b918 left to the authoring phase.
-        from prusik import shared_infra
-        shared = shared_infra.touched_shared_test_infra(root, config)
+        from prusik import consistency as _cons, shared_infra
+        try:
+            shared = shared_infra.touched_shared_test_infra(root, config)
+        except _cons.UnmeasuredChangeSet as e:
+            # Unmeasured is not "no shared test-infra touched" (fb-109c7034f558).
+            print(f"[prusik-gate] Cannot leave {current}: the builder change set is "
+                  f"unmeasured, so whether shared test-infra was touched is unknown: "
+                  f"{e.reason}", file=sys.stderr)
+            ledger.append("advance_blocked", from_phase=current, to_phase=target_phase,
+                          feature=feature, gate_class=gate_class.FULL_SUITE_NOT_PROVEN,
+                          reason=f"change set unmeasured: {e.reason}")
+            return 2
         if shared:
             require_full = True
         records = ledger.read_all()

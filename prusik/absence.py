@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -172,7 +173,13 @@ def run(feature: str, json_output: bool = False, strict: bool = False) -> int:
     from prusik import calibration
     strict = strict or calibration.is_promoted("absence_detector", root)
     resolve_prior_flags(root)   # auto-credit any flag whose gap has since closed
-    rep = absence_check(feature, root)
+    from prusik import consistency
+    try:
+        rep = absence_check(feature, root)
+    except consistency.UnmeasuredChangeSet as e:
+        print(f"[prusik-absence] '{feature}': the builder change set is unmeasured, so "
+              f"absence cannot be judged: {e.reason}", file=sys.stderr)
+        return 2
     if json_output:
         print(json.dumps(rep, indent=2))
         return 1 if (strict and not rep["clean"]) else 0

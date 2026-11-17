@@ -492,7 +492,13 @@ def recall_run(feature: str, command: list[str] | None,
         print("[prusik-blast-recall] give a regression command after `--`, e.g. "
               "`prusik blast-recall <feat> -- pytest -q`", file=sys.stderr)
         return 2
-    predicted = verify_prediction(feature, root)["at_risk_tests"]
+    from prusik import consistency
+    try:
+        predicted = verify_prediction(feature, root)["at_risk_tests"]
+    except consistency.UnmeasuredChangeSet as e:
+        print(f"[prusik-blast-recall] the builder change set is unmeasured: {e.reason}",
+              file=sys.stderr)
+        return 2
     try:
         proc = subprocess.run(["/bin/bash", "-c", " ".join(cmd)], cwd=str(root),
                               capture_output=True, text=True, timeout=1800,
@@ -533,9 +539,14 @@ def verify_run(feature: str, root: Path | None = None, json_output: bool = False
     blast-radius prediction? Advisory (rc 0) by default; `--strict` (or the
     reviewing gate with `require_blast_radius_verified`) returns rc≠0 on any
     predicted-regressing test left untouched."""
-    from prusik import ledger
+    from prusik import consistency, ledger
     root = root or ledger.project_root()
-    v = verify_prediction(feature, root)
+    try:
+        v = verify_prediction(feature, root)
+    except consistency.UnmeasuredChangeSet as e:
+        print(f"[prusik-gate] blast-radius VERIFY unmeasured for '{feature}': {e.reason}",
+              file=sys.stderr)
+        return 2
     ledger.append("blast_verify", feature=feature,
                   at_risk=len(v["at_risk_tests"]), unverified=len(v["unverified"]),
                   strict=strict)

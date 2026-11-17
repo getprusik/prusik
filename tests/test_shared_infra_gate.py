@@ -46,6 +46,9 @@ def _repo_with_worktree(tmp: Path) -> Path:
     _git(tmp, "commit", "-qm", "base")
     (tmp / "worktrees").mkdir()
     _git(tmp, "worktree", "add", "-q", str(tmp / "worktrees" / "solo"), "-b", "solo")
+    # The fork point prusik records when it creates a worktree (fb-109c7034f558); the
+    # change set is measured from it, and an unrecorded worktree is refused.
+    _git(tmp, "update-ref", "refs/prusik/base/solo", "HEAD")
     return tmp / "worktrees" / "solo"
 
 

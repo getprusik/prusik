@@ -144,13 +144,15 @@ Once sprint-init passes (phase `scoping`), run the rest of the sprint in code. R
 - **rc 3** — drive stopped at a judgement point. Read `reports/$ARGUMENTS/drive-escalation.json` and act on that file only. Report its `kind`, `reason` and `evidence` to the user, with the remedy for the kind:
   - `scope_rejected` / `plan_rejected` — the critic did not approve within `drive.design_rounds`. Read the critic report in the evidence, fix the artifact or raise the cap, then re-run `prusik drive $ARGUMENTS`.
   - `triage_rejected` — triage rejected the sprint or its decision was unreadable. Fix the brief or `decisions/$ARGUMENTS.json`, then re-run.
-  - `solo_handback` — triage chose solo; the sprint is in `solo_execute` and drive has captured the RED baselines. Implement in `worktrees/solo/` (Manual step 5a), then re-run `prusik drive $ARGUMENTS` from reviewing.
+  - `solo_handback` — a solo sprint needs its build done by hand. Two cases, told apart by `phase`:
+    - `phase: triage` — triage chose solo; the sprint is in `solo_execute`, drive has captured the RED baselines and created `worktrees/solo/` with its fork point recorded. Implement there (Manual step 5a), advance to reviewing, then re-run `prusik drive $ARGUMENTS`.
+    - `phase: reviewing` — a reviewer FAILED a solo sprint and drive has opened the fix round. Address the findings in the failing report named in `evidence`, in `worktrees/solo/`, commit there, then re-run `prusik drive $ARGUMENTS`: it ends the open round and re-reviews, with no second hand-back.
   - `prove_red_failed`, `suite_failed`, `fix_round_cap`, `advance_blocked` — a gate or proof failed; fix the cause named in the evidence, then re-run.
   - `permission_denied`, `spawn_failed`, `tier_unresolved`, `auth_mismatch`, `writer_busy` — a spawn or setup problem; show the evidence and stop.
   - `tree_written` — a role changed shared-tree files its phase may not write, by a means the gate could not see. The files are left as the role left them. Show the paths in the evidence and stop: the user decides whether to keep or restore them.
   - `budget_exceeded` — measured cost (USD, API list price) crossed a cap; the reason names the key (`drive.budget_usd`, `phases[<phase>].budget_usd` or `drive.session_budget_usd`) and the evidence carries the cost by role and the raw tokens by category. For the session cap, drive has released this session's writer lease: re-run `prusik drive $ARGUMENTS` from a fresh session. For the others, show the numbers and stop: only the user raises a cap.
   - `budget_unmeasurable` — drive could not read the cost a cap needs (registry or transcript unreadable, or a model with no price in prusik/prices.json). Show the reason and stop; drive never runs past a budget it cannot read.
-- **rc 2** — the sprint is not drivable yet (including the trivial lane: write `design/$ARGUMENTS/trivial.md`, run `prusik gate prove-red --feature $ARGUMENTS`, implement in `worktrees/solo/`, re-run from reviewing). Show the message.
+- **rc 2** — the sprint is not drivable yet (including the trivial lane: write `design/$ARGUMENTS/trivial.md`, run `prusik gate prove-red --feature $ARGUMENTS`, create the solo worktree with `prusik gate worktree-add --feature $ARGUMENTS --role solo`, implement in `worktrees/solo/`, re-run from reviewing). Show the message.
 
 ---
 
@@ -203,7 +205,11 @@ Read `design/$ARGUMENTS/scope.md`'s Modules touched. Before writing any code, ca
 
     prusik gate prove-red --feature $ARGUMENTS
 
-Implement the feature in `worktrees/solo/` — mirror the repo structure under worktrees/solo/ for files you touch. Respect the writable gate (nothing outside worktrees/solo/**).
+Create the solo worktree unless drive's `solo_handback` already did (`worktrees/solo/` exists). It records the fork point the reviewing checks measure the change set from; a worktree made any other way is refused at the boundary check:
+
+    prusik gate worktree-add --feature $ARGUMENTS --role solo
+
+Implement the feature in `worktrees/solo/` and commit there (in a project without git it is a plain directory: mirror the repo structure for files you touch). Respect the writable gate (nothing outside worktrees/solo/**).
 
 Run the project's smoke/unit tests. If passing, advance:
 

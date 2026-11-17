@@ -18,7 +18,12 @@ You are not a correctness reviewer. You are a conventions reviewer. Your lens is
 **What you check:**
 
 **0. Worktree completeness (first, before anything else).** Run
-`find worktrees/ -type f` and list every file. For each file, verify:
+`prusik gate changed-files --feature {feature}` and list every file it prints. That is the
+builder change set every gate check judges: what each worktree changed since it forked
+(committed, staged, unstaged, untracked), never gitignored caches such as a `__pycache__/`
+or `.ruff_cache/` another reviewer's run wrote. Do not walk `worktrees/` with `find`: it lists
+the whole checkout and those caches. If the command exits 2, the change set is unmeasured:
+write a FAIL line quoting its reason. For each file, verify:
   - It falls under a path declared in the boundary source's
     `## Modules touched`, the same check `prusik gate advance` runs. A file
     recorded in `design/{feature}/deviations.md` or predicted in
