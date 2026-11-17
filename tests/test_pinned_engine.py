@@ -123,8 +123,9 @@ def test_engine_behind_the_pin_refuses_hooks_and_commands(tmp_path):
     for argv, payload in ((("gate", "pre-tool"), _READ), (("gate", "post-tool"), _READ),
                           (("gate", "session-start"), {}), (("status",), None)):
         p = _run(root, *argv, payload=payload)
+        # A refused pre-tool blocks the agent's own Bash, so the fix must run via `!`.
         _assert_refused(p, _BEHIND_PIN, str(_manifest(root)), "behind the pin",
-                        f"prusik=={_BEHIND_PIN}")
+                        f"`! uv tool install prusik=={_BEHIND_PIN}`")
     # The opt-out covers only AHEAD: behind refuses even when the project opted out.
     (root / ".claude" / "sprint-config.yaml").write_text(
         _TEMPLATE_CFG.read_text() + "\nauto_refresh_on_skew: false\n")
@@ -398,6 +399,13 @@ def test_doctor_fails_on_a_path_prusik_that_is_not_the_pin(tmp_path):
     assert p.returncode == 1, (p.stdout, p.stderr)
     fake = str(tmp_path / f"bin-{stale}" / "prusik")
     assert f"PATH prusik {fake} is {stale}, not the pin {_RUNNING}" in p.stdout, p.stdout
+    assert f"`! uv tool install prusik=={_RUNNING}`" in p.stdout, p.stdout
+    # A PATH prusik NEWER than the pin is fixed by refreshing the project, not by installing
+    # an older wheel over it.
+    newer = "999.0.0"
+    n = _run(root, "doctor", env=_fake_prusik(tmp_path / "n", newer))
+    assert n.returncode == 1 and f"is {newer}, not the pin" in n.stdout, n.stdout
+    assert "`! prusik refresh`" in n.stdout and "uv tool install" not in n.stdout, n.stdout
     assert f"pin:      {_RUNNING} (from {_manifest(root)})" in p.stdout
     assert f"running:  {_RUNNING} (from {os.path.abspath(prusik.__file__)})" in p.stdout
     j = json.loads(_run(root, "doctor", "--json", env=_fake_prusik(tmp_path / "j", stale))

@@ -137,11 +137,20 @@ def _engine_resolution(root: Path) -> dict:
     if verdict.pin and which and path_version != verdict.pin:
         failures.append(f"PATH prusik {which} is "
                         f"{path_version or 'of unknown version (`--version` failed)'}, "
-                        f"not the pin {verdict.pin} ({verdict.source}). Install the pinned "
-                        f"version so bare `prusik` resolves to it "
-                        f"(`uv tool install prusik=={verdict.pin}`).")
+                        f"not the pin {verdict.pin} ({verdict.source}). Fix: "
+                        f"{pin.install_fix(_path_verdict(verdict, path_version))}")
     return {**verdict.as_dict(), "path_prusik": which, "path_version": path_version,
             "failures": failures}
+
+
+def _path_verdict(verdict, path_version: str | None):
+    """The PATH prusik's own verdict against the pin, so doctor names the same fix the
+    refusal would: an older or unparseable PATH prusik installs the pin, a newer one
+    refreshes the project."""
+    from prusik import pin
+    have, want = pin.parse_version(path_version), pin.parse_version(verdict.pin)
+    status = pin.AHEAD if have and want and have > want else pin.BEHIND
+    return pin.Verdict(status, pin=verdict.pin, source=verdict.source, kind=verdict.kind)
 
 
 def _print_engine_resolution(engine: dict) -> None:

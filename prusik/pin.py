@@ -206,17 +206,22 @@ def refusal(v: Verdict) -> str:
                 f"  Fix: restore it (`git checkout -- {v.source}`), or re-scaffold with "
                 f"`prusik init --force`.")
     pinned = f"this project is pinned to {v.pin} ({v.source})"
+    where = "behind the pin: " if v.status == BEHIND else "ahead of the pin: "
+    return f"[prusik] refusing: {running}, {where}{pinned}.\n  Fix: {install_fix(v)}"
+
+
+def install_fix(v: Verdict) -> str:
+    """The one fix for a version mismatch, shared by the refusal and doctor. A refused
+    PreToolUse hook blocks the agent's own tools, so each fix is runnable with Claude Code's
+    `!` prefix, which does not go through hooks."""
     if v.kind == "source" and v.source is not None:
-        return (f"[prusik] refusing: {running}, but {pinned}.\n"
-                f"  Fix: run this checkout's prusik (`pip install -e {v.source.parent.parent}`"
-                f" or `uv run prusik ...` from it).")
-    if v.status == BEHIND:
-        return (f"[prusik] refusing: {running}, behind the pin: {pinned}.\n"
-                f"  Fix: install the pinned version so bare `prusik` resolves to it "
-                f"(`uv tool install prusik=={v.pin}` or `pipx install prusik=={v.pin}`).")
-    return (f"[prusik] refusing: {running}, ahead of the pin: {pinned}.\n"
-            f"  Fix: run `prusik refresh` from the terminal (`! prusik refresh` inside "
-            f"Claude Code), then restart Claude Code.")
+        return (f"run this checkout's prusik (`! uv pip install -e {v.source.parent.parent}`"
+                f" into the interpreter bare `prusik` uses, or `uv run prusik ...` from it).")
+    if v.status != BEHIND:
+        return ("run `prusik refresh` from the terminal (`! prusik refresh` inside Claude "
+                "Code), then restart Claude Code.")
+    return (f"install the pinned version so bare `prusik` resolves to it "
+            f"(`! uv tool install prusik=={v.pin}` or `! pipx install prusik=={v.pin}`).")
 
 
 # ── launching a prusik child ─────────────────────────────────────────────────────────
