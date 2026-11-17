@@ -3,6 +3,33 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.249.0] — every prusik checks itself against the project's pin before it acts
+
+- **Which prusik runs is a checked fact, not an accident of PATH or cwd (fb-f381d16021db).**
+  Hooks and agents took the first `prusik` on PATH, and drive's children could import a
+  `prusik/` package from the project root. One observed-writes drive mixed 0.245.0 and
+  0.247.0 and nothing noticed. Changes:
+  - A project's pin is its deployed surface version in `.claude/.prusik-manifest.json`. In
+    the prusik source repo it is `prusik/__init__.py`'s version. A directory with neither is
+    unchecked; a manifest that can't be read refuses.
+  - Every entrypoint, hooks included, checks before it acts and exits 2 on a mismatch. Behind
+    the pin always refuses. Ahead refuses unless the project set `auto_refresh_on_skew: false`.
+    `--version`, help, `init`, `refresh`, `doctor`, `uninstall` and `feedback` are exempt.
+    Stop under `stop_hook_active` exits 0, so it cannot loop.
+  - `gate sprint-start` while ahead auto-syncs the template surface, re-checks, and refuses if
+    the pin still mismatches.
+  - The refusal names the running version and its import path, the pin and its file, and the
+    fix as a `!` command, because a refused PreToolUse blocks the agent's own Bash.
+  - drive and `hook_bench` launch children through one launcher. The child's env names the
+    parent's package (`PRUSIK_ORIGIN`) and sets `PYTHONSAFEPATH=1`; a child that imported a
+    different `prusik` refuses, naming both paths.
+  - `prusik doctor` reports the pin, the running engine and what bare `prusik` resolves to on
+    PATH, and exits 1 when the PATH prusik is not the pin. The fix follows its direction:
+    older installs the pin, newer refreshes the project.
+  - Hook cost: median pre-tool latency +1.3 ms (56.4 vs 55.1 ms, interleaved n=40).
+- **Upgrading:** an older `prusik` left on PATH has no check. Run `prusik doctor` in each
+  project after upgrading; it fails until bare `prusik` is the pinned version.
+
 ## [0.248.0] — budgets cap measured cost in USD, priced per model
 
 - **Every spend cap is now in dollars (fb-1d6f8de5b8d3).** Budgets compared raw tokens with
