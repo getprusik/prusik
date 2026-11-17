@@ -341,3 +341,101 @@ def test_rollup_and_effort_report_tokens_and_cost_and_an_old_snapshot_has_no_cos
     effort.run()
     out = capsys.readouterr().out
     assert "cost" in out and "$4.50" in out and "3.0M" in out
+
+
+# ---- one reusable spend report ---------------------------------------------------------------
+
+_MIXED = [("a", "2026-10-26T10:15:00Z", {}),
+          ("b", "2026-10-26T10:16:00Z", {"model": "claude-sonnet-5-5", "inp": 7, "out": 3,
+                                          "cw": 50, "cr": 400})]
+
+
+def _mixed(cproj, tmp_path):
+    return _measure_rows(cproj, tmp_path, [mtu._row(m, ts, **kw) for m, ts, kw in _MIXED])
+
+
+def _cost_cli(argv):
+    import sys
+    from prusik import __main__ as cli
+    old = sys.argv
+    sys.argv = ["prusik", "cost", *argv]
+    try:
+        return cli.main()
+    finally:
+        sys.argv = old
+
+
+def test_the_multiplier_is_tokens_over_input_equivalent_by_hand(cproj, tmp_path):
+    u = _mixed(cproj, tmp_path)
+    opus_in, sonnet_in = 4, 2                                   # $/M input, prices.json
+    ie = (mtu._ROW_COST / (opus_in / 1e6)
+          + (7 * 2 + 3 * 10 + 50 * 4 + 400 * 0.1) / 1e6 / (sonnet_in / 1e6))
+    assert u.input_equivalent == pytest.approx(ie)
+    d = usage.spend_data(u)
+    assert d["multiplier"] == pytest.approx(u.tokens / ie, abs=1e-3)
+    assert d["effective_usd_per_mtok"] == pytest.approx(u.cost_usd / u.tokens * 1e6)
+    assert d["tokens_by_category"] == {"input": 8, "output": 13, "cache_write": 150,
+                                       "cache_read": 1400}
+    assert set(d["cost_by_category"]) == {"input", "output", "cache_write", "cache_read"}
+    assert set(d["cost_by_model"]) == {"claude-opus-5-5", "claude-sonnet-5-5"}
+    assert set(d["cost_by_phase"]) == {"solo_execute"}
+
+
+def test_a_zero_token_usage_renders_no_multiplier_not_nan():
+    u = usage.Usage(measured=True)
+    d = usage.spend_data(u)
+    assert d["multiplier"] is None and d["effective_usd_per_mtok"] is None
+    assert "n/a" in usage.spend_report(u)[-1] and "nan" not in " ".join(usage.spend_report(u))
+
+
+def test_prusik_cost_prints_the_budget_messages_figures(cproj, tmp_path, capsys):
+    u = _mixed(cproj, tmp_path)
+    capsys.readouterr()
+    assert _cost_cli(["feat"]) == 0
+    out = capsys.readouterr().out
+    for line in usage.spend_report(u):
+        assert line in out
+    assert "multiplier:" in out and "per input-equivalent token" in out
+    assert "per million raw tokens" in out
+
+
+def test_prusik_cost_json_shape_phase_and_session(cproj, tmp_path, capsys):
+    _mixed(cproj, tmp_path)
+    capsys.readouterr()
+    assert _cost_cli(["feat", "--json"]) == 0
+    d = json.loads(capsys.readouterr().out)
+    assert d["measured"] is True and d["feature"] == "feat"
+    assert {"tokens_by_category", "cost_by_category", "cost_by_role", "cost_by_phase",
+            "cost_by_model", "multiplier", "effective_usd_per_mtok",
+            "input_equivalent_tokens"} <= set(d)
+    assert _cost_cli(["feat", "--phase", "solo_execute", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["cost_usd"] == pytest.approx(d["cost_usd"])
+    assert _cost_cli(["feat", "--session", "s1", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["tokens"] == d["tokens"]
+    assert _cost_cli(["feat", "--phase", "scoping", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["tokens"] == 0
+
+
+def test_prusik_cost_unknown_session_exits_2_with_the_reason(cproj, tmp_path, capsys):
+    _mixed(cproj, tmp_path)
+    capsys.readouterr()
+    assert _cost_cli(["feat", "--session", "nope"]) == 2
+    cap = capsys.readouterr()
+    assert "UNMEASURED" in cap.err and "nope" in cap.err and "$0" not in cap.out + cap.err
+
+
+def test_prusik_cost_unmeasured_exits_2_and_never_prints_zero(cproj, tmp_path, capsys):
+    _measure_rows(cproj, tmp_path, [mtu._row("a", "2026-10-26T10:15:00Z", model="claude-mystery-9")])
+    capsys.readouterr()
+    assert _cost_cli(["feat"]) == 2
+    cap = capsys.readouterr()
+    assert "claude-mystery-9" in cap.err and "UNMEASURED" in cap.err
+    assert "$0" not in cap.out + cap.err and cap.out == ""
+    assert _cost_cli(["no-such-feature"]) == 2
+
+
+def test_no_second_formatter_for_a_usages_cost_and_tokens():
+    old = "spend_" + "detail"           # the retired second formatter
+    hits = [str(p.relative_to(_REPO)) for p in (_REPO / "prusik").rglob("*.py")
+            if old in p.read_text()]
+    assert hits == []

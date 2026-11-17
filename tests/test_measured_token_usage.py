@@ -589,9 +589,12 @@ def test_watchdog_files_budget_exceeded_from_measured_usage(proj, tmp_path):
     (inc,) = _incidents(proj, "budget_exceeded")
     assert inc["tokens_used"] == 2 * _UNIT and inc["budget_usd"] == _CAP
     assert inc["cost_usd"] == round(2 * _ROW_COST, 2) and "API list price" in inc["price_basis"]
-    assert inc["cost_by_model"] == {"claude-opus-5-5": round(2 * _ROW_COST, 2)}
-    assert inc["cost_by_role"] == {"main": round(2 * _ROW_COST, 2)}
-    assert inc["cache_read"] == 2000 and inc["cache_write"] == 200
+    # the payload is the one spend report (usage.spend_data): costs at 6 decimals
+    assert inc["cost_by_model"] == {"claude-opus-5-5": round(2 * _ROW_COST, 6)}
+    assert inc["cost_by_role"] == {"main": round(2 * _ROW_COST, 6)}
+    assert inc["tokens_by_category"]["cache_read"] == 2000
+    assert inc["tokens_by_category"]["cache_write"] == 200
+    assert inc["multiplier"] and any("multiplier:" in x for x in inc["report"])
 
 
 def test_watchdog_files_a_budget_incident_once_per_phase(proj, tmp_path):

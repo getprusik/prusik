@@ -243,7 +243,7 @@ class _Drive:
                                  f"{scope} cost {effort.fmt_usd(used)} ({pricing.LABEL}), over "
                                  f"its cap {effort.fmt_usd(float(cap))} ({key}); {remedy}",
                                  [f"{key}={cap}", f"cost={used:.2f}",
-                                  f"sprint_cost={u.cost_usd:.2f}", usage.spend_detail(u)])
+                                  f"sprint_cost={u.cost_usd:.2f}", *usage.spend_report(u)])
 
     def _tree_state(self) -> dict[str, tuple[int, int]]:
         """(mtime_ns, size) of every file in the shared tree (`gate.main_tree_files`)."""

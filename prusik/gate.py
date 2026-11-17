@@ -2859,8 +2859,8 @@ def sprint_complete(args) -> int:
         actual["tokens"] = measured.tokens
         actual["cost_usd"] = round(measured.cost_usd, 6)
         actual["usage"] = measured.breakdown()
-        print(f"[prusik-gate] tokens measured: {measured.tokens:,}; cost "
-              f"${measured.cost_usd:,.2f} (API list price)", file=sys.stderr)
+        for line in usage.spend_report(measured):
+            print(f"[prusik-gate] {line}", file=sys.stderr)
     else:
         actual["tokens_unmeasured"] = measured.reason
         print(f"[prusik-gate] tokens and cost UNMEASURED: {measured.reason}", file=sys.stderr)
@@ -3335,12 +3335,11 @@ def _phase_usage_line(feature: str, phase: str, phase_spec: dict) -> str:
     if not u.measured:
         return f"[prusik-gate] {phase} cost UNMEASURED: {u.reason}"
     budget = phase_spec.get("budget_usd")
-    tail = (f" / budget {effort.fmt_usd(budget)}"
+    tail = (f"budget {effort.fmt_usd(budget)}"
             + (" — EXCEEDED" if u.cost_usd > budget else "")) if budget else ""
-    return (f"[prusik-gate] {phase} cost {effort.fmt_usd(u.cost_usd)} (API list price){tail}; "
-            f"tokens {effort.fmt_tokens(u.tokens)} (input {effort.fmt_tokens(u.input)}, "
-            f"output {effort.fmt_tokens(u.output)}, cache write {effort.fmt_tokens(u.cache_write)}, "
-            f"cache read {effort.fmt_tokens(u.cache_read)})")
+    lines = usage.spend_report(u)
+    lines[0] = f"{phase} {lines[0]}" + (f"; {tail}" if tail else "")
+    return "\n".join(f"[prusik-gate] {x}" for x in lines)
 
 
 def _plan_boundary_line(feature: str) -> str | None:

@@ -188,6 +188,9 @@ class Usage:
     cost_by_model: dict[str, float] = field(default_factory=dict)
     cost_by_session: dict[str, float] = field(default_factory=dict)
     cache_write_unsplit: int = 0       # cache-write tokens priced at 1h for want of a split
+    # Each row's cost over its own model's input price: the tokens the same spend would have
+    # bought as plain input. `tokens / input_equivalent` is the multiplier.
+    input_equivalent: float = 0.0
 
     def breakdown(self) -> dict:
         r = lambda d: {k: round(v, 6) for k, v in d.items()}  # noqa: E731
@@ -196,6 +199,7 @@ class Usage:
                 "cost_by_phase": r(self.cost_by_phase), "cost_by_role": r(self.cost_by_role),
                 "cost_by_model": r(self.cost_by_model),
                 "cache_write_unsplit": self.cache_write_unsplit,
+                "input_equivalent": round(self.input_equivalent, 3),
                 **self._token_breakdown()}
 
     def _token_breakdown(self) -> dict:
@@ -207,29 +211,105 @@ class Usage:
                 "peak_context": self.peak_context}
 
 
-def spend_detail(u: Usage) -> str:
-    """The detail every budget message carries: cost by role, then the raw tokens by category
-    (telemetry). Cost is API list price."""
+def multiplier(tokens: int, input_equivalent: float | None) -> float | None:
+    """Raw tokens per input-equivalent token; None when there is no input-equivalent to divide
+    by (nothing measured), never NaN or inf."""
+    return tokens / input_equivalent if input_equivalent and input_equivalent > 0 else None
+
+
+def spend_data(u: Usage) -> dict:
+    """The spend report of a measured Usage as data (`prusik cost --json`, the watchdog
+    payload): raw tokens by category; cost by category, role, phase and model; the multiplier
+    (raw tokens per input-equivalent token) and the effective USD per million raw tokens. The
+    last two are None when there are no tokens to divide by. Cost is API list price."""
+    from prusik import pricing
+    r = lambda d: {k: round(v, 6) for k, v in d.items()}  # noqa: E731
+    cats = dict(u.cost_by_category)
+    write = cats.pop("cache_write_5m", 0.0) + cats.pop("cache_write_1h", 0.0)
+    cats["cache_write"] = write
+    mult = multiplier(u.tokens, u.input_equivalent)
+    return {"price_basis": pricing.LABEL, "tokens": u.tokens,
+            "tokens_by_category": {"input": u.input, "output": u.output,
+                                   "cache_write": u.cache_write, "cache_read": u.cache_read},
+            "cost_usd": round(u.cost_usd, 6),
+            "cost_by_category": r({c: cats.get(c, 0.0) for c in
+                                   ("input", "output", "cache_write", "cache_read")}),
+            "cost_by_role": r(u.cost_by_role), "cost_by_phase": r(u.cost_by_phase),
+            "cost_by_model": r(u.cost_by_model),
+            "input_equivalent_tokens": round(u.input_equivalent, 3),
+            "multiplier": None if mult is None else round(mult, 3),
+            "effective_usd_per_mtok": (round(u.cost_usd / u.tokens * 1e6, 6)
+                                       if u.tokens else None)}
+
+
+def spend_report(u: Usage) -> list[str]:
+    """THE renderer of a measured Usage: every budget message, `prusik effort`'s sprint
+    figures, sprint-complete, the phase line, the watchdog and `prusik cost` print these
+    lines. An unmeasured Usage renders its reason, never a $0."""
     from prusik import effort
-    roles_ = ", ".join(f"{r} {effort.fmt_usd(c)}" for r, c in
-                       sorted(u.cost_by_role.items(), key=lambda kv: -kv[1])[:5])
-    return (f"cost by role: {roles_ or 'none'}; tokens (telemetry): "
-            f"input {effort.fmt_tokens(u.input)}, output {effort.fmt_tokens(u.output)}, "
-            f"cache write {effort.fmt_tokens(u.cache_write)}, "
-            f"cache read {effort.fmt_tokens(u.cache_read)}")
+    if not u.measured:
+        return [f"cost UNMEASURED: {u.reason}"]
+    d = spend_data(u)
+    usd, tok = effort.fmt_usd, effort.fmt_tokens
+
+    def by(title: str, costs: dict) -> str:
+        items = ", ".join(f"{k} {usd(v)}" for k, v in
+                          sorted(costs.items(), key=lambda kv: -kv[1])[:5])
+        return f"cost by {title}: {items or 'none'}"
+
+    tc, cc = d["tokens_by_category"], d["cost_by_category"]
+    if d["multiplier"] is None:
+        mult = "multiplier: n/a (no tokens measured)" if not u.tokens else \
+            "multiplier: n/a (no input-equivalent measured)"
+    else:
+        mult = (f"multiplier: {d['multiplier']:.1f} raw tokens per input-equivalent token "
+                f"({tok(round(u.input_equivalent))} input-equivalent)")
+    if d["effective_usd_per_mtok"] is not None:
+        mult += f"; effective ${d['effective_usd_per_mtok']:,.2f} per million raw tokens"
+    return [f"cost {usd(u.cost_usd)} ({d['price_basis']}); tokens {tok(u.tokens)} (telemetry)",
+            "tokens: " + ", ".join(f"{k.replace('_', ' ')} {tok(v)}" for k, v in tc.items()),
+            "cost by category: " + ", ".join(f"{k.replace('_', ' ')} {usd(v)}"
+                                             for k, v in cc.items()),
+            by("role", u.cost_by_role), by("phase", u.cost_by_phase),
+            by("model", u.cost_by_model), mult]
 
 
-def measure(feature: str, phase: str | None = None, now: datetime | None = None) -> Usage:
+def run_cost(feature: str, phase: str | None = None, session: str | None = None,
+             json_output: bool = False) -> int:
+    """`prusik cost`: the spend report of a sprint, one phase of it, or one session's share.
+    Exit 2, printing the reason, when the cost is unmeasured (never $0)."""
+    import sys
+    u = measure(feature, phase=phase, session=session)
+    scope = " ".join(x for x in (f"phase {phase}" if phase else "",
+                                 f"session {session}" if session else "") if x)
+    if not u.measured:
+        print(f"[prusik-cost] cost UNMEASURED: {u.reason}", file=sys.stderr)
+        if json_output:
+            print(json.dumps({"measured": False, "reason": u.reason}, indent=2))
+        return 2
+    if json_output:
+        print(json.dumps({"measured": True, "feature": feature, "phase": phase,
+                          "session": session, **spend_data(u)}, indent=2))
+        return 0
+    print(f"{feature}{' ' + scope if scope else ''}")
+    for line in spend_report(u):
+        print(f"  {line}")
+    return 0
+
+
+def measure(feature: str, phase: str | None = None, now: datetime | None = None,
+            session: str | None = None) -> Usage:
     """Measured usage of `feature` — or of one `phase`, every visit of it (rewinds included).
     Total: an unexpected failure is `measured=False` with its reason (loud at every caller),
     never an exception into sprint-complete, the watchdog or advance."""
     try:
-        return _measure(feature, phase, now)
+        return _measure(feature, phase, now, session)
     except Exception as e:  # noqa: BLE001 — telemetry must never break its callers
         return Usage(measured=False, reason=f"usage read failed: {type(e).__name__}: {e}")
 
 
-def _measure(feature: str, phase: str | None, now: datetime | None) -> Usage:
+def _measure(feature: str, phase: str | None, now: datetime | None,
+             session: str | None = None) -> Usage:
     """One root resolution: the ledger and the registry both come from `ledger_path()`, so they
     can never disagree. Coverage keys on each session's newest transcript write, not the
     registry's `last_seen`: Stop fires at turn END while phases are entered and left
@@ -279,6 +359,12 @@ def _measure(feature: str, phase: str | None, now: datetime | None) -> Usage:
     role_names = known_roles(ledger.project_root())
     merged: dict[str, dict] = {}
     malformed = 0
+    if session is not None:                    # one session's share: its rows only
+        active = [a for a in active if a[0] == session]
+        if not active:
+            return Usage(measured=False,
+                         reason=f"session {session!r} was not active in the window of "
+                                f"{feature!r}" + (f" phase {phase!r}" if phase else ""))
     for sid, path, main_role in active:
         read = adapter.read_usage(path, role_names, main_role=main_role)
         if read.unreadable:
@@ -314,6 +400,9 @@ def _measure(feature: str, phase: str | None, now: datetime | None) -> Usage:
         except pricing.UnpricedModel as e:    # fail closed: never 0, never a neighbour's price
             return Usage(measured=False, reason=f"cost unmeasured: {e}")
         cost = sum(priced.values())
+        in_price = pricing.input_price_per_token(
+            row["model"], prompt_tokens=row["input"] + row["cache_write"] + row["cache_read"])
+        u.input_equivalent += cost / in_price if in_price else 0.0
         u.cache_write_unsplit += pricing.unsplit_writes(
             row["cache_write"], row["cache_write_5m"], row["cache_write_1h"])
         u.cost_usd += cost
@@ -480,7 +569,7 @@ def rollup(records: list[dict]) -> dict:
         entry: dict = {"feature": r.get("feature"), "ts": ts, "measured": is_measured,
                        "reason": None, "tokens": None, "cost_usd": None,
                        "by_phase": {}, "by_role": {}, "by_model": {},
-                       "peak_context": None}
+                       "peak_context": None, "input_equivalent": None}
         if is_measured and isinstance(tokens, int) and isinstance(snap, dict):
             out["measured"] += 1
             out["tokens"] += tokens
@@ -489,6 +578,9 @@ def rollup(records: list[dict]) -> dict:
             measured_tokens.append(tokens)
             entry["tokens"] = tokens
             peak = snap.get("peak_context")
+            ie = snap.get("input_equivalent")
+            entry["input_equivalent"] = (ie if isinstance(ie, (int, float))
+                                         and not isinstance(ie, bool) else None)
             entry["peak_context"] = (peak if isinstance(peak, int)
                                      and not isinstance(peak, bool) else None)
             for key in _BY_KEYS:

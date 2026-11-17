@@ -45,6 +45,25 @@ def table() -> dict:
     return data
 
 
+def _rates(entry: dict, prompt_tokens: int) -> dict:
+    """A model's per-million rates for a request of `prompt_tokens` (input + all cache writes
+    + cache reads): its long-context rates when over the threshold."""
+    long = entry.get("long_context")
+    if long and prompt_tokens > long["over_prompt_tokens"]:
+        return long
+    return entry
+
+
+def input_price_per_token(model: str, *, prompt_tokens: int) -> float:
+    """USD per input token for one response of `model` with a prompt of `prompt_tokens`: the
+    unit that makes a row's cost an input-equivalent token count. Same table and long-context
+    rule as `price_row` (one source of truth, prices.json)."""
+    entry = table()["models"].get(model)
+    if entry is None:
+        raise UnpricedModel(model)
+    return _rates(entry, prompt_tokens)["input"] / 1_000_000
+
+
 def price_row(model: str, *, input: int, output: int, cache_write: int,  # noqa: A002
               cache_write_5m: int, cache_write_1h: int, cache_read: int) -> dict[str, float]:
     """USD per category for one response. Writes with a 5m/1h split are priced per TTL; the
@@ -54,10 +73,7 @@ def price_row(model: str, *, input: int, output: int, cache_write: int,  # noqa:
     entry = table()["models"].get(model)
     if entry is None:
         raise UnpricedModel(model)
-    rates = entry
-    long = entry.get("long_context")
-    if long and input + cache_write + cache_read > long["over_prompt_tokens"]:
-        rates = long
+    rates = _rates(entry, input + cache_write + cache_read)
     w1 = cache_write_1h + max(0, cache_write - cache_write_5m - cache_write_1h)
     counts = {"input": input, "output": output, "cache_write_5m": cache_write_5m,
               "cache_write_1h": w1, "cache_read": cache_read}

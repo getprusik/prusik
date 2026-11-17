@@ -24,6 +24,13 @@ All notable changes to **Prusik** are documented here. The format follows
     tokens by category. `prusik effort`, the usage rollup and `sprint-complete` keep the
     tokens and add `cost_usd`. A snapshot recorded before this release has no cost, and the
     rollup treats it as unmeasured, not zero.
+- **One spend report, and `prusik cost` prints it (fb-1d6f8de5b8d3).** `usage.spend_report`
+  renders a measured usage as raw tokens by category, cost by category, role, phase and model,
+  the multiplier (raw tokens per input-equivalent token, the measured cost over each row's own
+  input price) and the effective USD per million raw tokens. Budget escalations, the watchdog,
+  `sprint-complete`, the phase line and `prusik effort` (a `mult` column) all use it, and
+  `spend_detail` is gone. `prusik cost <feature> [--phase P] [--session S] [--json]` prints it
+  on demand and exits 2 with the reason when the cost is unmeasured, never `$0`.
 - **A leftover `budget_tokens` key is refused with exit 2.** The message names the key, its
   file and the `budget_usd` key that replaces it. Nothing is converted, because a token count
   has no single price. `prusik refresh` removes the template-default `budget_tokens` values

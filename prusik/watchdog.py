@@ -140,7 +140,7 @@ def _budget_check(root: Path, feature: str | None, phase: str | None,
     """Measured phase cost (USD, API list price) against its `budget_usd` (fb-1d6f8de5b8d3):
     (incident kind, payload), or (None, {}) when within budget. A budget that can't be
     measured, a model with no price included, is LOUD — never a silent pass."""
-    from prusik import ledger, pricing, usage
+    from prusik import ledger, usage
     # usage reads the ledger + session registry of project_root(); an explicit foreign root
     # would compare one project's budget against another's usage (fb-5b83acbaab4a). Paths
     # are compared resolved; a linked-worktree root counts as foreign (loud, never wrong),
@@ -155,15 +155,8 @@ def _budget_check(root: Path, feature: str | None, phase: str | None,
     if not u.measured:
         return "budget_unmeasurable", {"budget_usd": budget, "reason": u.reason}
     if u.cost_usd > budget:
-        return "budget_exceeded", {"cost_usd": round(u.cost_usd, 2), "budget_usd": budget,
-                                   "price_basis": pricing.LABEL,
-                                   "cost_by_role": {k: round(v, 2) for k, v in
-                                                    u.cost_by_role.items()},
-                                   "cost_by_model": {k: round(v, 2) for k, v in
-                                                     u.cost_by_model.items()},
-                                   "tokens_used": u.tokens, "input": u.input,
-                                   "output": u.output, "cache_write": u.cache_write,
-                                   "cache_read": u.cache_read}
+        return "budget_exceeded", {**usage.spend_data(u), "cost_usd": round(u.cost_usd, 2),
+                                   "tokens_used": u.tokens, "budget_usd": budget, "report": usage.spend_report(u)}
     return None, {}
 
 
