@@ -3,6 +3,18 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.252.0] — `prusik drive` builds the solo lane itself, on a tier-resolved `solo-builder`
+
+- **Solo build and solo fix rounds run in drive (fb-0653168f8417).** Triage-solo no longer
+  hands the build back: drive's new `solo_execute` step captures RED, creates `worktrees/solo`
+  (fork point recorded before the spawn, fb-95d0c641cd90), spawns the packaged `solo-builder`
+  role with its model from `tier resolve` (bounded class, never the calling session's model),
+  proves the suite and advances to reviewing. A reviewer FAIL on a solo sprint spawns
+  `solo-builder` for the fix round. `solo_handback` is removed.
+- **The trivial lane stays manual.** `_lane()` classifies trivial/solo/team from the ledger;
+  a trivial sprint's fix round escalates the new `trivial_fix` kind and never spawns a builder.
+  `_prove_combined` takes `(agent_role, worktree)` pairs.
+
 ## [0.251.0] — a scope verdict covers the module list its critic judged; the engine releases in one command
 
 - **A scope verdict is bound to `## Modules touched` (fb-809e62a470ec).** The critic verdict
