@@ -8,7 +8,10 @@ COMMON=$(git rev-parse --path-format=absolute --git-common-dir)
 tree_hash() {
   local idx; idx=$(mktemp)
   rm -f "$idx"
-  (cd "$REPO" && GIT_INDEX_FILE="$idx" git add -A . && GIT_INDEX_FILE="$idx" git write-tree)
+  # Seed from HEAD: an empty index would drop tracked files that match .gitignore
+  # (e.g. a committed reports/ file), so a clean checkout could never match its commit.
+  (cd "$REPO" && GIT_INDEX_FILE="$idx" git read-tree HEAD \
+     && GIT_INDEX_FILE="$idx" git add -A . && GIT_INDEX_FILE="$idx" git write-tree)
   rm -f "$idx"
 }
 before=$(tree_hash)
