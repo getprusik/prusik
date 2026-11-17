@@ -3,6 +3,40 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.250.0] — review rounds judge what the builder changed; solo fix rounds hand back; a slow suite is not a failing one
+
+- **The builder change set includes committed work (fb-109c7034f558).** Boundary, blast and
+  absence checks diffed a worktree against its own HEAD. drive tells builders to commit, so
+  on a drive sprint those checks saw nothing. Changes:
+  - One change set: files that differ between a worktree's fork point and its working tree.
+    It covers committed, staged, unstaged, untracked-not-ignored and deleted files. Gitignored
+    files are never in it.
+  - The fork point is the git ref `refs/prusik/base/<branch>`. It is written by the one
+    function that creates sprint worktrees, which is used by drive, the solo hand-back and
+    the new `prusik gate worktree-add --feature <f> --role <r>`. It is overwritten on every
+    `-B` re-fork and kept for a reused branch, so it stays correct when the shared tree moves
+    and after the branch is merged.
+  - A worktree with no recorded base (hand-made, or detached HEAD) is refused with a reason
+    naming `gate worktree-add`. It is never diffed against HEAD. sprint-complete's
+    map-staleness check no longer swallows that as "nothing changed".
+  - `prusik gate changed-files --feature <f>` prints the change set. The conventions-enforcer
+    reads it instead of `find worktrees/ -type f`, which counted caches another reviewer's
+    run wrote (fb-e4f46ed05574).
+- **A solo sprint's fix round hands back (fb-e4f46ed05574).** On a reviewer FAIL, drive read
+  plan.md for builder roles; a solo sprint has none, so it escalated `spawn_failed`. drive now
+  starts the round and escalates `solo_handback`, naming the failing report and
+  `worktrees/solo/`. Re-running drive ends the round and re-reviews.
+- **A per-criterion timeout, and a timeout is an instrument limit (fb-32d2fbb70859).**
+  - A criterion may declare `timeout_sec` (1–7200, default 300). One helper applies it in
+    sprint-complete, prove-red and `criterion resolve`.
+  - A timeout still fails closed. It is recorded `timed_out`, shown as `TIMEOUT` (not `FAIL`),
+    and names the key that raises it. prove-red never records a timeout as a RED baseline.
+- **Upgrading:**
+  - A sprint worktree created by hand or by an older engine is refused by the boundary checks
+    until you record it: `prusik gate worktree-add --feature <f> --role <r>`.
+  - `criterion resolve` used a 600s timeout; it now uses the shared 300s default. Set
+    `timeout_sec` on a criterion that needs longer.
+
 ## [0.249.0] — every prusik checks itself against the project's pin before it acts
 
 - **Which prusik runs is a checked fact, not an accident of PATH or cwd (fb-f381d16021db).**

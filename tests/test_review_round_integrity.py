@@ -9,6 +9,8 @@ suite is not a failing one.
   captured it as a RED baseline.
 
 moat-finding: fb-109c7034f558
+moat-finding: fb-e4f46ed05574
+moat-finding: fb-32d2fbb70859
 """
 
 from __future__ import annotations
