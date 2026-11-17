@@ -1,0 +1,16 @@
+{
+  "id": "fb-c713dc6530a9",
+  "created_at": "2026-11-17T20:12:11.174723+00:00",
+  "kind": "friction",
+  "severity": "med",
+  "title": "the engine's own release bump locks the releasing session out of every tool until the operator hand-runs push, release and upgrade",
+  "detail": "Self-host: the pin is prusik/__init__.py. Bumping it (0.249.0 -> 0.250.0, 2026-11-17) makes the installed global BEHIND, so PreToolUse refuses Bash, Write (even memory files outside the repo), and Stop refuses every turn. The pushing, release creation, PyPI watch, and upgrade then all had to be relayed to the operator as hand-typed commands (5 round trips, including a pre-push suite gate). The refusal's own fix suggests an editable install, which would run unreleased code. The release should be one prusik-owned step whose bump is the last local act (bump+commit+suite+push+release+wait-for-PyPI+upgrade), or the source repo's pin check should accept the installed engine during a declared release window, so the honest path needs no operator relay.",
+  "feature": null,
+  "content_hash": "c713dc6530a9",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
