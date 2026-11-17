@@ -1,0 +1,16 @@
+{
+  "id": "fb-809e62a470ec",
+  "created_at": "2026-11-17T18:37:06.583606+00:00",
+  "kind": "bug",
+  "severity": "high",
+  "title": "scope verdict hash excludes ## Modules touched, which the scope-critic judges; an APPROVED survives any rewrite of it",
+  "detail": "schema._NON_SUBSTANTIVE_SECTIONS = ('## Modules touched',) (schema.py:86, v0.10.0 Fix 3: 'derived, no longer something a critic judges'). The scope-critic spec judges Modules touched in checks 2, 3, 5, 8, 9. Observed 2026-11-17 on review-round-integrity: four scope-critic verdicts, three substantively different Modules touched sections; hashes were 1d1cc44b7a4b8295 then c3ad3729cbc91f42 for two REJECTED and the final APPROVED. verdict-current re-gated only because the last verdict was REJECTED; after APPROVED, any Modules-touched rewrite (e.g. undoing a design decision the critic forced) passes verdict-current and skips review. The excluded set must match what the critic actually judges: either hash Modules touched, or stop the critic judging it, from one declared source shared by the spec and the hash.",
+  "feature": "review-round-integrity",
+  "content_hash": "809e62a470ec",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

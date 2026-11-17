@@ -1,0 +1,16 @@
+{
+  "id": "fb-109c7034f558",
+  "created_at": "2026-11-17T18:27:48.606664+00:00",
+  "kind": "bug",
+  "severity": "high",
+  "title": "builder boundary check is blind to committed work: changed-files diffs the worktree against its own HEAD",
+  "detail": "consistency._git_worktree_changed_files returns git diff --name-only HEAD + untracked-not-ignored inside worktrees/<role>. drive tells every builder to commit on the worktree branch, after which HEAD includes the work and the diff is empty. builder_writes_within_plan and sprint_changed_files (blast-radius consumption) therefore check nothing on a drive sprint. Repro (2026-11-17): worktree on sprint/x-solo, commit outside.py, _git_worktree_changed_files -> [] for outside.py. The builder change set must be measured against the sprint base (merge-base with the integration branch) plus uncommitted + untracked-not-ignored, from one function. The conventions-enforcer spec separately lists files with 'find worktrees/ -type f', which counts gitignored caches (fb-e4f46ed05574 second half); it should read the same change set.",
+  "feature": null,
+  "content_hash": "109c7034f558",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
