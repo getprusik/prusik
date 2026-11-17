@@ -40,6 +40,12 @@ def check(root: Path | None = None) -> int:
     if not config:
         print("[watchdog] no sprint-config.yaml; nothing to check")
         return 0
+    from prusik import pricing
+    legacy = pricing.legacy_budget_keys(config)
+    if legacy:                        # a leftover token cap is refused, never read as a cap
+        for msg in legacy:
+            print(f"[watchdog] {msg}")
+        return 2
     state = phases.current_sprint_state(root)
     if not state:
         print("[watchdog] no active sprint")
@@ -75,7 +81,7 @@ def check(root: Path | None = None) -> int:
             incidents.append(str(p.relative_to(root)))
 
     phase_spec = phases.get_phase_spec(config, phase) or {}
-    budget = phase_spec.get("budget_tokens")
+    budget = phase_spec.get("budget_usd")
     if budget:
         kind, payload = _budget_check(root, feature, phase, budget)
         # Deduped like criteria_already_met: an open incident for this feature + phase
@@ -130,10 +136,10 @@ def _incident_open(root: Path, kind: str, **match) -> bool:
 
 
 def _budget_check(root: Path, feature: str | None, phase: str | None,
-                  budget: int) -> tuple[str | None, dict]:
-    """Measured phase usage against its budget (fb-a1b7db140a5e): (incident kind, payload),
-    or (None, {}) when within budget. A budget that can't be measured is LOUD — never a
-    silent pass."""
+                  budget: float) -> tuple[str | None, dict]:
+    """Measured phase cost (USD, API list price) against its `budget_usd` (fb-1d6f8de5b8d3):
+    (incident kind, payload), or (None, {}) when within budget. A budget that can't be
+    measured, a model with no price included, is LOUD — never a silent pass."""
     from prusik import ledger, usage
     # usage reads the ledger + session registry of project_root(); an explicit foreign root
     # would compare one project's budget against another's usage (fb-5b83acbaab4a). Paths
@@ -141,17 +147,16 @@ def _budget_check(root: Path, feature: str | None, phase: str | None,
     # since canonicalizing it is ledger's private concern (DEV-005).
     if Path(root).resolve() != ledger.project_root().resolve():
         return "budget_unmeasurable", {
-            "budget": budget,
+            "budget_usd": budget,
             "reason": f"watchdog root {root} is not this process's project root "
                       f"{ledger.project_root()}; usage is read from the project root "
                       f"(fb-5b83acbaab4a)"}
     u = usage.measure(str(feature), phase=phase)
     if not u.measured:
-        return "budget_unmeasurable", {"budget": budget, "reason": u.reason}
-    if u.tokens > budget:
-        return "budget_exceeded", {"tokens_used": u.tokens, "budget": budget,
-                                   "by_role": u.by_role, "by_model": u.by_model,
-                                   "by_session": u.by_session}
+        return "budget_unmeasurable", {"budget_usd": budget, "reason": u.reason}
+    if u.cost_usd > budget:
+        return "budget_exceeded", {**usage.spend_data(u), "cost_usd": round(u.cost_usd, 2),
+                                   "tokens_used": u.tokens, "budget_usd": budget, "report": usage.spend_report(u)}
     return None, {}
 
 

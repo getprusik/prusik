@@ -948,8 +948,9 @@ def test_watchdog_flags_stale_heartbeat():
         assert rc == 1
         incidents = list((tmp / ".sprint" / "incidents").glob("*.json"))
         assert incidents, "expected at least one incident"
-        data = json.loads(incidents[0].read_text())
-        assert data["kind"] == "stale_heartbeat"
+        # the unmeasured budget files its own incident beside it; glob order is arbitrary
+        (data,) = [d for d in (json.loads(i.read_text()) for i in incidents)
+                   if d["kind"] == "stale_heartbeat"]
         assert data["teammate"] == "backend-builder"
     finally:
         shutil.rmtree(tmp)

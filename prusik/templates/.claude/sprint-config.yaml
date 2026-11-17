@@ -121,12 +121,13 @@ always_writable:
 # Phase FSM.
 # Each phase declares writable patterns (enforced by the PreToolUse hook),
 # exit artifacts (enforced by the Stop hook and /sprint-advance), and an
-# optional token budget. Token usage is MEASURED from the session transcripts
-# (input + output + cache writes + cache reads), attributed per phase. Real
-# phases run in the millions, so no default is shipped: run `prusik effort`
-# after a few sprints and set `budget_tokens: <N>` on a phase from those
-# numbers. `prusik watchdog` then files budget_exceeded, or
-# budget_unmeasurable when usage can't be read.
+# optional USD budget. Usage is MEASURED from the session transcripts and priced per
+# model from prusik/prices.json (API list price, not a claude.ai plan limit); raw tokens
+# are reported beside the cost, never compared. The `budget_usd` shipped below is the p90
+# per-sprint phase cost measured in this repo, rounded up to the next dollar: tune it from
+# `prusik effort` after a few sprints. `prusik watchdog` files budget_exceeded, or
+# budget_unmeasurable when usage can't be read or a model has no price. The old
+# `budget_tokens` key is refused (exit 2); `prusik refresh` removes the shipped values.
 phases:
   - name: scoping
     writable:
@@ -159,6 +160,7 @@ phases:
         validator: triage_decision
 
   - name: planning
+    budget_usd: 7   # p90 of this repo's measured per-sprint phase cost, rounded up; API list price
     writable:
       - "design/{feature}/plan.md"
       - "reports/{feature}/plan-approval.txt"
@@ -172,6 +174,7 @@ phases:
         must_contain: "APPROVED"
 
   - name: solo_execute
+    budget_usd: 3   # p90 of this repo's measured per-sprint phase cost, rounded up; API list price
     writable:
       - "worktrees/solo/**"
     deny_commands:
@@ -179,6 +182,7 @@ phases:
       - "git merge"
 
   - name: building
+    budget_usd: 10   # p90 of this repo's measured per-sprint phase cost, rounded up; API list price
     writable:
       - "worktrees/*/**"
     deny_commands:
@@ -186,6 +190,7 @@ phases:
       - "git merge"
 
   - name: reviewing
+    budget_usd: 8   # p90 of this repo's measured per-sprint phase cost, rounded up; API list price
     writable:
       - "reports/{feature}/**"
     exit_artifacts:
@@ -449,7 +454,8 @@ drive:
   spawn_timeout_min: 60    # a role spawned by drive is killed and escalated after this many minutes
   design_rounds: 3         # author/critic rounds per design artifact (scope.md, plan.md); at the cap drive escalates
   # suite_command: "<your full test command>"   # required: drive escalates at building without it
-  # budget_tokens: 8000000          # required: the sprint's measured token cap; drive will not run without one
-  # session_budget_tokens: 2000000  # optional: cap on what the session running drive spends; over it, resume in a fresh session
-  # A phase's own `budget_tokens` (under phases:) caps that phase. Drive measures before and after every spawn
-  # and escalates budget_exceeded at the first cap crossed, or budget_unmeasurable when it cannot read the spend.
+  # budget_usd: 19                  # required: the sprint's measured cost cap in USD (API list price); drive will not run without one
+  # session_budget_usd: 19          # optional: cap on what the session running drive spends; over it, resume in a fresh session
+  # A phase's own `budget_usd` (under phases:) caps that phase. Drive measures before and after every spawn
+  # and escalates budget_exceeded at the first cap crossed, or budget_unmeasurable when it cannot read the spend
+  # or a model has no price in prusik/prices.json. The old `budget_tokens` keys are refused (exit 2).

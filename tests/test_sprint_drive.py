@@ -91,7 +91,7 @@ def set_config(root, *, suite=None, drive_block=True, auth="claude.ai", **drive_
     cfg = yaml.safe_load(_TEMPLATE.read_text())
     cfg.pop("drive", None)
     if drive_block:
-        cfg["drive"] = {"auth": auth, "spawn_timeout_min": 7, "budget_tokens": 8_000_000,
+        cfg["drive"] = {"auth": auth, "spawn_timeout_min": 7, "budget_usd": 19,
                         **drive_keys}
         if suite:
             cfg["drive"]["suite_command"] = suite
@@ -259,7 +259,7 @@ def test_building_suite_failure_escalates_and_does_not_advance(rig):
 
 def test_no_drive_block_is_not_drivable_without_a_budget(rig, proj):
     set_config(proj, drive_block=False)
-    assert rig.run() == 2 and "drive.budget_tokens" in rig.out
+    assert rig.run() == 2 and "drive.budget_usd" in rig.out
     assert rig.adapter.requests == []
 
 
@@ -774,13 +774,13 @@ def test_conflicting_builder_branches_escalate_naming_the_branch(tmp_path, monke
     assert len(_git(repo, "worktree", "list").splitlines()) == 1
 
 
-# ── the enforced token budget ─────────────────────────────────────────────────────────────
+# ── the enforced USD budget ─────────────────────────────────────────────────────────────
 
-def _usage(tokens=0, *, phase=None, session=None, reason=None):
+def _usage(cost=0.0, *, phase=None, session=None, reason=None, tokens=0):
     if reason:
         return usage.Usage(measured=False, reason=reason)
-    return usage.Usage(measured=True, tokens=tokens, by_phase=phase or {},
-                       by_session=session or {}, by_role={"main": tokens})
+    return usage.Usage(measured=True, cost_usd=cost, tokens=tokens, cost_by_phase=phase or {},
+                       cost_by_session=session or {}, cost_by_role={"main": cost})
 
 
 def _measuring(monkeypatch, *seq):
@@ -796,29 +796,29 @@ def _measuring(monkeypatch, *seq):
 
 @pytest.mark.parametrize("value", [None, 0, -5, True, "8M"])
 def test_drive_without_a_positive_sprint_budget_is_not_drivable(rig, proj, value):
-    set_config(proj, suite="true", budget_tokens=value)
+    set_config(proj, suite="true", budget_usd=value)
     assert rig.run() == 2
-    assert "drive.budget_tokens must be a positive integer" in rig.out
+    assert "drive.budget_usd must be a positive dollar amount" in rig.out
     assert rig.adapter.requests == []
 
 
 def test_a_bad_session_budget_is_not_drivable(rig, proj):
-    set_config(proj, suite="true", session_budget_tokens=0)
-    assert rig.run() == 2 and "drive.session_budget_tokens" in rig.out
+    set_config(proj, suite="true", session_budget_usd=0)
+    assert rig.run() == 2 and "drive.session_budget_usd" in rig.out
 
 
 def test_a_sprint_already_over_budget_spawns_nothing(rig, monkeypatch):
-    _measuring(monkeypatch, _usage(9_000_000))
+    _measuring(monkeypatch, _usage(20.5))
     assert rig.run() == 3
     esc = rig.escalation()
-    assert esc["kind"] == "budget_exceeded" and "drive.budget_tokens" in esc["reason"]
-    assert "raise drive.budget_tokens" in esc["reason"]
+    assert esc["kind"] == "budget_exceeded" and "drive.budget_usd" in esc["reason"]
+    assert "$20.50" in esc["reason"] and "raise drive.budget_usd" in esc["reason"]
     assert rig.adapter.requests == []
 
 
 def test_a_spawn_that_crosses_the_cap_stops_drive_before_the_next_one(rig, proj, monkeypatch):
     set_phase(proj, "reviewing")
-    _measuring(monkeypatch, _usage(1), _usage(8_000_001))
+    _measuring(monkeypatch, _usage(1), _usage(19.01))
     assert rig.run() == 3
     assert [r.role for r in rig.adapter.requests] == ["regression-sentinel"]
     assert rig.escalation()["kind"] == "budget_exceeded"
@@ -829,18 +829,18 @@ def test_the_phase_budget_caps_its_phase(rig, proj, monkeypatch):
     cfg = yaml.safe_load((proj / ".claude/sprint-config.yaml").read_text())
     for ph in cfg["phases"]:
         if ph["name"] == "building":
-            ph["budget_tokens"] = 1000
+            ph["budget_usd"] = 1
     (proj / ".claude/sprint-config.yaml").write_text(yaml.safe_dump(cfg))
-    _measuring(monkeypatch, _usage(5000, phase={"planning": 3000, "building": 2000}))
+    _measuring(monkeypatch, _usage(5, phase={"planning": 3, "building": 2}))
     assert rig.run() == 3
     esc = rig.escalation()
-    assert esc["kind"] == "budget_exceeded" and "phases[building].budget_tokens" in esc["reason"]
+    assert esc["kind"] == "budget_exceeded" and "phases[building].budget_usd" in esc["reason"]
     assert rig.adapter.requests == []
 
 
 def test_the_driving_session_over_its_cap_must_resume_fresh(rig, proj, monkeypatch):
-    set_config(proj, suite="true", session_budget_tokens=1_000_000)
-    _measuring(monkeypatch, _usage(3_000_000, session={"holder-1": 2_000_000, "b": 1_000_000}))
+    set_config(proj, suite="true", session_budget_usd=1)
+    _measuring(monkeypatch, _usage(3, session={"holder-1": 2, "b": 1}))
     assert rig.run() == 3
     esc = rig.escalation()
     assert esc["kind"] == "budget_exceeded" and "resume in a fresh session" in esc["reason"]

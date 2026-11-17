@@ -147,6 +147,8 @@ def _row(mid, ts, *, out=10, inp=1, cw=100, cr=1000, model="claude-opus-5-5"):
 
 
 _UNIT = 1 + 10 + 100 + 1000          # one default _row()'s tokens
+_ROW_COST = (1 * 4 + 10 * 20 + 100 * 8 + 1000 * 0.2) / 1e6   # opus-5-5, unsplit write at 1h
+_CAP = _ROW_COST * 1.5               # over after two rows, under after one
 
 
 def _write_jsonl(path: Path, rows, extra_lines=()):
@@ -553,8 +555,9 @@ def test_advance_prints_the_left_phase_usage_and_never_blocks_on_it(proj, tmp_pa
     t = tmp_path / "cc" / "s1.jsonl"
     _write_jsonl(t, [_row("a", "2026-10-26T10:15:00Z")])
     _register("s1", t)
-    line = gate._phase_usage_line("feat", "solo_execute", {"budget_tokens": 5000})
-    assert "solo_execute" in line and "1k" in line and "budget 5k" in line
+    line = gate._phase_usage_line("feat", "solo_execute", {"budget_usd": 5})
+    assert "solo_execute" in line and "$0.00" in line and "budget $5.00" in line
+    assert "tokens 1k" in line
     monkeypatch.setattr(usage, "_measure", lambda *a, **k: 1 / 0)
     assert "UNMEASURED: usage read failed: ZeroDivisionError" in gate._phase_usage_line(
         "feat", "solo_execute", {})
@@ -566,7 +569,7 @@ def _budget(root, budget):
     cfg = yaml.safe_load(_TEMPLATE_CFG.read_text())
     for p in cfg["phases"]:
         if p["name"] == "reviewing":
-            p["budget_tokens"] = budget
+            p["budget_usd"] = budget
     (root / ".claude" / "sprint-config.yaml").write_text(yaml.safe_dump(cfg))
 
 
@@ -576,7 +579,7 @@ def _incidents(root, kind):
 
 
 def test_watchdog_files_budget_exceeded_from_measured_usage(proj, tmp_path):
-    _budget(proj, _UNIT)
+    _budget(proj, _CAP)
     _ledger(proj, _journey())
     phases.set_sprint_state({"phase": "reviewing", "feature": "feat"})
     t = tmp_path / "cc" / "s1.jsonl"
@@ -584,15 +587,19 @@ def test_watchdog_files_budget_exceeded_from_measured_usage(proj, tmp_path):
     _register("s1", t)
     assert watchdog.check(proj) == 1
     (inc,) = _incidents(proj, "budget_exceeded")
-    assert inc["tokens_used"] == 2 * _UNIT and inc["budget"] == _UNIT
-    assert inc["by_session"] == {"s1": 2 * _UNIT}
-    assert inc["by_model"] == {"claude-opus-5-5": 2 * _UNIT} and inc["by_role"] == {
-        "main": 2 * _UNIT}
+    assert inc["tokens_used"] == 2 * _UNIT and inc["budget_usd"] == _CAP
+    assert inc["cost_usd"] == round(2 * _ROW_COST, 2) and "API list price" in inc["price_basis"]
+    # the payload is the one spend report (usage.spend_data): costs at 6 decimals
+    assert inc["cost_by_model"] == {"claude-opus-5-5": round(2 * _ROW_COST, 6)}
+    assert inc["cost_by_role"] == {"main": round(2 * _ROW_COST, 6)}
+    assert inc["tokens_by_category"]["cache_read"] == 2000
+    assert inc["tokens_by_category"]["cache_write"] == 200
+    assert inc["multiplier"] and any("multiplier:" in x for x in inc["report"])
 
 
 def test_watchdog_files_a_budget_incident_once_per_phase(proj, tmp_path):
     """Live budgets on real numbers would otherwise re-file every 15-minute poll."""
-    _budget(proj, _UNIT)
+    _budget(proj, _CAP)
     _ledger(proj, _journey())
     phases.set_sprint_state({"phase": "reviewing", "feature": "feat"})
     t = tmp_path / "cc" / "s1.jsonl"
@@ -637,6 +644,10 @@ def test_watchdog_accepts_its_own_root_spelled_differently(proj):
 
 
 def test_watchdog_without_a_budget_measures_nothing(proj, monkeypatch):
+    cfg = yaml.safe_load(_TEMPLATE_CFG.read_text())
+    for p in cfg["phases"]:
+        p.pop("budget_usd", None)
+    (proj / ".claude" / "sprint-config.yaml").write_text(yaml.safe_dump(cfg))
     _ledger(proj, _journey())
     phases.set_sprint_state({"phase": "reviewing", "feature": "feat"})
     monkeypatch.setattr(usage, "measure", lambda *a, **k: pytest.fail("no budget, no measure"))

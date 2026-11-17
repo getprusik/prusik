@@ -3,6 +3,43 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.248.0] — budgets cap measured cost in USD, priced per model
+
+- **Every spend cap is now in dollars (fb-1d6f8de5b8d3).** Budgets compared raw tokens with
+  every category counted as 1, so context re-reads tripped caps their cost never came near:
+  pinned-engine was 17.1M tokens, 96.5% cache reads, about $9.50, and drive stopped it
+  against an 8M-token cap. An Opus token and a Haiku token counted the same. Changes:
+  - `drive.budget_usd` (required), a phase's `budget_usd` and `drive.session_budget_usd`
+    replace the `budget_tokens` keys. They compare measured cost at API list price, not a
+    claude.ai plan limit. `prusik drive`, the watchdog, `gate advance` and the phase display
+    all use them.
+  - `prusik/prices.json` is the one price table, read from the official pricing page on
+    2026-11-16 and shipped in the wheel. Each response is priced by its own model. Cache
+    writes are priced per TTL from the transcript's 5m/1h split. A write with no split is
+    priced at the 1h rate and counted in `cache_write_unsplit`.
+  - A model that is not in the table makes the cost unmeasured, naming the model. It is never
+    priced at 0 or by a neighbour, and drive, the watchdog and `gate advance` all stop or say
+    so.
+  - Escalations and budget messages show the cost, the cap, the cost by role and the raw
+    tokens by category. `prusik effort`, the usage rollup and `sprint-complete` keep the
+    tokens and add `cost_usd`. A snapshot recorded before this release has no cost, and the
+    rollup treats it as unmeasured, not zero.
+- **One spend report, and `prusik cost` prints it (fb-1d6f8de5b8d3).** `usage.spend_report`
+  renders a measured usage as raw tokens by category, cost by category, role, phase and model,
+  the multiplier (raw tokens per input-equivalent token, the measured cost over each row's own
+  input price) and the effective USD per million raw tokens. Budget escalations, the watchdog,
+  `sprint-complete`, the phase line and `prusik effort` (a `mult` column) all use it, and
+  `spend_detail` is gone. `prusik cost <feature> [--phase P] [--session S] [--json]` prints it
+  on demand and exits 2 with the reason when the cost is unmeasured, never `$0`.
+- **A leftover `budget_tokens` key is refused with exit 2.** The message names the key, its
+  file and the `budget_usd` key that replaces it. Nothing is converted, because a token count
+  has no single price. `prusik refresh` removes the template-default `budget_tokens` values
+  and lists any you set for you to convert; its exit code is unchanged.
+- **Defaults come from this repo's transcripts.** `drive.budget_usd` 19 and the phase
+  `budget_usd` values (planning 7, solo_execute 3, building 10, reviewing 8) are the p90
+  per-sprint (or per-phase) cost of 40 completed sprints, rounded up to the next dollar. The
+  derivation is in `reports/cost-budget/defaults-derivation.txt`.
+
 ## [0.247.0] — drive spends against a cap, and a stopped sprint can be abandoned
 
 - **Drive enforces a token budget.** The observed-writes sprint reached 49.9M tokens against

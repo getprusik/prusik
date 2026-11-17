@@ -487,3 +487,24 @@ def retire_budget_defaults(text: str) -> tuple[str, list[str], list[str]]:
     if before != after:
         raise ValueError("budget retirement would change more than the retired keys")
     return out, sorted(drop.values()), sorted(unretirable)
+
+
+def leftover_budget_tokens(text: str) -> list[str]:
+    """Every `budget_tokens` / `session_budget_tokens` still in a sprint config, as
+    "<drive|phase>.<key>=<value>" labels. After retirement these are values the operator set
+    (or layouts retirement cannot edit): drive refuses them, so refresh names each one for the
+    operator to convert to `budget_usd`; nothing is converted automatically, because a token
+    count has no single price (fb-1d6f8de5b8d3)."""
+    import yaml as _y
+    doc = _y.safe_load(text)
+    out: list[str] = []
+    if not isinstance(doc, dict):
+        return out
+    drive = doc.get("drive")
+    if isinstance(drive, dict):
+        out += [f"drive.{k}={drive[k]}" for k in ("budget_tokens", "session_budget_tokens")
+                if k in drive]
+    for ph in doc.get("phases") or []:
+        if isinstance(ph, dict) and "budget_tokens" in ph:
+            out.append(f"{ph.get('name')}.budget_tokens={ph['budget_tokens']}")
+    return sorted(out)

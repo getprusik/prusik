@@ -509,6 +509,14 @@ def main():
                                    "rewind-churn, friction. --json for all.")
     p_effort.add_argument("--json", action="store_true",
                           help="Emit machine-readable JSON instead of text")
+    p_cost = sub.add_parser("cost",
+                            help="Measured spend of a sprint, a phase or a session: raw "
+                                 "tokens, cost by category/role/phase/model, the multiplier. "
+                                 "Exit 2 when unmeasured.")
+    p_cost.add_argument("feature", help="Sprint feature name")
+    p_cost.add_argument("--phase", default=None, help="Only this phase (every visit)")
+    p_cost.add_argument("--session", default=None, help="Only this session's rows")
+    p_cost.add_argument("--json", action="store_true", help="Machine-readable JSON")
 
     p_drive = sub.add_parser("drive", help="Run an active sprint from its plan to "
                                            "sprint-complete: spawns each role headless, runs "
@@ -1126,6 +1134,10 @@ def main():
         return critic_recall.record_miss(
             args.defect_class, args.owner, feature=args.feature,
             source=args.source, reason=args.reason)
+    if args.cmd == "cost":
+        from prusik import usage
+        return usage.run_cost(args.feature, phase=args.phase, session=args.session,
+                              json_output=args.json)
     if args.cmd == "effort":
         from prusik import effort
         return effort.run(json_output=args.json)
