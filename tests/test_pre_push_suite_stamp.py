@@ -209,3 +209,55 @@ def test_no_test_reads_a_declared_prefix_from_the_repo_root():
     textual scan, so this narrows the risk rather than removing it."""
     hits = _root_reads(_REPO / "tests", Path(__file__).resolve())
     assert not hits, "a test reads a declared non-test-input path from the repo root:\n" + "\n".join(hits)
+
+
+# --- scripts/tree-hash.sh: the hash suite.sh records must equal the commit of that tree ---
+
+def _hash(work: Path) -> str:
+    p = subprocess.run([str(work / "scripts" / "tree-hash.sh")], cwd=work,
+                       capture_output=True, text=True, env=_env())
+    assert p.returncode == 0, p.stderr
+    return p.stdout.strip()
+
+
+def _hash_repo(tmp: Path) -> Path:
+    work = _repo(tmp)
+    shutil.copy2(_REPO / "scripts" / "tree-hash.sh", work / "scripts" / "tree-hash.sh")
+    _git(work, "add", "scripts/tree-hash.sh")
+    _git(work, "commit", "-qm", "tree-hash")
+    return work
+
+
+def test_tree_hash_of_a_clean_checkout_is_its_commit_tree(tmp_path):
+    work = _hash_repo(tmp_path)
+    assert _hash(work) == _git(work, "rev-parse", "HEAD^{tree}").stdout.strip()
+
+
+def test_tree_hash_keeps_a_tracked_file_under_an_ignored_path(tmp_path):
+    # The adversarial case: reports/ is ignored, yet a commit force-tracks a file in it.
+    # An empty index plus `git add -A` drops that file, so the commit never matched.
+    work = _hash_repo(tmp_path)
+    (work / ".gitignore").write_text("reports/\n")
+    (work / "reports").mkdir()
+    (work / "reports" / "kept.txt").write_text("evidence\n")
+    _git(work, "add", ".gitignore")
+    _git(work, "add", "-f", "reports/kept.txt")
+    assert _git(work, "commit", "-qm", "track an ignored-path file").returncode == 0
+    assert _hash(work) == _git(work, "rev-parse", "HEAD^{tree}").stdout.strip()
+
+
+def test_tree_hash_counts_untracked_and_deleted_but_not_ignored(tmp_path):
+    work = _hash_repo(tmp_path)
+    (work / ".gitignore").write_text("scratch/\n")
+    _git(work, "add", ".gitignore")
+    _git(work, "commit", "-qm", "ignore scratch")
+    clean = _hash(work)
+    (work / "scratch").mkdir()
+    (work / "scratch" / "x.txt").write_text("ignored\n")
+    assert _hash(work) == clean                       # an ignored file never counts
+    (work / "new.txt").write_text("untracked\n")
+    with_new = _hash(work)
+    assert with_new != clean                          # an untracked file counts
+    (work / "new.txt").unlink()
+    (work / "a.txt").unlink()
+    assert _hash(work) not in (clean, with_new)       # a deleted tracked file counts
