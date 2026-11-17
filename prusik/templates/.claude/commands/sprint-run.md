@@ -138,15 +138,13 @@ Once sprint-init passes (phase `scoping`), run the rest of the sprint in code. R
 
     prusik drive $ARGUMENTS
 
-`prusik drive` runs scoping, triage and planning (each author and critic round in a fresh headless session, capped by `drive.design_rounds`), then building, reviewing and integrating, each role spawned headless with its tier model. It closes the sprint with `gate sprint-complete`, prints one line per phase and keeps gate output in `reports/$ARGUMENTS/drive.log`. Do not spawn those roles with `Agent(...)` yourself.
+`prusik drive` runs scoping, triage and planning (each author and critic round in a fresh headless session, capped by `drive.design_rounds`), then, when triage chooses solo, `solo_execute` (a tier-resolved `solo-builder` builds in `worktrees/solo/`; solo fix rounds run the same way), or building when it chooses team, then reviewing and integrating, each role spawned headless with its tier model. It closes the sprint with `gate sprint-complete`, prints one line per phase and keeps gate output in `reports/$ARGUMENTS/drive.log`. Do not spawn those roles with `Agent(...)` yourself.
 
 - **rc 0** — the sprint is complete and `gate sprint-complete` has run. Continue at Step 8, skipping its `sprint-complete` command.
 - **rc 3** — drive stopped at a judgement point. Read `reports/$ARGUMENTS/drive-escalation.json` and act on that file only. Report its `kind`, `reason` and `evidence` to the user, with the remedy for the kind:
   - `scope_rejected` / `plan_rejected` — the critic did not approve within `drive.design_rounds`. Read the critic report in the evidence, fix the artifact or raise the cap, then re-run `prusik drive $ARGUMENTS`.
   - `triage_rejected` — triage rejected the sprint or its decision was unreadable. Fix the brief or `decisions/$ARGUMENTS.json`, then re-run.
-  - `solo_handback` — a solo sprint needs its build done by hand. Two cases, told apart by `phase`:
-    - `phase: triage` — triage chose solo; the sprint is in `solo_execute`, drive has captured the RED baselines and created `worktrees/solo/` with its fork point recorded. Implement there (Manual step 5a), advance to reviewing, then re-run `prusik drive $ARGUMENTS`.
-    - `phase: reviewing` — a reviewer FAILED a solo sprint and drive has opened the fix round. Address the findings in the failing report named in `evidence`, in `worktrees/solo/`, commit there, then re-run `prusik drive $ARGUMENTS`: it ends the open round and re-reviews, with no second hand-back.
+  - `trivial_fix` — a reviewer FAILED a trivial-lane sprint (built by hand) and drive has opened the fix round. Address the findings in the failing report named in `evidence`, in `worktrees/solo/`, commit there, then re-run `prusik drive $ARGUMENTS`: it ends the open round and re-reviews.
   - `prove_red_failed`, `suite_failed`, `fix_round_cap`, `advance_blocked` — a gate or proof failed; fix the cause named in the evidence, then re-run.
   - `permission_denied`, `spawn_failed`, `tier_unresolved`, `auth_mismatch`, `writer_busy` — a spawn or setup problem; show the evidence and stop.
   - `tree_written` — a role changed shared-tree files its phase may not write, by a means the gate could not see. The files are left as the role left them. Show the paths in the evidence and stop: the user decides whether to keep or restore them.
@@ -201,11 +199,11 @@ Read `decisions/$ARGUMENTS.json`'s `mode`:
 
 ### Manual step 5a — solo build (if mode=solo)
 
-Read `design/$ARGUMENTS/scope.md`'s Modules touched. Before writing any code, capture the RED baselines (skip if drive's `solo_handback` already did; leaving `solo_execute` is refused without them):
+Read `design/$ARGUMENTS/scope.md`'s Modules touched. Before writing any code, capture the RED baselines (skip if drive's `solo_execute` step already did; leaving `solo_execute` is refused without them):
 
     prusik gate prove-red --feature $ARGUMENTS
 
-Create the solo worktree unless drive's `solo_handback` already did (`worktrees/solo/` exists). It records the fork point the reviewing checks measure the change set from; a worktree made any other way is refused at the boundary check:
+Create the solo worktree unless drive's `solo_execute` step already did (`worktrees/solo/` exists). It records the fork point the reviewing checks measure the change set from; a worktree made any other way is refused at the boundary check:
 
     prusik gate worktree-add --feature $ARGUMENTS --role solo
 

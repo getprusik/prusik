@@ -48,7 +48,7 @@ BASE_CLASS: dict[str, str] = {
     "cartographer": "high_stakes", "scope-critic": "high_stakes",
     "product-fit-critic": "high_stakes", "feature-planner": "high_stakes",
     "plan-critic": "high_stakes",
-    "scoping": "bounded", "backend-builder": "bounded", "frontend-builder": "bounded",
+    "scoping": "bounded", "backend-builder": "bounded", "solo-builder": "bounded", "frontend-builder": "bounded",
     "test-writer": "bounded", "regression-sentinel": "bounded",
     "conventions-enforcer": "bounded", "conventions-scribe": "bounded", "integrator": "bounded",
     "brief-critic": "mechanical", "pr-composer": "mechanical",
@@ -450,7 +450,7 @@ def record(res: Resolution) -> None:
 # ---- calibrate -----------------------------------------------------------------------------
 
 _BUILD_PHASES = ("building", "solo_execute")
-_REWOUND_ROLES = ("backend-builder", "frontend-builder", "test-writer")
+_REWOUND_ROLES = ("backend-builder", "frontend-builder", "test-writer", "solo-builder")
 
 
 def _bounces(role: str, feature: str, window: list[dict]) -> int:

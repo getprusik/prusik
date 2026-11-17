@@ -43,12 +43,16 @@ from prusik.platform_adapter import (
     AgentSpec, PlatformAdapter, SpawnError, SpawnRequest, SpawnResult, get_adapter,
 )
 
-ESCALATION_KINDS = ("scope_rejected", "triage_rejected", "solo_handback", "plan_rejected",
+ESCALATION_KINDS = ("scope_rejected", "triage_rejected", "trivial_fix", "plan_rejected",
                     "prove_red_failed", "suite_failed", "fix_round_cap", "permission_denied",
                     "spawn_failed", "tier_unresolved", "auth_mismatch", "writer_busy",
                     "advance_blocked", "tree_written", "budget_exceeded",
                     "budget_unmeasurable")
-DRIVEN = ("scoping", "triage", "planning", "building", "reviewing", "integrating")
+DRIVEN = ("scoping", "triage", "planning", "solo_execute", "building", "reviewing",
+          "integrating")
+SOLO_WORKTREE = "solo"          # worktrees/solo, branch sprint/<f>-solo
+SOLO_BUILDER = "solo-builder"   # the agent role spawned and tier-resolved
+# Two independent literals. Never derive one from the other.
 BUILDER_ROLES = ("backend-builder", "frontend-builder", "test-writer")
 REVIEWERS = (("regression-sentinel", "regression.txt"),
              ("conventions-enforcer", "conventions.txt"))
@@ -410,17 +414,8 @@ class _Drive:
             self.steps.append("triage team")
             self._advance("planning")
         elif mode == "solo":
+            self.steps.append("triage solo")
             self._advance("solo_execute")
-            # The solo build runs outside drive, so capture RED here, before it starts
-            # (fb-221b8b5df7e6); solo_execute's exit check refuses to advance without it.
-            self._capture_red("solo_execute")
-            # The solo worktree records its fork point like every builder's, so the
-            # reviewing checks can measure what the solo build changed (fb-e4f46ed05574).
-            self._worktree("solo")
-            raise Escalation("solo_handback", "triage", None,
-                             f"triage chose solo; RED baselines captured and worktrees/solo/ "
-                             f"created: implement in worktrees/solo/, then "
-                             f"re-run prusik drive {f} from reviewing", [str(path)])
         else:
             raise Escalation("triage_rejected", "triage", None,
                              str(decision.get("reason") or "triage rejected the sprint"),
@@ -463,19 +458,51 @@ class _Drive:
             raise Escalation("spawn_failed", self.phase or "building", role, e.reason,
                              e.tail) from e
 
-    def _is_solo(self) -> bool:
-        """This sprint is solo: the ledger records a `phase_advance` to `solo_execute` for
-        this feature after its latest `sprint_started`. plan.md's presence is not the
-        signal (fb-e4f46ed05574)."""
-        solo = False
+    def _lane(self) -> str:
+        """"trivial" | "solo" | "team", from one walk over this feature's ledger records.
+        The latest `sprint_started` sets the lane (trivial when it carries lane=trivial);
+        a later `phase_advance` to `solo_execute` makes it solo unless it is trivial: the
+        trivial lane reaches solo_execute by hand and is never built by drive. plan.md's
+        presence is not the signal (fb-e4f46ed05574)."""
+        lane = "team"
         for r in ledger.read_all():
             if r.get("feature") != self.f:
                 continue
             if r.get("event") == "sprint_started":
-                solo = False
+                lane = "trivial" if r.get("lane") == "trivial" else "team"
             elif r.get("event") == "phase_advance" and r.get("to_phase") == "solo_execute":
-                solo = True
-        return solo
+                if lane != "trivial":
+                    lane = "solo"
+        return lane
+
+    def _is_solo(self) -> bool:
+        """Triage-solo sprint. False for the trivial lane (see `_lane`)."""
+        return self._lane() == "solo"
+
+    def _solo_execute(self) -> None:
+        f = self.f
+        suite = self.cfg.get("suite_command")
+        if not suite:
+            raise Escalation("suite_failed", "solo_execute", None,
+                             "drive.suite_command is not set; drive proves the full suite "
+                             "before advancing solo_execute", [".claude/sprint-config.yaml"])
+        self._capture_red("solo_execute")
+        # The solo worktree records its fork point before the spawn, like every builder's,
+        # so the reviewing checks can measure what the build changed (fb-95d0c641cd90).
+        self._worktree(SOLO_WORKTREE)
+        if self._builder_done(SOLO_BUILDER, SOLO_WORKTREE):
+            self.steps.append("solo-builder already built")
+        else:
+            self._spawn(SOLO_BUILDER,
+                        f"build the feature design/{f}/scope.md defines in worktrees/solo/ "
+                        f"per your role spec. Commit your work on the worktree branch. "
+                        f"Do not run git push or merge.")
+            tip = self._branch_tip(SOLO_WORKTREE)
+            if tip:
+                ledger.append("drive_builder_done", feature=f, role=SOLO_BUILDER, commit=tip)
+        self._prove_suite([(SOLO_BUILDER, SOLO_WORKTREE)], str(suite))
+        self.steps.append("prove suite")
+        self._advance("reviewing")
 
     def _building(self) -> None:
         f = self.f
@@ -488,7 +515,7 @@ class _Drive:
         self._capture_red("building")
         for role in builders:
             self._worktree(role)
-            if self._builder_done(role):
+            if self._builder_done(role, role):
                 self.steps.append(f"{role} already built")
                 continue
             self._spawn(role, f"implement your portion of design/{f}/plan.md in "
@@ -497,39 +524,44 @@ class _Drive:
             tip = self._branch_tip(role)
             if tip:
                 ledger.append("drive_builder_done", feature=f, role=role, commit=tip)
-        if (self.root / ".git").exists():
-            self._prove_combined(builders, str(suite))
-        else:
-            for role in builders:
-                rc, tail = self._prusik("prove", "--kind", "tests", "--", "sh", "-c",
-                                        str(suite), cwd=self.root / "worktrees" / role)
-                if rc != 0:
-                    raise Escalation("suite_failed", "building", role,
-                                     f"full suite not proven green in worktrees/{role}",
-                                     tail.splitlines())
+        self._prove_suite([(r, r) for r in builders], str(suite))
         self.steps.append("prove suite")
         self._advance("reviewing")
 
-    def _branch_tip(self, role: str) -> str | None:
-        """The commit sprint/<f>-<role> points at, or None outside git or without the branch."""
+    def _prove_suite(self, builds: list[tuple[str, str]], suite: str) -> None:
+        """Prove the full suite for (agent_role, worktree) builds: merged in the scratch view
+        with git, else in each worktree directly."""
+        if (self.root / ".git").exists():
+            self._prove_combined(builds, suite)
+            return
+        for role, wt in builds:
+            rc, tail = self._prusik("prove", "--kind", "tests", "--", "sh", "-c", suite,
+                                    cwd=self.root / "worktrees" / wt)
+            if rc != 0:
+                raise Escalation("suite_failed", self.phase, role,
+                                 f"full suite not proven green in worktrees/{wt}",
+                                 tail.splitlines())
+
+    def _branch_tip(self, worktree: str) -> str | None:
+        """The commit sprint/<f>-<worktree> points at, or None outside git or without the branch."""
         if not (self.root / ".git").exists():
             return None
         rc, tail = self._cli(["git", "rev-parse", "--verify", "--quiet",
-                              f"refs/heads/sprint/{self.f}-{role}"])
+                              f"refs/heads/sprint/{self.f}-{worktree}"])
         return tail.strip().splitlines()[-1] if rc == 0 and tail.strip() else None
 
-    def _builder_done(self, role: str) -> bool:
-        """A builder finished in this visit to building and its branch has not moved since
+    def _builder_done(self, role: str, worktree: str) -> bool:
+        """A builder finished in this visit to the phase and its branch has not moved since
         (fb-1e4da436fcfc): a resume must not spawn it again over its own work. The signal is
         the branch tip drive recorded after that builder's spawn passed every check; any
-        later commit, or a new visit to building (a rewind), spawns it again."""
-        tip = self._branch_tip(role)
+        later commit, or a new visit to the phase (a rewind), spawns it again."""
+        tip = self._branch_tip(worktree)
         if tip is None:
             return False
         from prusik import effort
         records = ledger.read_all()
         visits = [w["start"] for w in effort.phase_windows(records, self.f)
-                  if w["phase"] == "building"]
+                  if w["phase"] == self.phase]
         entered = usage._parse_ts(visits[-1]) if visits else None
         if entered is None:
             return False
@@ -538,7 +570,7 @@ class _Drive:
                 and (usage._parse_ts(r.get("ts")) or entered) > entered]
         return bool(done) and done[-1].get("commit") == tip
 
-    def _prove_combined(self, builders: list[str], suite: str) -> None:
+    def _prove_combined(self, builds: list[tuple[str, str]], suite: str) -> None:
         """Prove the full suite once on every builder branch merged together, never on one
         builder's branch alone: a plan that splits code and tests across builders leaves
         each branch red on its own (fb-1e4da436fcfc). The view is a detached scratch
@@ -551,22 +583,22 @@ class _Drive:
         try:
             rc, tail = self._cli(["git", "worktree", "add", "--detach", str(view), "HEAD"])
             if rc != 0:
-                raise Escalation("suite_failed", "building", None,
+                raise Escalation("suite_failed", self.phase, None,
                                  f"could not create the combined view: `git worktree add` "
                                  f"rc {rc}", tail.splitlines())
-            for role in builders:
-                branch = f"sprint/{self.f}-{role}"
+            for role, wt in builds:
+                branch = f"sprint/{self.f}-{wt}"
                 rc, tail = self._cli(["git", "-C", str(view), "merge", "--no-edit", branch])
                 if rc != 0:
-                    raise Escalation("suite_failed", "building", role,
+                    raise Escalation("suite_failed", self.phase, role,
                                      f"{branch} does not merge with the other builders' "
                                      f"branches", tail.splitlines())
             rc, tail = self._prusik("prove", "--kind", "tests", "--", "sh", "-c", suite,
                                     cwd=view)
             if rc != 0:
-                raise Escalation("suite_failed", "building", None,
+                raise Escalation("suite_failed", self.phase, None,
                                  "full suite not proven green on the merged builder "
-                                 f"branches ({', '.join(builders)})", tail.splitlines())
+                                 f"branches ({', '.join(r for r, _ in builds)})", tail.splitlines())
         finally:
             if view.exists():
                 self._cli(["git", "worktree", "remove", "--force", str(view)])
@@ -582,15 +614,24 @@ class _Drive:
             pass
         return None
 
-    def _solo_handback(self, report: str, n: object) -> Escalation:
+    def _trivial_fix(self, report: str, n: object) -> Escalation:
         return Escalation(
-            "solo_handback", "reviewing", None,
-            f"fix round {n} is open: reports/{self.f}/{report} FAILED. Address its findings "
-            f"in worktrees/solo/ and commit there, then re-run `prusik drive {self.f}`; it "
-            f"ends the round and re-reviews.",
+            "trivial_fix", "reviewing", None,
+            f"fix round {n} is open on the trivial lane: reports/{self.f}/{report} FAILED. "
+            f"The trivial lane is built by hand: address its findings in worktrees/solo/ "
+            f"and commit there, then re-run `prusik drive {self.f}`; it ends the round and "
+            f"re-reviews.",
             [str(self.reports / report), str(self.root / "worktrees" / "solo")])
 
     def _fix_builders(self, report: str, n: object) -> None:
+        lane = self._lane()
+        if lane == "trivial":
+            raise self._trivial_fix(report, n)
+        if lane == "solo":
+            self._spawn(SOLO_BUILDER, f"fix round {n}: address the findings in "
+                                      f"reports/{self.f}/{report}; patch worktrees/solo/ "
+                                      f"only; commit on the worktree branch")
+            return
         for role in self._builders():
             self._spawn(role, f"fix round {n}: address the findings in "
                               f"reports/{self.f}/{report}; patch worktrees/{role}/ only; "
@@ -602,8 +643,8 @@ class _Drive:
         if st is not None and st.get("feature") == f:          # step 0: resume the round
             failing = next((rep for _, rep in REVIEWERS
                             if self._report_first_token(rep) == "FAIL"), None)
-            # Solo: the person fixed it after the hand-back; end the round and re-review.
-            if failing and not self._is_solo():
+            # Trivial: the person fixed it by hand; end the round and re-review.
+            if failing and self._lane() != "trivial":
                 self._fix_builders(failing, st.get("round"))
             rc, tail = self._gate("fix-round", "end", "--feature", f)
             if rc != 0:
@@ -642,8 +683,8 @@ class _Drive:
                                  "`gate fix-round start` failed", tail.splitlines())
             rnd = (fix_round.current_state(self.root) or {}).get("round")
             self.steps.append(f"fix round {rnd}")
-            if self._is_solo():
-                raise self._solo_handback(failed, rnd)
+            if self._lane() == "trivial":
+                raise self._trivial_fix(failed, rnd)
             self._fix_builders(failed, rnd)
             rc, tail = self._gate("fix-round", "end", "--feature", f)
             if rc != 0:
@@ -690,9 +731,10 @@ class _Drive:
         phase = state.get("phase")
         if phase not in DRIVEN:
             print(f"[drive] sprint {self.f} is in {phase!r}; drive takes over at scoping, "
-                  f"triage, planning, building, reviewing or integrating", file=self.out)
+                  f"triage, planning, solo_execute, building, reviewing or integrating", file=self.out)
             return 2
-        if phase == "scoping" and state.get("lane") == "trivial":
+        if (phase == "scoping" and state.get("lane") == "trivial") \
+                or (phase == "solo_execute" and self._lane() == "trivial"):
             print(f"[drive] sprint {self.f} is on the trivial lane: write "
                   f"design/{self.f}/trivial.md, implement in worktrees/solo/, then re-run "
                   f"drive from reviewing", file=self.out)
@@ -755,7 +797,8 @@ class _Drive:
         (self.reports / "drive-escalation.json").unlink(missing_ok=True)
         handlers: dict[str, Callable[[], None]] = {
             "scoping": self._scoping, "triage": self._triage,
-            "planning": self._planning, "building": self._building,
+            "planning": self._planning, "solo_execute": self._solo_execute,
+            "building": self._building,
             "reviewing": self._reviewing, "integrating": self._integrating}
         try:
             self._setup()
