@@ -16,20 +16,21 @@ import yaml
 
 from prusik import consistency, gate, ledger, phases
 from tests.test_drive_design_phases import _fake_triage
-from tests.test_sprint_drive import F, proj, rig, set_phase  # noqa: F401
+from tests.test_sprint_drive import F, escalated_events, proj, rig, set_phase  # noqa: F401
 
 
-# ── drive: the solo hand-off captures RED before handing back ─────────────────────────────
+# ── drive: the solo_execute step captures RED before the build ─────────────────────────────
 
-def test_triage_solo_captures_red_before_handing_back(rig, proj, monkeypatch):
+def test_triage_solo_captures_red_before_the_solo_build(rig, proj, monkeypatch):
     set_phase(proj, "triage")
     _fake_triage(monkeypatch, proj, {"mode": "solo", "reason": "r"})
-    assert rig.run() == 3
-    esc = rig.escalation()
-    assert esc["kind"] == "solo_handback" and "RED baselines captured" in esc["reason"]
-    assert [e[1] for e in rig.events if e[0] == "gate"] == ["advance", "prove-red"]
+    rig.run()
+    kinds = [e[1] if e[0] == "gate" else e[0] for e in rig.events]
+    assert kinds.index("prove-red") < kinds.index("spawn"), "RED is captured before the spawn"
+    assert ("spawn", "solo-builder") in rig.events
+    assert [e[1] for e in rig.events if e[0] == "gate"][:2] == ["advance", "prove-red"]
     assert gate.missing_red_baselines(proj, F) == []
-    assert phases.current_sprint_state(proj)["phase"] == "solo_execute"
+    assert escalated_events() == [], "the build is not handed back"
 
 
 def test_triage_solo_skips_prove_red_when_baselines_exist(rig, proj, monkeypatch):
@@ -37,9 +38,10 @@ def test_triage_solo_skips_prove_red_when_baselines_exist(rig, proj, monkeypatch
                   exit_code=1)
     set_phase(proj, "triage")
     _fake_triage(monkeypatch, proj, {"mode": "solo", "reason": "r"})
-    assert rig.run() == 3
-    assert rig.escalation()["kind"] == "solo_handback"
+    rig.run()
+    assert ("spawn", "solo-builder") in rig.events
     assert ("gate", "prove-red", "--feature", F) not in rig.events
+    assert escalated_events() == [], "the build is not handed back"
 
 
 def test_triage_solo_prove_red_that_captures_nothing_escalates(rig, proj, monkeypatch):

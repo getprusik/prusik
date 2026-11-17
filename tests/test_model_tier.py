@@ -42,7 +42,7 @@ _UNSET = object()
 _ALL_ROLES = ["backend-builder", "brief-critic", "cartographer", "conventions-enforcer",
               "conventions-scribe", "feature-planner", "frontend-builder", "integrator",
               "plan-critic", "pr-composer", "product-fit-critic", "regression-sentinel",
-              "scope-critic", "scoping", "test-writer"]
+              "scope-critic", "scoping", "solo-builder", "test-writer"]
 _FIXED = ["brief-critic", "product-fit-critic", "cartographer", "scoping",
           "conventions-scribe", "pr-composer"]
 
@@ -230,7 +230,7 @@ def test_reference_profile_reproduces_template_frontmatter():
         declared = re.search(r"^model:\s*(\S+)\s*$", text, re.M).group(1)
         assert tiers[model_tier.BASE_CLASS[role]]["model"] == declared, role
         checked += 1
-    assert checked == 15
+    assert checked == 16
 
 
 @pytest.mark.parametrize("level", ["low", "normal", "high"])
@@ -701,7 +701,7 @@ def test_cli_resolve_table_has_header_reasons_and_a_row_per_role(ready, monkeypa
         if len(cols) >= 4 and cols[0] in set(_ALL_ROLES) | {"docs-writer"}:
             assert cols[0] not in rows, f"duplicate row for {cols[0]}"
             rows[cols[0]] = cols[1:4]
-    assert set(rows) == set(_ALL_ROLES) | {"docs-writer"}          # 15 packaged + profile role
+    assert set(rows) == set(_ALL_ROLES) | {"docs-writer"}          # 16 packaged + profile role
     assert rows["regression-sentinel"] == ["high_stakes", "opus", "stakes"]
     assert rows["cartographer"] == ["high_stakes", "opus", "fixed"]
     assert rows["pr-composer"] == ["mechanical", "haiku", "fixed"]
@@ -1241,7 +1241,8 @@ def test_rejected_plan_bounces_feature_planner_below_top():
 
 def test_rewind_into_building_bounces_builders_and_test_writer():
     builders = {r: ("bounded", "sonnet") for r in
-                ("backend-builder", "frontend-builder", "test-writer", "regression-sentinel")}
+                ("backend-builder", "frontend-builder", "test-writer", "solo-builder",
+                 "regression-sentinel")}
     out = _cal([_tr(1, "f", builders),
                 _rewind(2, "f", "building"),
                 _rewind(3, "f", "solo_execute"),
@@ -1249,7 +1250,7 @@ def test_rewind_into_building_bounces_builders_and_test_writer():
                 _rewind(4, "g", "building"),                   # another feature's
                 _done(6, "f")])
     roles = out["sprints"][0]["roles"]
-    for r in ("backend-builder", "frontend-builder", "test-writer"):
+    for r in ("backend-builder", "frontend-builder", "test-writer", "solo-builder"):
         assert roles[r]["bounces"] == 2 and roles[r]["bounced_below_top"] is True, r
     assert roles["regression-sentinel"]["bounces"] == 0
 
