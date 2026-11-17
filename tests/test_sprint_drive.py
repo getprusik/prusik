@@ -623,7 +623,7 @@ def test_an_escalated_drive_lets_go_too(rig, proj):
 
 def test_escalation_kinds_are_the_documented_set():
     assert set(drive.ESCALATION_KINDS) == {
-        "scope_rejected", "triage_rejected", "solo_handback", "plan_rejected",
+        "scope_rejected", "triage_rejected", "trivial_fix", "plan_rejected",
         "prove_red_failed", "suite_failed", "fix_round_cap", "permission_denied",
         "spawn_failed", "tier_unresolved", "auth_mismatch", "writer_busy",
         "advance_blocked", "tree_written", "budget_exceeded", "budget_unmeasurable"}
@@ -740,7 +740,8 @@ def test_split_code_and_test_builders_prove_green_together(tmp_path, monkeypatch
     _builder_branch(repo, "test-writer", "test_code.py", "from code import X\n")
     seen = []
     d = _proving_drive(repo, monkeypatch, seen)
-    d._prove_combined(["backend-builder", "test-writer"],
+    d._prove_combined([("backend-builder", "backend-builder"),
+                       ("test-writer", "test-writer")],
                       "test -f code.py && test -f test_code.py")
     (view,) = seen
     assert not view.is_relative_to(repo), "the view is outside the project tree"
@@ -756,7 +757,7 @@ def test_a_red_merged_suite_escalates_and_still_removes_the_view(tmp_path, monke
     seen = []
     d = _proving_drive(repo, monkeypatch, seen)
     with pytest.raises(drive.Escalation) as e:
-        d._prove_combined(["backend-builder"], "test -f test_code.py")
+        d._prove_combined([("backend-builder", "backend-builder")], "test -f test_code.py")
     assert e.value.kind == "suite_failed" and "merged builder branches" in e.value.reason
     assert not seen[0].exists() and "view" not in _git(repo, "worktree", "list")
 
@@ -768,7 +769,8 @@ def test_conflicting_builder_branches_escalate_naming_the_branch(tmp_path, monke
     seen = []
     d = _proving_drive(repo, monkeypatch, seen)
     with pytest.raises(drive.Escalation) as e:
-        d._prove_combined(["backend-builder", "test-writer"], "true")
+        d._prove_combined([("backend-builder", "backend-builder"),
+                           ("test-writer", "test-writer")], "true")
     assert e.value.role == "test-writer" and "sprint/feat-test-writer" in e.value.reason
     assert seen == [], "no suite runs on a view that did not merge"
     assert len(_git(repo, "worktree", "list").splitlines()) == 1

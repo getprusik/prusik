@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 from prusik import drive, phases
-from tests.test_sprint_drive import F, PLAN, proj, rig, set_phase  # noqa: F401
+from tests.test_sprint_drive import F, PLAN, escalated_events, proj, rig, set_phase  # noqa: F401
 
 SCOPE = """# Scope
 
@@ -235,14 +235,14 @@ def test_triage_team_advances_to_planning(rig, proj, monkeypatch):
     assert _advances(rig)[0] == "planning"
 
 
-def test_triage_solo_hands_back(rig, proj, monkeypatch):
+def test_triage_solo_continues_into_solo_execute_and_spawns_solo_builder(rig, proj,
+                                                                          monkeypatch):
     set_phase(proj, "triage")
     _fake_triage(monkeypatch, proj, {"mode": "solo", "reason": "r"})
-    assert rig.run() == 3
-    esc = rig.escalation()
-    assert esc["kind"] == "solo_handback"
-    assert "worktrees/solo/" in esc["reason"] and "reviewing" in esc["reason"]
-    assert phases.current_sprint_state(proj)["phase"] == "solo_execute"
+    rig.run()
+    assert _advances(rig)[:2] == ["solo_execute", "reviewing"]
+    assert _spawns(rig)[0] == "solo-builder"
+    assert escalated_events() == [], "the build is not handed back"
 
 
 @pytest.mark.parametrize("kw,needle", [

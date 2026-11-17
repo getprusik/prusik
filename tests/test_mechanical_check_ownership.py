@@ -181,7 +181,7 @@ def test_the_directive_check_catches_the_shipped_defects():
 
 
 def test_all_15_roles_are_checked():
-    assert len(list(_AGENTS.glob("*.md"))) == 15
+    assert len(list(_AGENTS.glob("*.md"))) == 16
 
 
 def test_no_bashless_role_is_directed_to_run_a_command():

@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from prusik import consistency, criterion, fix_round, gate, ledger, phases, schema
+from prusik import consistency, criterion, gate, ledger, phases, schema
 from prusik import worktrees as wtmod
 from tests.test_sprint_drive import F, escalated_events, proj, rig, set_phase  # noqa: F401
 from tests.test_sprint_drive import write_report
@@ -296,33 +296,30 @@ def test_map_staleness_reports_an_unmeasured_change_set(repo, monkeypatch, capsy
     assert ev and "detached HEAD" in ev[-1]["reason"]
 
 
-# ── a solo fix round hands back ────────────────────────────────────────────────────────────
+# ── a solo fix round runs on the tier-resolved solo-builder ───────────────────────────────
 
 def _solo(root: Path) -> None:
     ledger.append("phase_advance", from_phase="scoping", to_phase="solo_execute", feature=F)
 
 
-def test_solo_fail_hands_back_and_the_rerun_ends_the_round(rig, proj):
+def test_solo_fail_spawns_solo_builder_then_ends_the_round_and_re_reviews(rig, proj):
     """plan.md still names a builder: its presence is not the solo signal."""
     _solo(proj)
     set_phase(proj, "reviewing")
     verdicts = iter(["FAIL\n- bug\n", "PASS\n"])
     rig.adapter.scripts["regression-sentinel"] = lambda req: (
         proj / "reports/feat/regression.txt").write_text(next(verdicts))
-    assert rig.run() == 3
-    esc = rig.escalation()
-    assert esc["kind"] == "solo_handback" and esc["phase"] == "reviewing"
-    assert "worktrees/solo/" in esc["reason"] and f"prusik drive {F}" in esc["reason"]
-    assert esc["evidence"][0].endswith("reports/feat/regression.txt")
-    assert (fix_round.current_state(proj) or {}).get("feature") == F, "round is open"
-    assert ("spawn", "backend-builder") not in rig.events
-    rig.events.clear()
     assert rig.run() == 0
-    gates = [e[1:3] for e in rig.events if e[:2] == ("gate", "fix-round")]
-    assert gates == [("fix-round", "end")], "ends the open round, starts none"
+    spawns = [r for r in rig.adapter.requests if r.role == "solo-builder"]
+    assert len(spawns) == 1 and f"reports/{F}/regression.txt" in spawns[0].prompt
+    assert "worktrees/solo/" in spawns[0].prompt
     assert ("spawn", "backend-builder") not in rig.events
-    assert ("spawn", "regression-sentinel") in rig.events
-    assert [e["kind"] for e in escalated_events()] == ["solo_handback"], "no second hand-back"
+    gates = [e[1:3] for e in rig.events if e[:2] == ("gate", "fix-round")]
+    assert gates == [("fix-round", "start"), ("fix-round", "end")]
+    order = [e[1] for e in rig.events if e[0] == "spawn"
+             and e[1] in ("solo-builder", "regression-sentinel")]
+    assert order == ["regression-sentinel", "solo-builder", "regression-sentinel"]
+    assert escalated_events() == []
 
 
 def test_a_solo_advance_from_an_earlier_sprint_does_not_make_this_one_solo(rig, proj):
@@ -348,8 +345,8 @@ def test_triage_solo_creates_the_recorded_solo_worktree(rig, proj, monkeypatch):
     _commit(proj, ".gitignore", None)
     set_phase(proj, "triage")
     _fake_triage(monkeypatch, proj, {"mode": "solo", "reason": "r"})
-    assert rig.run() == 3
-    assert rig.escalation()["kind"] == "solo_handback"
+    rig.run()
+    assert ("spawn", "solo-builder") in rig.events
     assert _git(proj / "worktrees/solo", "rev-parse", "--abbrev-ref", "HEAD") == \
         f"sprint/{F}-solo"
     assert _git(proj, "rev-parse", f"refs/prusik/base/sprint/{F}-solo") == \
