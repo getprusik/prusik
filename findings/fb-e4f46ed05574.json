@@ -1,0 +1,16 @@
+{
+  "id": "fb-e4f46ed05574",
+  "created_at": "2026-11-17T14:48:32.736914+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "drive fix round on a solo sprint escalates spawn_failed: plan names no builder role",
+  "detail": "cost-budget (solo, no design/<f>/plan.md): conventions FAILed in reviewing, drive ran 'gate fix-round start' then _builders() (drive.py:421) read plan.md for a builder role and raised spawn_failed. A solo sprint's fix round has no route: it should hand back like solo_handback (or spawn the solo builder), not fail on a missing plan. Also: the regression reviewer's suite run recreates __pycache__/.ruff_cache in worktrees/solo, which the conventions reviewer then flags as leaked artifacts - reviewers manufacturing each other's findings.",
+  "feature": "cost-budget",
+  "content_hash": "e4f46ed05574",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

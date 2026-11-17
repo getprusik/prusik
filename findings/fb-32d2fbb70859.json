@@ -1,0 +1,16 @@
+{
+  "id": "fb-32d2fbb70859",
+  "created_at": "2026-11-17T15:00:38.468886+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "success-criterion verify_command timeout is hardcoded 300s; the full suite now runs 240-320s",
+  "detail": "gate.py:2401 _VERIFY_DEFAULT_TIMEOUT_SEC=300, not configurable per criterion. cost-budget sprint-complete failed cost-budget-full-suite with exit=-2 (timeout) though the suite was green 3x the same day (238s, 317s). Every full-suite criterion is now a coin-flip on machine load. Needs a validated per-criterion timeout_sec (or one derived from the suite's measured duration), and a timeout must be reported as an instrument limit, distinct from a failing suite.",
+  "feature": "cost-budget",
+  "content_hash": "32d2fbb70859",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

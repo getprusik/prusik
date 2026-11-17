@@ -1,0 +1,16 @@
+{
+  "id": "fb-1d6f8de5b8d3",
+  "created_at": "2026-11-17T00:49:17.661675+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "drive budgets count raw processed tokens, so caps measure context re-reads, not cost",
+  "detail": "usage.Usage.tokens = input+output+cache_write+cache_read, each weighted 1, and drive.budget_tokens / drive.session_budget_tokens compare that total. Measured on pinned-engine: 17.1M total = cache_read 16.53M (96.5%), cache_write 0.49M, output 0.11M, input 348. Weighted by price (cache read 0.1x, 1h cache write 2x, output ~5x input) that is ~3.2M input-equivalent, yet drive stopped budget_exceeded at 16.6M vs the 8M cap. Model price differences (opus vs haiku) are ignored too. A budget should compare a cost-weighted measure from one declared price table; keep raw tokens visible as telemetry.",
+  "feature": "pinned-engine",
+  "content_hash": "1d6f8de5b8d3",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

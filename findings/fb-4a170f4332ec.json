@@ -1,0 +1,16 @@
+{
+  "id": "fb-4a170f4332ec",
+  "created_at": "2026-11-17T00:49:17.723119+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "builder subagents burn context on waits and whole-file reads",
+  "detail": "pinned-engine solo builder: 86 tool turns at ~139K context each = 11.9M processed tokens (peak context only ~190K). Several turns were the agent being woken while waiting on its own background test runs, each re-reading the full context to do nothing; it also read very large modules whole (gate.py >4000 lines). Builder guidance should run bounded verifications in the foreground, read slices (grep then offset/limit), and batch independent calls.",
+  "feature": "pinned-engine",
+  "content_hash": "4a170f4332ec",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

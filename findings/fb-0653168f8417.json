@@ -1,0 +1,16 @@
+{
+  "id": "fb-0653168f8417",
+  "created_at": "2026-11-17T00:49:17.793513+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "solo builds bypass model tiers: the build falls to the operator's session model",
+  "detail": "drive's solo_handback (drive.py:414) hands the solo build back to the calling session, so P4 model tiers (v0.231.0) never apply: pinned-engine's solo build ran on opus (11.9M of 16.6M sprint tokens) because the operator session is opus. Team mode spawns tiered builders. Drive should run the solo build itself: create worktrees/solo on a declared branch (see fb-95d0c641cd90) and spawn a builder role resolved through tier resolve, then continue to reviewing.",
+  "feature": "pinned-engine",
+  "content_hash": "0653168f8417",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
