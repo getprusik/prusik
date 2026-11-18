@@ -3375,6 +3375,21 @@ def advance(args) -> int:
                 ledger.append("worktree_caches_removed", feature=feature,
                               phase=current, paths=removed)
 
+        # fb-dc6e3239ce99: a builder change that moves the version pin is refused where the
+        # builder hands off, never discovered at integration, where the merged pin locks every
+        # tool call out of the session.
+        if current in ("building", "solo_execute", "reviewing") and not rewinding:
+            from prusik import pin
+            moves = pin.sprint_moves(ledger.project_root(), feature)
+            if moves:
+                msg = pin.moves_message(moves)
+                print(f"[prusik-gate] BLOCKED advancing '{current}' → '{target_phase}': {msg}",
+                      file=sys.stderr)
+                ledger.append("advance_blocked", from_phase=current, to_phase=target_phase,
+                              feature=feature, gate_class=gate_class.PIN_MOVED,
+                              reason=f"pin moved: {', '.join(m['where'] for m in moves)}")
+                return 2
+
         inconsistencies = consistency.run_for_phase(current, ledger.project_root(), feature)
 
         if current == "scoping":

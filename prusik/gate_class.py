@@ -43,6 +43,7 @@ SPRINT_START_GATE = "sprint_start_gate"              # sprint-start: unmet pre-s
 DEFERRED_TIER = "deferred_tier"                       # sprint-complete: deferred test tier never proven
 CLOSE_BEFORE_LAST_PHASE = "close_before_last_phase"   # sprint-complete: run from an earlier phase
 GATE_FAULT = "gate_fault"                             # pre-tool: the gate itself failed or ran out of time
+PIN_MOVED = "pin_moved"                               # advance: a sprint branch changes the version pin
 UNCLASSIFIED = "unclassified"                        # recorded nothing identifying — never guessed
 
 # Completeness anchor — the test pins this to the module's constants so a class
@@ -62,6 +63,7 @@ GATE_CLASSES = (
     DEFERRED_TIER,
     CLOSE_BEFORE_LAST_PHASE,
     GATE_FAULT,
+    PIN_MOVED,
     UNCLASSIFIED,
 )
 
@@ -113,6 +115,8 @@ def _derive(event: dict) -> str:
             return DEFERRED_TIER
         if reason.startswith("close before last phase"):
             return CLOSE_BEFORE_LAST_PHASE
+        if reason.startswith("pin moved"):
+            return PIN_MOVED
         return UNCLASSIFIED
 
     return UNCLASSIFIED

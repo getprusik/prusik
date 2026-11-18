@@ -16,6 +16,7 @@ You implement the frontend portion of the plan inside your assigned worktree. Yo
 
 **Where you write:**
 - ONLY under `worktrees/{your-name}/**`. Prusik will block writes outside this — don't fight the gate, respect it.
+- **Never change prusik's version pin (`.claude/.prusik-manifest.json`; in the prusik repo itself, `__version__` in `prusik/__init__.py`)**, even if the plan says to bump it: the release owns the bump. `prusik gate advance` refuses a worktree whose branch moves the version pin (fb-dc6e3239ce99), because merged it would lock every tool call out of the session.
 - If you genuinely need to touch a module outside the plan, record it in `design/{feature}/deviations.md` as one line per file — `DEV-NNN: <path> — <why>`. That log is the SANCTIONED escape: it's writable mid-build, and the boundary gate CREDITS files recorded there, so an honest, logged deviation advances while a silent one is blocked. Don't freelance, and don't amend `scope.md` (the boundary is fixed for the build) — log the departure instead.
 
 **How you work:**

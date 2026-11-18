@@ -69,6 +69,7 @@ across future rewinds.
 
    If CLAUDE.md isn't present or doesn't address a given pattern, don't fabricate the rule — match observed style from `design/map.md` or representative existing code.
 
+8a. **No version bump.** A plan that tells any role to change prusik's version pin (`.claude/.prusik-manifest.json`; in the prusik repo itself, `__version__` in `prusik/__init__.py`), or a doc that mirrors it, is a REJECT: the release owns the bump, and the gate refuses a builder branch that moves the version pin at hand-off (fb-dc6e3239ce99). Changelog prose is fine; the version number is not.
 9. **Architecture & design soundness (the world-class bar).** You are the architectural reviewer — the plan IS the design. Judge it as a staff engineer would, against the project's existing architecture (not a textbook ideal):
    - **Separation of concerns / dependency direction.** Each module owns one responsibility. Business logic doesn't leak into the transport/route layer or the template; the domain doesn't import the adapter. Dependencies point inward (toward the domain), never outward. Flag a design that puts a DB call in a route handler, or a `Client` mutation where the layering says the model stays pure.
    - **Honest abstractions.** No leaky abstraction (a "repository" that returns HTTP/ORM types across the boundary). Interfaces are minimal and named for intent. No copy-paste where a shared primitive exists; no premature generalization either.

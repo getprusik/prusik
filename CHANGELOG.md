@@ -3,6 +3,20 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.253.0] — a sprint branch that moves the version pin is refused at hand-off
+
+- **The gate refuses a builder change to the version pin (fb-dc6e3239ce99).** A plan told
+  backend-builder to bump `__version__`; once merged, the checkout was ahead of the installed
+  engine and the pin gate refused every Bash, Edit, Write and Stop until a user `!` command
+  reverted it. `gate advance` out of building, solo_execute and reviewing now refuses a feature
+  worktree whose branch changes the pin against its recorded fork point (a non-git mirror:
+  against the project's pin file), naming the file, the versions and the revert, under the new
+  gate class `pin_moved`. The shared tree is untouched, so the session can still act. A release
+  that moves main after the fork is not counted against the branch.
+- **The specs say it first.** backend-, frontend- and solo-builder never change prusik's pin
+  (`.claude/.prusik-manifest.json`, or `__version__` in the prusik repo) even if told to, and
+  plan-critic rejects a plan that bumps it. The release owns the bump.
+
 ## [0.252.0] — `prusik drive` builds the solo lane itself, on a tier-resolved `solo-builder`
 
 - **Solo build and solo fix rounds run in drive (fb-0653168f8417).** Triage-solo no longer

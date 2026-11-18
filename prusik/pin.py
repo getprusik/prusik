@@ -232,6 +232,92 @@ def install_fix(v: Verdict) -> str:
             f"(`! uv tool install prusik=={v.pin}` or `! pipx install prusik=={v.pin}`).")
 
 
+# ── a sprint never moves the pin (fb-dc6e3239ce99) ────────────────────────────────────
+
+def _pin_in(text: str | None, kind: str) -> str | None:
+    """The pin a pin file's text names, by the same rule `resolve` reads it with."""
+    if text is None:
+        return None
+    if kind == "source":
+        m = _SOURCE_VERSION_RE.search(text)
+        return m.group(1) if m else None
+    try:
+        m = json.loads(text)
+    except ValueError:
+        return None
+    return surface_version(m) if isinstance(m, dict) else None
+
+
+def sprint_moves(root: Path, feature: str) -> list[dict]:
+    """Each of `feature`'s worktrees whose change moves the project's pin: its sprint branch's
+    tip names a different pin than the branch's fork point, or (no git) its mirror's pin file
+    differs from the project's. The release owns the version; merged, a moved pin puts the
+    checkout out of step with the installed engine and the pin gate refuses every tool call.
+    Empty when the project has no pin or no worktree moves it."""
+    try:
+        _, source, kind = resolve(root)
+    except PinUnreadable:
+        return []                      # the pin gate itself refuses a corrupt pin
+    if source is None or kind is None:
+        return []
+    rel = source.relative_to(root).as_posix()
+    wts = sorted(d.name for d in (root / "worktrees").glob("*/"))
+    if (root / ".git").exists():
+        return _branch_moves(root, feature, wts, rel, kind)
+    moves = []
+    want = _pin_in(source.read_text(encoding="utf-8"), kind)
+    for wt in wts:
+        try:
+            got = _pin_in((root / "worktrees" / wt / rel).read_text(encoding="utf-8"), kind)
+        except (OSError, UnicodeDecodeError):
+            continue                   # a partial mirror without the pin file leaves it alone
+        if got != want:
+            moves.append({"where": f"worktrees/{wt}", "file": rel, "from": want, "to": got,
+                          "revert": f"cp {rel} worktrees/{wt}/{rel}"})
+    return moves
+
+
+def _branch_moves(root: Path, feature: str, wts: list[str], rel: str,
+                  kind: str) -> list[dict]:
+    import subprocess
+    from prusik import worktrees
+
+    def git(*args: str) -> str | None:
+        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+        return r.stdout if r.returncode == 0 else None
+
+    moves = []
+    for wt in wts:
+        branch = worktrees.branch_name(feature, wt)
+        if not git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"):
+            continue                   # another feature's worktree, or not a branch
+        base = (git("rev-parse", "--verify", "--quiet",
+                    f"{worktrees.base_ref(branch)}^{{commit}}")
+                or git("merge-base", branch, "HEAD") or "").strip()
+        if not base:
+            continue                   # no fork point: no change set to judge
+        old = _pin_in(git("show", f"{base}:{rel}"), kind)
+        new = _pin_in(git("show", f"{branch}:{rel}"), kind)
+        if old != new:
+            moves.append({"where": branch, "file": rel, "from": old, "to": new,
+                          "revert": f"git -C worktrees/{wt} checkout {base[:12]} -- {rel} "
+                                    f"&& git -C worktrees/{wt} commit -m 'restore the pin'"})
+    return moves
+
+
+def moves_message(moves: list[dict]) -> str:
+    """The refusal for `sprint_moves`: what moved, where, and the revert."""
+    lines = ["sprint changes the version pin; the release owns the version bump "
+             "(scripts/release.sh in the prusik repo, `prusik refresh` in a project), so a "
+             "sprint never changes it. Merged, it would put the checkout out of step with the "
+             "installed prusik and the pin gate would refuse every tool call. Revert it on the "
+             "builder's side:"]
+    for m in moves:
+        lines.append(f"  - {m['where']}: {m['file']} {m['from']} → {m['to']}. "
+                     f"Revert: {m['revert']}")
+    return "\n".join(lines)
+
+
 # ── launching a prusik child ─────────────────────────────────────────────────────────
 
 def child_command(*args: str, environ=None) -> tuple[list[str], dict[str, str]]:

@@ -21,7 +21,7 @@ You build a solo sprint inside `worktrees/solo/`. There is no plan.md and no oth
 1. Start a heartbeat: every ~10 turns, touch `.sprint/status/solo-builder.txt` with a one-line state.
 2. Read scope.md's Modules touched section. Implement only those in your worktree, code and tests together.
 3. Match existing conventions (see `.claude/conventions/` packs and `design/map.md`).
-4. Commit your work on the worktree branch. Do not run `git push` or `git merge`.
+4. Commit your work on the worktree branch. Do not run `git push` or `git merge`. Never change prusik's version pin (`.claude/.prusik-manifest.json`; in the prusik repo itself, `__version__` in `prusik/__init__.py`), even if scope.md says to: the release owns the bump, and `prusik gate advance` refuses a branch that moves the version pin (fb-dc6e3239ce99).
 5. **Before you report done, prove the FULL suite green — not just your own tests.** A structural change (a new `Depends`, a guard, a contract tweak) routinely breaks EXISTING tests you didn't write. Green type-check + your-own-new-tests-passing is NOT done. Run the project's whole suite and prove it:
 
        prusik prove --kind tests -- <the project's full test command>
