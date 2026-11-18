@@ -1,0 +1,16 @@
+{
+  "id": "fb-dc6e3239ce99",
+  "created_at": "2026-11-17T23:24:52.228048+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "a builder's version bump merged at integration deadlocks the session on the pin gate",
+  "detail": "tiered-solo-builder: the plan told backend-builder to bump prusik/__init__.py to 0.252.0 (and the README Action pin, to satisfy the pre-commit hook). The integrator merged it into main, and the pre-tool/stop pin gate (installed 0.251.0 < checkout 0.252.0) then refused every Bash/Edit/Write and Stop, both for the integrator (escalated permission_denied) and for the operator session. The only exit was a user '!' command reverting the line. release.sh owns the bump (fb-c713dc6530a9). The gate should stop a sprint from bumping the version: the plan schema/plan-critic and the builder specs say never bump, and a builder or merge that changes __version__ is refused at the boundary, not discovered at integration as a whole-session lockout.",
+  "feature": "tiered-solo-builder",
+  "content_hash": "dc6e3239ce99",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
