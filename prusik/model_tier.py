@@ -54,6 +54,12 @@ BASE_CLASS: dict[str, str] = {
     "brief-critic": "mechanical", "pr-composer": "mechanical",
 }
 
+# Builders never move with stakes (fb-2f3eb3b58869): tests, gates and reviewers check what they
+# produce, so a weaker builder costs a fix round, not an escaped defect. Stakes lift the roles
+# that judge the work. A plan's `## Model tiers` item can still lift a builder, with a reason.
+BUILDER_ROLES: frozenset[str] = frozenset({
+    "backend-builder", "frontend-builder", "solo-builder", "test-writer"})
+
 # Pre-scope roles (stakes are not known yet) plus pr-composer: their class never moves.
 FIXED_ROLES: frozenset[str] = frozenset({
     "brief-critic", "product-fit-critic", "cartographer", "scoping",
@@ -308,12 +314,13 @@ def _stakes_sensitive(role: str, profile: Profile) -> bool:
     # scope-critic's stakes come from scope.md (`_scope_class`), before triage: it never loads
     # or records the decision-based stakes.
     return (role not in profile.roles and role in BASE_CLASS and role != "scope-critic"
-            and role not in FIXED_ROLES and BASE_CLASS[role] != "mechanical")
+            and role not in FIXED_ROLES and role not in BUILDER_ROLES
+            and BASE_CLASS[role] != "mechanical")
 
 
 def tier_class(role: str, level: str | None, profile: Profile) -> tuple[str, str]:
-    """(class, source). A project role keeps its profile class; a fixed or mechanical role its
-    base; every other packaged role moves one step with the stakes level."""
+    """(class, source). A project role keeps its profile class; a fixed, builder or mechanical
+    role its base; every other packaged role moves one step with the stakes level."""
     if role in profile.roles:
         return profile.roles[role], "project"
     if role not in BASE_CLASS:
@@ -321,7 +328,7 @@ def tier_class(role: str, level: str | None, profile: Profile) -> tuple[str, str
     if role == "scope-critic":
         raise TierError("scope-critic: resolved from scope.md, not stakes")
     base = BASE_CLASS[role]
-    if role in FIXED_ROLES or base == "mechanical":
+    if role in FIXED_ROLES or role in BUILDER_ROLES or base == "mechanical":
         return base, "fixed"
     if level is None:
         raise TierError(f"{role}: stakes unknown - run triage first (prusik triage <feature>)")

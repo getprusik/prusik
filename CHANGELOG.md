@@ -3,6 +3,18 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.257.0] — Builders keep their tier at any stakes level
+
+- **Stakes no longer lift builder roles (fb-2f3eb3b58869).** High stakes moved every bounded
+  role up one class, builders included, so a high-stakes sprint ran backend-builder,
+  frontend-builder, solo-builder and test-writer on the top model: observed-writes scored 6 and
+  spent $12 of $31.68 on them. Tests, gates and reviewers check what a builder produces, so a
+  weaker builder costs a fix round, not an escaped defect. The four builder roles are now
+  `model_tier.BUILDER_ROLES` and keep their base class (`bounded`) at every stakes level, shown
+  as `source: fixed`, and resolve without triage. The roles that judge the work
+  (regression-sentinel, conventions-enforcer, integrator, the critics, feature-planner) still
+  move with stakes. A plan's `## Model tiers` item can still lift a builder, with its reason.
+
 ## [0.256.0] — drive runs from a plain shell, and every stop is a hand-off
 
 - **Drive releases its writer lease on every exit (fb-d50f2764de21).** A drive run from a
