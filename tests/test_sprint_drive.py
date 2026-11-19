@@ -532,6 +532,7 @@ def test_writes_the_phase_allows_never_halt_drive(rig, proj):
         wt = proj / "worktrees/backend-builder"
         wt.mkdir(parents=True, exist_ok=True)
         (wt / "b.py").write_text("b = 1\n")
+        _commit(wt, "b.py")
         (proj / "reports/feat/build.md").write_text("built\n")
 
     def integrator(req):
@@ -626,7 +627,8 @@ def test_escalation_kinds_are_the_documented_set():
         "scope_rejected", "triage_rejected", "trivial_fix", "plan_rejected",
         "prove_red_failed", "suite_failed", "fix_round_cap", "permission_denied",
         "spawn_failed", "tier_unresolved", "auth_mismatch", "writer_busy",
-        "advance_blocked", "tree_written", "budget_exceeded", "budget_unmeasurable"}
+        "advance_blocked", "tree_written", "budget_exceeded", "budget_unmeasurable",
+        "builder_stopped", "empty_build"}
     with pytest.raises(ValueError):
         drive.Escalation("made_up", "building", None, "x")
 
@@ -873,8 +875,26 @@ def test_no_session_yet_is_zero_spend_only_before_drives_first_spawn(rig, monkey
 
 # ── resume does not re-spawn a finished builder (fb-1e4da436fcfc) ─────────────────────────
 
+def _commit(wt, name: str) -> None:
+    subprocess.run(["git", "-C", str(wt), "add", name], check=True)
+    subprocess.run(["git", "-C", str(wt), "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", f"build {name}"], check=True)
+
+
+def _committing_builder(proj, role: str = "backend-builder"):
+    """A builder that commits a new file on its worktree branch every time it is spawned."""
+    n = iter(range(1000))
+
+    def script(req):
+        name = f"built{next(n)}.py"
+        (proj / "worktrees" / role / name).write_text("x = 1\n")
+        _commit(proj / "worktrees" / role, name)
+    return script
+
+
 def test_resume_skips_a_builder_finished_on_its_current_tip(rig, proj):
     _git_project(proj)
+    rig.adapter.scripts["backend-builder"] = _committing_builder(proj)
     ledger.append("phase_advance", feature=F, from_phase="planning", to_phase="building")
     rig.rcs["advance"] = [1, 1, 1, 1]
 

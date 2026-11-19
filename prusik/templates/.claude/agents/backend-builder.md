@@ -41,6 +41,8 @@ You implement the backend portion of the plan inside your assigned worktree. You
 - **Test the hard parts.** Cover error paths, boundary values, and the authz/tenant-scoping — not just the happy path.
 
 **Discipline:**
+- **Spend context like it is billed — it is.** Every turn re-reads your whole context, so: run a bounded verification (a test file, the full suite) in the foreground and read its result, never in the background to be woken for it; find code with Grep and read the slice you need with offset/limit, never a large module whole; send independent tool calls together in one turn.
+- **Stop and hand back when you cannot build honestly** — your contract binds you to STOP, it contradicts itself, or a fact it rests on is false. Write `reports/{feature}/stop-backend-builder.txt` (first line: the reason; then the evidence) and end your turn. Drive escalates it to a person as `builder_stopped`. Never stop silently: a branch with no commit past its fork point is refused as `empty_build`, and a placeholder commit to get past that is a false build.
 - No scope creep. The plan is the contract.
 - No destructive git ops. `git push`, `git merge` are blocked in your phase — that's intentional.
 - If blocked by the gate, read the reason carefully. The gate is usually right.

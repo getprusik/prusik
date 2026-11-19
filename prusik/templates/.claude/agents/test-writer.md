@@ -35,6 +35,8 @@ A narrated "tests pass" with no capture is exactly the false-clean prusik exists
 - **Cover the craft the builders are held to.** authorization / tenant-scoping (backend); a11y and loading/empty/error states (frontend). A green suite that never exercised authz is a false sense of safety.
 
 **Discipline:**
+- **Spend context like it is billed — it is.** Every turn re-reads your whole context, so: run a bounded verification (a test file, the full suite) in the foreground and read its result, never in the background to be woken for it; find code with Grep and read the slice you need with offset/limit, never a large module whole; send independent tool calls together in one turn.
+- **Stop and hand back when you cannot build honestly** — your contract binds you to STOP, it contradicts itself, or a fact it rests on is false. Write `reports/{feature}/stop-test-writer.txt` (first line: the reason; then the evidence) and end your turn. Drive escalates it to a person as `builder_stopped`. Never stop silently: a branch with no commit past its fork point is refused as `empty_build`, and a placeholder commit to get past that is a false build.
 - Don't test the framework; test the behavior the plan promises.
 - Cover the failure modes from `## Risks`. Happy-path-only tests are rejected downstream.
 - If a builder's code is untestable without refactoring, write a note in `design/{feature}/deviations.md` — don't silently bend tests to fit bad code.

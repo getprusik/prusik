@@ -3,6 +3,27 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.254.0] — a builder can stop and hand back, and an empty build never advances
+
+- **A builder can stop and hand back to a person (fb-1e4da436fcfc).** A plan could bind a
+  builder to STOP and escalate, but nothing carried the stop: drive proved the suite and
+  advanced. A builder now writes `reports/<f>/stop-<role>.txt` (first line: the reason) and
+  ends its turn, and drive escalates `builder_stopped` with that reason, before proving
+  anything. Drive clears that role's stop file before each spawn of it, so a stop that was
+  resolved never escalates again.
+- **A builder that commits nothing escalates `empty_build` (fb-1e4da436fcfc).** A builder that
+  stopped with nothing built left the suite green on the old code, so the sprint advanced to
+  reviewing on an empty build. After each build spawn (team builders and solo-builder), drive
+  compares the branch tip to the worktree's recorded fork point. If they are equal, drive
+  escalates and does not record the builder as done. This is a drive-computed check, so it
+  holds whatever the agent reports.
+- **Builders spend context deliberately (fb-4a170f4332ec).** One solo build took 86 turns at
+  about 139K context each, about 11.9M tokens processed, while its peak context was about
+  190K. Many turns were the builder being woken for its own background test runs, and it read
+  files of more than 4000 lines whole. Every builder spec now says the same thing: run bounded
+  verifications in the foreground, find code with Grep and read slices with offset/limit, and
+  batch independent calls.
+
 ## [0.253.0] — a sprint branch that moves the version pin is refused at hand-off
 
 - **The gate refuses a builder change to the version pin (fb-dc6e3239ce99).** A plan told

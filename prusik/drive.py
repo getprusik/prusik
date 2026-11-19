@@ -47,7 +47,7 @@ ESCALATION_KINDS = ("scope_rejected", "triage_rejected", "trivial_fix", "plan_re
                     "prove_red_failed", "suite_failed", "fix_round_cap", "permission_denied",
                     "spawn_failed", "tier_unresolved", "auth_mismatch", "writer_busy",
                     "advance_blocked", "tree_written", "budget_exceeded",
-                    "budget_unmeasurable")
+                    "budget_unmeasurable", "builder_stopped", "empty_build")
 DRIVEN = ("scoping", "triage", "planning", "solo_execute", "building", "reviewing",
           "integrating")
 SOLO_WORKTREE = "solo"          # worktrees/solo, branch sprint/<f>-solo
@@ -189,6 +189,8 @@ class _Drive:
             session_id=sid, agent_spec=spec,
             timeout_s=int(self.cfg["spawn_timeout_min"]) * 60, env=self.env,
             on_tick=self._beat, tick_s=_TICK_S)
+        stop = self._stop_file(role)
+        stop.unlink(missing_ok=True)       # only this spawn's stop counts
         before = self._tree_state()
         started = time.time()
         try:
@@ -212,12 +214,43 @@ class _Drive:
             self._log(f"# gate denials recovered: {', '.join(tools)}")
             ledger.append("drive_gate_denials", feature=self.f, phase=self.phase, role=role,
                           session=sid, tools=tools)
+        if stop.exists():
+            why = (stop.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+                   or ["no reason given"])[0][:200]
+            raise Escalation("builder_stopped", self.phase, role,
+                             f"{role} stopped and escalated: {why}", [str(stop), sid])
         if res.is_error or res.timed_out:
             first = (res.text.strip().splitlines() or ["no output"])[0][:200]
             raise Escalation("spawn_failed", self.phase, role,
                              f"timed out: {first}" if res.timed_out else first, [sid])
         self.steps.append(f"spawn {role}")
         return res, started
+
+    def _stop_file(self, role: str) -> Path:
+        """reports/<f>/stop-<role>.txt: the one channel an agent has to stop and hand back
+        to a person (fb-1e4da436fcfc). Its first line is the reason."""
+        return self.reports / f"stop-{role}.txt"
+
+    def _built_tip(self, role: str, worktree: str) -> str | None:
+        """The tip of the branch `role` just built, refused when it is still the worktree's
+        recorded fork point: a builder that commits nothing has built nothing, and the suite
+        it leaves green proves only the code that was already there (fb-1e4da436fcfc).
+        None outside git, where there is no branch to measure."""
+        tip = self._branch_tip(worktree)
+        if tip is None:
+            return None
+        from prusik.consistency import UnmeasuredChangeSet
+        try:
+            base = _worktrees.recorded_base(self.root / "worktrees" / worktree)
+        except UnmeasuredChangeSet as e:
+            raise Escalation("empty_build", self.phase, role, str(e),
+                             [f"worktrees/{worktree}"]) from e
+        if tip == base:
+            raise Escalation("empty_build", self.phase, role,
+                             f"{role} committed nothing on sprint/{self.f}-{worktree}: its "
+                             f"tip is still the fork point {base[:12]}",
+                             [f"worktrees/{worktree}"])
+        return tip
 
     def _check_budget(self, role: str | None) -> None:
         """Escalate when the feature's measured cost (API list price) exceeds a cap: the
@@ -497,7 +530,7 @@ class _Drive:
                         f"build the feature design/{f}/scope.md defines in worktrees/solo/ "
                         f"per your role spec. Commit your work on the worktree branch. "
                         f"Do not run git push or merge.")
-            tip = self._branch_tip(SOLO_WORKTREE)
+            tip = self._built_tip(SOLO_BUILDER, SOLO_WORKTREE)
             if tip:
                 ledger.append("drive_builder_done", feature=f, role=SOLO_BUILDER, commit=tip)
         self._prove_suite([(SOLO_BUILDER, SOLO_WORKTREE)], str(suite))
@@ -521,7 +554,7 @@ class _Drive:
             self._spawn(role, f"implement your portion of design/{f}/plan.md in "
                               f"worktrees/{role}/ per your role spec. Commit your work on "
                               f"the worktree branch. Do not run git push or merge.")
-            tip = self._branch_tip(role)
+            tip = self._built_tip(role, role)
             if tip:
                 ledger.append("drive_builder_done", feature=f, role=role, commit=tip)
         self._prove_suite([(r, r) for r in builders], str(suite))
