@@ -3,6 +3,16 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.258.0] — A reused worktree must be on this feature's branch
+
+- **Worktree creation refuses another feature's branch (fb-58581f22d51e).** `worktrees.create`
+  reused an existing `worktrees/<role>` after only recording its fork point, without checking
+  which branch it had checked out. A worktree left on a merged `sprint/<other>-<role>` branch
+  would have been built on, and the kept `sprint/<feature>-<role>` work skipped. It now raises
+  when the branch is not `sprint/<feature>-<role>`, naming both branches and the remedy, before
+  any write: the worktree, its branch and its fork point stay as they were. `prusik gate
+  worktree-add` exits 2 with the reason and `prusik drive` escalates `spawn_failed`.
+
 ## [0.257.0] — Builders keep their tier at any stakes level
 
 - **Stakes no longer lift builder roles (fb-2f3eb3b58869).** High stakes moved every bounded

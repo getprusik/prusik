@@ -13,8 +13,9 @@ event is telemetry; nothing reads a base from it.
   from the new fork.
 - Reused (the branch carries its own commits): the ref is kept. Absent (a worktree left by an
   older engine), it is set to merge-base(branch, HEAD), which before integration is the fork.
-- An existing worktree directory: the ref is written only when absent, so a re-run never
-  moves it. A branch whose tip is a strict ancestor of HEAD (merged or stale) is refused:
+- An existing worktree directory: it must be on `sprint/<feature>-<role>`; another branch
+  (a different feature's) is refused untouched. The ref is written only when absent, so a
+  re-run never moves it. A branch whose tip is a strict ancestor of HEAD (merged or stale) is refused:
   its merge-base is its own tip, which would read as an empty change set.
 
 A worktree with no branch (detached HEAD) or no recorded base raises
@@ -160,6 +161,15 @@ def _record_existing(wt: Path, feature: str, role: str, run: Runner) -> None:
             f"worktrees/{role} has a detached HEAD: no branch to record a fork point for. "
             f"Remove it (`git worktree remove worktrees/{role}`) and re-create it with "
             f"`prusik gate worktree-add --feature {feature} --role {role}`.")
+    want = branch_name(feature, role)
+    if branch != want:
+        # Checked before any write: the worktree, its branch and its fork point stay as
+        # they are. It may hold another feature's uncommitted work, so the operator decides.
+        raise WorktreeError(
+            f"worktrees/{role} is checked out on {branch}, not {want}: building {feature} "
+            f"there would build on another feature's branch (fb-58581f22d51e). Remove it "
+            f"(`git worktree remove worktrees/{role}`) and re-create it with `prusik gate "
+            f"worktree-add --feature {feature} --role {role}`.")
     if not _has_base(run, branch):
         _record_from_merge_base(run, feature, role, branch)
 
