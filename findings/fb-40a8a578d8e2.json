@@ -1,0 +1,16 @@
+{
+  "id": "fb-40a8a578d8e2",
+  "created_at": "2026-11-19T05:44:51.155604+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "an inline-hosted sprint can write source in scoping through a python heredoc; the write hook reads command text only",
+  "detail": "Observed 2026-11-19 in attempt-scoped-cost (trivial lane, hosted in the operator session): python3 - <<EOF ... Path(...).write_text(...) edited prusik/*.py in worktrees/solo while the phase was scoping (writable: design/.../scope.md, trivial.md, scope-approval.txt). Not blocked; the Write tool was blocked correctly moments later. Drive's _check_tree (fb-1303f39d14a6) catches this class for spawned roles by reading the tree after the spawn; the inline host has no equivalent. Expected: phase writability holds whatever tool writes, e.g. the Stop/advance hook compares the tree against the phase's writable set.",
+  "feature": null,
+  "content_hash": "40a8a578d8e2",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

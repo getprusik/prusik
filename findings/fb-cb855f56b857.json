@@ -1,0 +1,16 @@
+{
+  "id": "fb-cb855f56b857",
+  "created_at": "2026-11-19T04:01:46.664684+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "drive.budget_usd charges a redo for the abandoned attempt's spend, so a re-started feature escalates budget_exceeded before doing any work",
+  "detail": "usage.measure(feature) sums every effort.phase_windows window for the feature name, across sprint_abandoned boundaries. Observed 2026-11-18: observed-writes was abandoned 2026-11-16 at ~$30; the redo's first drive check escalated budget_exceeded in scoping at $31.34 vs the $19 cap (building $21.93 was all the old attempt). Expected: the sprint cap (drive.budget_usd) counts windows since the feature's latest sprint_started; prior attempts are reported beside it, not charged to it. sprint-abandon is operator-gated and ledgered, so the reset is visible, not a dodge.",
+  "feature": "observed-writes",
+  "content_hash": "cb855f56b857",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

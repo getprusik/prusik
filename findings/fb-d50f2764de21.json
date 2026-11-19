@@ -1,0 +1,16 @@
+{
+  "id": "fb-d50f2764de21",
+  "created_at": "2026-11-19T05:09:47.344135+00:00",
+  "kind": "request",
+  "severity": null,
+  "title": "drive's host is a long LLM session whose context re-reads cost more than the builders; run each phase/escalation from a fresh session or a plain shell",
+  "detail": "Measured 2026-11-18 (observed-writes attempt 1): cost by role main $12.57 vs backend-builder $7.52 + test-writer $4.46; cache reads $11.69 of $31.34. drive is deterministic Python and already spawns each role headless and fresh; the expensive term is the operator's Claude session hosting it across phases. Expected: drive is started and resumed from a plain shell (no LLM host), each escalation is a self-contained file a fresh session can pick up, and the hand-off is the default path, not only when session_budget_usd trips. Operator direction: 'why not each stage be run as a next session'.",
+  "feature": null,
+  "content_hash": "d50f2764de21",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

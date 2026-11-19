@@ -1,0 +1,16 @@
+{
+  "id": "fb-58581f22d51e",
+  "created_at": "2026-11-19T03:52:33.841034+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "worktrees.create reuses an existing worktrees/<role> checked out on another feature's branch",
+  "detail": "prusik/worktrees.py:173 create() returns an existing worktrees/<role> dir after only recording a fork point; it never checks the checked-out branch is sprint/<feature>-<role>. Observed 2026-11-18: worktrees/backend-builder and test-writer were still on sprint/tiered-solo-builder-* (merged into main) when the observed-writes redo was about to start, so drive would have built observed-writes on another feature's branch and skipped the kept sprint/observed-writes-* work. Expected: refuse (or re-fork) when the worktree's branch is not branch_name(feature, role), naming both.",
+  "feature": null,
+  "content_hash": "58581f22d51e",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
