@@ -10,7 +10,13 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
+  "resolution": {
+    "type": "fix",
+    "verify": ".venv/bin/python -m pytest tests/test_drive_shell_handoff.py -q",
+    "fixed_in": "0.256.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
   "verify_history": [],
-  "status": "open"
+  "status": "fixed"
 }
