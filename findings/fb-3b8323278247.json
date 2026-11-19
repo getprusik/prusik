@@ -9,8 +9,14 @@
   "content_hash": "3b8323278247",
   "repro": "",
   "duplicate_of": null,
-  "thread": [],
+  "thread": [
+    {
+      "at": "2026-11-19T03:01:10.567248+00:00",
+      "role": "prusik-author",
+      "body": "Not live on main: observed-writes was abandoned 2026-11-16 (sprint_abandoned), and nothing on main prints a remedy the gate refuses. Folded into briefs/observed-writes.md as a success criterion for the redo: a gate-allowed 'prusik gate revert-observed' restores only flagged paths to their phase-entry baseline, with dirty-at-entry content stored via git hash-object -w. Closes on that sprint's proof."
+    }
+  ],
   "resolution": null,
   "verify_history": [],
-  "status": "open"
+  "status": "acknowledged"
 }
