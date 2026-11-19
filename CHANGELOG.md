@@ -3,6 +3,14 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.259.0] — Bash writes are checked by what changed in the tree
+
+- **Observed writes (fb-aa7a6121fcee, fb-c1d2d8dcabac, fb-16c859a406b9).** After each Bash call in a sprint, or while another session holds the single-writer lease, prusik compares the main tree before and after the call, by content and not by command text. It reports every changed path the phase may not write, and every change made under a foreign lease, in that call's PostToolUse output and as an `observed_write_reported` ledger event. `gate advance` refuses to leave a phase while a path changed since phase entry is outside the phase's writable set. Phase-entry baselines live in `.sprint/observed-writes/baseline.json`; the fix-round assembly is folded into the baseline.
+- **Brief deviations.** Prior content is the sha256 recorded at snapshot time, not `git ls-files -s`, so the hooks spawn nothing before the call. Non-git projects read tree state through the same walk.
+- **drive** uses the same primitive: a touch-only spawn no longer escalates `tree_written`, and an unreadable tree escalates `tree_unreadable`.
+- **Feedback.** `findings/**` is always writable, so `prusik feedback` works in every phase.
+- **Accepted misses.** A write that restores both mtime and size exactly; lease-case writes to always-writable dirs (`.sprint`, `reports`, `briefs`, `findings`); background Bash writes after the host returns. A write-then-fail call is reported on its own call through `PostToolUseFailure`; a call whose post hook never ran is reported as an orphan on a later checked call.
+
 ## [0.258.0] — A reused worktree must be on this feature's branch
 
 - **Worktree creation refuses another feature's branch (fb-58581f22d51e).** `worktrees.create`

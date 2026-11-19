@@ -128,6 +128,9 @@ _REMEDIES: dict[str, tuple[str, bool]] = {
                      "the gate could not see. The files are left as the role left them. Show "
                      "the paths in evidence to the user and stop: they decide whether to keep "
                      "or restore them.", False),
+    "tree_unreadable": ("Drive could not read the shared tree to check what a role changed "
+                        "(the reason is in evidence). Show it to the user and stop; drive "
+                        "never skips a check it cannot run.", False),
     "budget_exceeded": ("Measured cost (USD, API list price) crossed the cap the reason names; "
                         "evidence has cost by role and raw tokens by category. Over the "
                         "hosting session's cap (drive.session_budget_usd), resume from a "
