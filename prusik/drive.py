@@ -253,8 +253,8 @@ class _Drive:
         return tip
 
     def _check_budget(self, role: str | None) -> None:
-        """Escalate when the feature's measured cost (API list price) exceeds a cap: the
-        sprint's (`drive.budget_usd`), the current phase's (`budget_usd` on its phase spec),
+        """Escalate when the current attempt's measured cost (API list price; earlier attempts
+        of the feature are reported, never charged) exceeds a cap: the sprint's (`drive.budget_usd`), the current phase's (`budget_usd` on its phase spec),
         or the driving host session's (`drive.session_budget_usd`). Unmeasurable, including a
         model with no price, escalates; the one exception is before drive's first spawn with
         no session yet registered, where nothing has been spent that a transcript could show."""
@@ -280,11 +280,13 @@ class _Drive:
                 self.hand_off = scope == "this session"
                 remedy = ("resume in a fresh session (drive released this session's writer "
                           "lease)" if self.hand_off else f"raise {key} to continue")
+                prior = usage.prior_attempts_line(self.f)
                 raise Escalation("budget_exceeded", self.phase, role,
                                  f"{scope} cost {effort.fmt_usd(used)} ({pricing.LABEL}), over "
                                  f"its cap {effort.fmt_usd(float(cap))} ({key}); {remedy}",
                                  [f"{key}={cap}", f"cost={used:.2f}",
-                                  f"sprint_cost={u.cost_usd:.2f}", *usage.spend_report(u)])
+                                  f"sprint_cost={u.cost_usd:.2f}", *usage.spend_report(u),
+                                  *([prior] if prior else [])])
 
     def _tree_state(self) -> dict[str, tuple[int, int]]:
         """(mtime_ns, size) of every file in the shared tree (`gate.main_tree_files`)."""

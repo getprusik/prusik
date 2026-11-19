@@ -486,7 +486,9 @@ def test_phase_windows_share_effort_spans():
     closed = [s for s in effort.extract_spans(ev) if s["feature"] == "feat"]
     assert [(w["phase"], w["start"], w["end"]) for w in wins[:-1]] == \
         [(s["phase"], s["start"], s["end"]) for s in closed]
-    assert wins[-1] == {"phase": "reviewing", "start": "2026-10-26T10:40:00+00:00", "end": None}
+    assert wins[-1] == {"phase": "reviewing", "start": "2026-10-26T10:40:00+00:00", "end": None,
+                       "attempt": 0}
+    assert [w["attempt"] for w in wins] == [s["attempt"] for s in closed] + [0]
 
 
 # ---------- sprint-complete: measured, never the agent claim ----------

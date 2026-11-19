@@ -274,12 +274,28 @@ def spend_report(u: Usage) -> list[str]:
             by("model", u.cost_by_model), mult]
 
 
+def prior_attempts_line(feature: str, now: datetime | None = None) -> str | None:
+    """One line naming `feature`'s earlier attempts and their measured cost, labelled as not
+    counted against the cap — None when the current attempt is its only one."""
+    from prusik import effort, pricing
+    n = effort.prior_attempts(ledger.read_all(), feature)
+    if not n:
+        return None
+    u = measure(feature, now=now, attempts="prior")
+    spent = (f"cost {effort.fmt_usd(u.cost_usd)} ({pricing.LABEL})" if u.measured
+             else f"cost unmeasured: {u.reason}")
+    return (f"earlier attempts: {n}, {spent}; not counted against the cap "
+            f"(`prusik cost {feature} --all-attempts` totals every attempt)")
+
+
 def run_cost(feature: str, phase: str | None = None, session: str | None = None,
-             json_output: bool = False) -> int:
-    """`prusik cost`: the spend report of a sprint, one phase of it, or one session's share.
-    Exit 2, printing the reason, when the cost is unmeasured (never $0)."""
+             json_output: bool = False, all_attempts: bool = False) -> int:
+    """`prusik cost`: the spend report of the current attempt of a sprint, one phase of it, or
+    one session's share — or of every attempt with `all_attempts`. Exit 2, printing the
+    reason, when the cost is unmeasured (never $0)."""
     import sys
-    u = measure(feature, phase=phase, session=session)
+    attempts = "all" if all_attempts else "current"
+    u = measure(feature, phase=phase, session=session, attempts=attempts)
     scope = " ".join(x for x in (f"phase {phase}" if phase else "",
                                  f"session {session}" if session else "") if x)
     if not u.measured:
@@ -289,27 +305,33 @@ def run_cost(feature: str, phase: str | None = None, session: str | None = None,
         return 2
     if json_output:
         print(json.dumps({"measured": True, "feature": feature, "phase": phase,
-                          "session": session, **spend_data(u)}, indent=2))
+                          "session": session, "attempts": attempts, **spend_data(u)},
+                         indent=2))
         return 0
-    print(f"{feature}{' ' + scope if scope else ''}")
+    print(f"{feature}{' ' + scope if scope else ''}"
+          f"{' (every attempt)' if all_attempts else ''}")
     for line in spend_report(u):
         print(f"  {line}")
+    prior = None if all_attempts else prior_attempts_line(feature)
+    if prior:
+        print(f"  {prior}")
     return 0
 
 
 def measure(feature: str, phase: str | None = None, now: datetime | None = None,
-            session: str | None = None) -> Usage:
-    """Measured usage of `feature` — or of one `phase`, every visit of it (rewinds included).
+            session: str | None = None, attempts: str = "current") -> Usage:
+    """Measured usage of `feature`'s current attempt (`attempts`: an `effort.ATTEMPT_SCOPES`
+    value) — or of one `phase`, every visit of it (rewinds included).
     Total: an unexpected failure is `measured=False` with its reason (loud at every caller),
     never an exception into sprint-complete, the watchdog or advance."""
     try:
-        return _measure(feature, phase, now, session)
+        return _measure(feature, phase, now, session, attempts)
     except Exception as e:  # noqa: BLE001 — telemetry must never break its callers
         return Usage(measured=False, reason=f"usage read failed: {type(e).__name__}: {e}")
 
 
 def _measure(feature: str, phase: str | None, now: datetime | None,
-             session: str | None = None) -> Usage:
+             session: str | None = None, attempts: str = "current") -> Usage:
     """One root resolution: the ledger and the registry both come from `ledger_path()`, so they
     can never disagree. Coverage keys on each session's newest transcript write, not the
     registry's `last_seen`: Stop fires at turn END while phases are entered and left
@@ -318,7 +340,7 @@ def _measure(feature: str, phase: str | None, now: datetime | None,
     from prusik.platform_adapter import get_adapter
     now = now or datetime.now(timezone.utc)
     windows: list[tuple[datetime, datetime, str]] = []
-    for w in effort.phase_windows(ledger.read_all(), feature):
+    for w in effort.phase_windows(ledger.read_all(), feature, attempts=attempts):
         if phase is not None and w["phase"] != phase:
             continue
         start = _parse_ts(w["start"])

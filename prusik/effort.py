@@ -29,6 +29,11 @@ from prusik import ledger
 # so the first span begins there — there is no separate advance into scoping.
 _START_PHASE = "scoping"
 
+# An ATTEMPT is one sprint of a feature. The walk splits a feature's windows into attempts at
+# its `sprint_abandoned` and `sprint_complete` events: the next window it opens (the briefing a
+# `sprint_started` consumes included) begins a new attempt. Numbered from 0 in timeline order.
+ATTEMPT_SCOPES = ("current", "all", "prior")
+
 
 def _parse_ts(ts: str | None) -> datetime | None:
     if not ts:
@@ -54,29 +59,63 @@ def extract_spans(records: list[dict]) -> list[dict]:
     return _walk(records)[0]
 
 
-def phase_windows(records: list[dict], feature: Any) -> list[dict]:
-    """A feature's phase windows `{phase, start, end}` in order — the closed spans plus the
-    still-open current phase (`end=None`). The same walk as `extract_spans`, so time and
-    token attribution (prusik.usage) share one timeline."""
+def phase_windows(records: list[dict], feature: Any, attempts: str = "all") -> list[dict]:
+    """A feature's phase windows `{phase, start, end, attempt}` in order — the closed spans
+    plus the still-open current phase (`end=None`). The same walk as `extract_spans`, so time
+    and token attribution (prusik.usage) share one timeline.
+
+    `attempts` selects by attempt (`ATTEMPT_SCOPES`): "all", "current" (the last attempt with
+    a window: the open sprint, or the one that just ended) or "prior" (every earlier one)."""
+    if attempts not in ATTEMPT_SCOPES:
+        raise ValueError(f"attempts must be one of {ATTEMPT_SCOPES}, not {attempts!r}")
     spans, open_span = _walk(records)
-    out = [{"phase": s["phase"], "start": s["start"], "end": s["end"]}
+    out = [{"phase": s["phase"], "start": s["start"], "end": s["end"], "attempt": s["attempt"]}
            for s in spans if s["feature"] == feature]
     if feature in open_span:
-        phase, start = open_span[feature]
-        out.append({"phase": phase, "start": start, "end": None})
-    return out
+        phase, start, attempt = open_span[feature]
+        out.append({"phase": phase, "start": start, "end": None, "attempt": attempt})
+    if attempts == "all" or not out:
+        return out
+    current = max(w["attempt"] for w in out)
+    keep = (lambda a: a == current) if attempts == "current" else (lambda a: a < current)
+    return [w for w in out if keep(w["attempt"])]
 
 
-def _walk(records: list[dict]) -> tuple[list[dict], dict[Any, tuple[str, str]]]:
+def prior_attempts(records: list[dict], feature: Any) -> int:
+    """How many attempts of `feature` came before the current one."""
+    windows = phase_windows(records, feature)
+    return max((w["attempt"] for w in windows), default=0)
+
+
+def _walk(records: list[dict]) -> tuple[list[dict], dict[Any, tuple[str, str, int]]]:
     """The one timeline walk: (closed spans, still-open {feature: (phase, entry_ts)}).
 
     A feature's latest `briefing_started` (fb-1e3ecda9d011) is held PENDING, not open: its
     `sprint_started` consumes it into a closed `briefing` span (via="start"), clipped to start
     no earlier than the latest closed-span end of any feature so far — so a briefing never
     overlaps a completed sprint's window and no token is counted twice. A still-open span
-    never clips, and a `briefing_started` with no later `sprint_started` yields nothing."""
+    never clips, and a `briefing_started` with no later `sprint_started` yields nothing.
+
+    Every span carries its `attempt` (see ATTEMPT_SCOPES' comment); the still-open span's is
+    the third item of its tuple."""
     ordered = sorted(records, key=lambda r: r.get("ts", ""))
-    open_span: dict[Any, tuple[str, str]] = {}   # feature -> (phase, entry_ts)
+    open_span: dict[Any, tuple[str, str, int]] = {}   # feature -> (phase, entry_ts, attempt)
+    attempt: dict[Any, int] = {}                 # feature -> its current attempt number
+    ended: set[Any] = set()                      # features whose attempt ended with windows
+    has_window: set[Any] = set()                 # features with a window in this attempt
+
+    def attempt_of(feature: Any) -> int:
+        """The attempt a window opening now belongs to: a new one after an ended attempt."""
+        if feature in ended:
+            ended.discard(feature)
+            attempt[feature] = attempt.get(feature, 0) + 1
+        has_window.add(feature)
+        return attempt.setdefault(feature, 0)
+
+    def end_attempt(feature: Any) -> None:
+        if feature in has_window:
+            has_window.discard(feature)
+            ended.add(feature)
     spans: list[dict] = []
     pending: dict[Any, str] = {}                 # feature -> latest briefing_started ts
     last_closed: tuple[datetime, str] | None = None   # (parsed end, end string)
@@ -93,11 +132,11 @@ def _walk(records: list[dict]) -> tuple[list[dict], dict[Any, tuple[str, str]]]:
         cur = open_span.pop(feature, None)
         if cur is None:
             return
-        phase, start_ts = cur
+        phase, start_ts, att = cur
         a, b = _parse_ts(start_ts), _parse_ts(end_ts)
         seconds = (b - a).total_seconds() if a and b else None
         spans.append({"feature": feature, "phase": phase, "start": start_ts,
-                      "end": end_ts, "seconds": seconds, "via": via})
+                      "end": end_ts, "seconds": seconds, "via": via, "attempt": att})
         note_closed(end_ts)
 
     for r in ordered:
@@ -107,6 +146,7 @@ def _walk(records: list[dict]) -> tuple[list[dict], dict[Any, tuple[str, str]]]:
         if ev == "briefing_started":
             pending[feat] = ts                   # the latest one wins
         elif ev == "sprint_started":
+            att = open_span[feat][2] if feat in open_span else attempt_of(feat)
             b = pending.pop(feat, None)          # consume (SC-9): a re-start opens none
             bd, td = _parse_ts(b), _parse_ts(ts)
             if b is not None and bd is not None and td is not None:
@@ -117,22 +157,26 @@ def _walk(records: list[dict]) -> tuple[list[dict], dict[Any, tuple[str, str]]]:
                 if start_dt < td:
                     spans.append({"feature": feat, "phase": "briefing", "start": start_s,
                                   "end": ts, "seconds": (td - start_dt).total_seconds(),
-                                  "via": "start"})
+                                  "via": "start", "attempt": att})
                     note_closed(ts)
-            open_span[feat] = (_START_PHASE, ts)
+            open_span[feat] = (_START_PHASE, ts, att)
         elif ev in ("phase_advance", "phase_rewind"):
             via = "rewind" if ev == "phase_rewind" else "advance"
             if feat in open_span:
-                _, entry = open_span[feat]
+                _, entry, att = open_span[feat]
                 from_phase = r.get("from_phase") or open_span[feat][0]
-                open_span[feat] = (from_phase, entry)
+                open_span[feat] = (from_phase, entry, att)
                 close(feat, ts, via)
+            else:
+                att = attempt_of(feat)
             # open the next phase (even with no prior span, so the NEXT is timed)
-            open_span[feat] = (r.get("to_phase") or "?", ts)
+            open_span[feat] = (r.get("to_phase") or "?", ts, att)
         elif ev == "sprint_complete":
             close(feat, ts, "complete")
+            end_attempt(feat)
         elif ev == "sprint_abandoned":
             close(feat, ts, "abandon")
+            end_attempt(feat)
     return spans, open_span
 
 

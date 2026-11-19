@@ -3,6 +3,20 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.255.0] — a sprint's cost counts only its current attempt
+
+- **A re-started feature is no longer charged for its dead attempt (fb-cb855f56b857).**
+  `usage.measure(feature)` summed every phase window the feature had ever had, so the
+  observed-writes redo escalated `budget_exceeded` in scoping at $31.34 against its $19 cap,
+  about $29 of it the attempt abandoned two days earlier. An attempt is now one sprint: the
+  ledger walk splits a feature's windows at its `sprint_abandoned` and `sprint_complete`, and
+  the briefing a `sprint_started` consumes joins the new attempt. Drive's caps, the watchdog,
+  the advance phase-usage line, sprint-complete's recorded actuals and `prusik cost` measure the
+  current attempt. Spend inside it that crosses a cap still escalates.
+- **Earlier attempts stay visible, never charged.** `prusik cost` and the budget escalation add
+  one line naming the earlier attempts and their cost, marked as not counted against the cap.
+  `prusik cost <feature> --all-attempts` reports every attempt. `prusik effort` is unchanged.
+
 ## [0.254.0] — a builder can stop and hand back, and an empty build never advances
 
 - **A builder can stop and hand back to a person (fb-1e4da436fcfc).** A plan could bind a

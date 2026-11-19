@@ -701,11 +701,12 @@ def test_sprint_started_closes_the_latest_briefing_into_a_span():
          "from_phase": "scoping", "to_phase": "triage"},
     ]
     assert _briefing_spans(recs) == [{"feature": "b", "phase": "briefing", "start": _t("09:00"),
-                                      "end": _t("10:00"), "seconds": 3600.0, "via": "start"}]
+                                      "end": _t("10:00"), "seconds": 3600.0, "via": "start",
+                                      "attempt": 0}]
     assert effort.phase_windows(recs, "b") == [
-        {"phase": "briefing", "start": _t("09:00"), "end": _t("10:00")},
-        {"phase": "scoping", "start": _t("10:00"), "end": _t("10:30")},
-        {"phase": "triage", "start": _t("10:30"), "end": None}]
+        {"phase": "briefing", "start": _t("09:00"), "end": _t("10:00"), "attempt": 0},
+        {"phase": "scoping", "start": _t("10:00"), "end": _t("10:30"), "attempt": 0},
+        {"phase": "triage", "start": _t("10:30"), "end": None, "attempt": 0}]
 
 
 def test_a_briefing_is_clipped_to_a_sprint_that_completed_after_it_started():
@@ -742,7 +743,7 @@ def test_a_clip_down_to_nothing_yields_no_span():
     ]
     assert _briefing_spans(recs, "b") == []
     assert effort.phase_windows(recs, "b") == [
-        {"phase": "scoping", "start": _t("10:00"), "end": None}]
+        {"phase": "scoping", "start": _t("10:00"), "end": None, "attempt": 0}]
 
 
 def test_another_features_still_open_span_does_not_clip():
