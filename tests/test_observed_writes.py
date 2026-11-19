@@ -1,4 +1,4 @@
-"""Observed writes, end to end (v0.247.0; fb-aa7a6121fcee, fb-c1d2d8dcabac, fb-16c859a406b9).
+"""Observed writes, end to end (v0.259.0; fb-aa7a6121fcee, fb-c1d2d8dcabac, fb-16c859a406b9).
 
 Every case drives the REAL hooks as the host does: `prusik gate pre-tool` in a subprocess,
 then the actual command in a subprocess, then `prusik gate post-tool` (or the
@@ -207,6 +207,7 @@ def _reported(root: Path) -> list[dict]:
 
 # ---- happy path: the brief's adversarial set ------------------------------------------------
 
+# moat-finding: fb-40a8a578d8e2 (a python heredoc in an inline-hosted sprint)
 @pytest.mark.parametrize("shape", ["heredoc", "dash_c", "script_file"])
 def test_unwritable_write_no_command_text_names_is_reported(building, tmp_path, shape):
     if shape == "heredoc":

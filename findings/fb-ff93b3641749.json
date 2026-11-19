@@ -1,0 +1,16 @@
+{
+  "id": "fb-ff93b3641749",
+  "created_at": "2026-11-19T23:46:20.405833+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "sprint-start from a host session takes the single-writer lease, so the next prusik drive always escalates writer_busy",
+  "detail": "2026-11-19: ran prusik gate sprint-start observed-writes inside a Claude session (as the hand-off prescribes), then the operator ran prusik drive from a plain shell. Drive escalated writer_busy: the host session e238baa5 held the lease. The operator had to run prusik gate release-writer by hand (the session's own attempt was denied by the auto-mode classifier). Expected: the documented sprint-start -> drive hand-off works without a manual lease release, e.g. sprint-start (or drive's hand-off) releases or transfers the host's lease to drive. Related: fb-702c70a3971f.",
+  "feature": null,
+  "content_hash": "ff93b3641749",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
