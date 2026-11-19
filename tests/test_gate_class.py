@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from prusik import gate_class as gc
 
 
@@ -115,3 +117,17 @@ def test_every_block_emission_site_declares_a_valid_gate_class():
             assert any(v in window for v in valid), \
                 f"{src_file}: {m.group(1)} at line {i+1} labels a class outside GATE_CLASSES"
     assert sites >= 13, f"expected the known block sites, found {sites}"
+
+
+# ---- observed writes (fb-c1d2d8dcabac) -------------------------------------------------------
+
+def test_observed_write_class_is_registered_before_unclassified():
+    assert gc.OBSERVED_WRITE == "observed_write"
+    assert gc.OBSERVED_WRITE in gc.GATE_CLASSES
+    assert gc.GATE_CLASSES[-1] == gc.UNCLASSIFIED
+
+
+@pytest.mark.parametrize("why", [{"paths": ["README.md"]}, {"reason": "phase-entry baseline missing"}])
+def test_observed_write_advance_block_classifies_by_its_emitted_key(why):
+    e = {"event": "advance_blocked", "gate_class": "observed_write", **why}
+    assert gc.classify(e) == gc.OBSERVED_WRITE

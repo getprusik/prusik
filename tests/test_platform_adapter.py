@@ -110,3 +110,49 @@ def test_usage_operations_are_part_of_the_adapter_contract():
 
     with pytest.raises(TypeError):
         Partial()
+
+
+# ---- observed writes (fb-aa7a6121fcee): pairing id and post-call output ---------------------
+
+@pytest.mark.parametrize("tool,inp", [("Bash", {"command": "ls"}),
+                                      ("Edit", {"file_path": "src/x.py"}),
+                                      ("Read", {"file_path": "src/x.py"})])
+def test_parse_event_carries_the_host_tool_use_id(tool, inp):
+    a = pa.ClaudeCodeAdapter()
+    ev = a.parse_event({"tool_name": tool, "tool_input": inp, "tool_use_id": "toolu_01"})
+    assert ev.call_id == "toolu_01"
+    assert a.parse_event({"tool_name": tool, "tool_input": inp}).call_id is None
+    assert a.parse_event({"tool_name": tool, "tool_input": inp,
+                          "tool_use_id": ""}).call_id is None      # empty is not an id
+
+
+def test_post_tool_context_with_no_messages_prints_nothing(capsys):
+    assert pa.ClaudeCodeAdapter().post_tool_context([]) == 0
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("event", ["PostToolUse", "PostToolUseFailure"])
+def test_post_tool_context_prints_exactly_one_json_object(capsys, event):
+    assert pa.ClaudeCodeAdapter().post_tool_context(["a", "b"], event) == 0
+    out = capsys.readouterr().out
+    assert len(out.strip().splitlines()) == 1
+    assert json.loads(out) == {"hookSpecificOutput": {"hookEventName": event,
+                                                      "additionalContext": "a\n\nb"}}
+
+
+def test_post_tool_context_defaults_to_post_tool_use(capsys):
+    pa.ClaudeCodeAdapter().post_tool_context(["only"])
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["hookEventName"] \
+        == "PostToolUse"
+
+
+def test_post_tool_context_is_part_of_the_adapter_contract():
+    assert "post_tool_context" in pa.PlatformAdapter.__abstractmethods__
+
+
+def test_existing_keyword_tool_event_constructions_still_work():
+    ev = pa.ToolEvent(tool="Bash", command="ls", session="s", cwd="/x")
+    assert ev.call_id is None
+    ev = pa.ToolEvent(tool="Write", file_targets=("a",), session=None)
+    assert (ev.file_targets, ev.call_id) == (("a",), None)
+    assert pa.ToolEvent("Bash", (), "ls", "s", "/x").call_id is None   # positional order kept
