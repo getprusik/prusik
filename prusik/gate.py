@@ -1859,6 +1859,15 @@ def session_start(args=None) -> int:
         feature = state.get("feature")
         phase = state.get("phase")
         ctx = f"[prusik] Active sprint '{feature}' in phase '{phase}'. Run /sprint-status for details."
+        # fb-d50f2764de21: a drive stop is picked up by a fresh session, so name it here.
+        try:
+            rel = f"reports/{feature}/drive-escalation.json"
+            esc = json.loads((ledger.project_root() / rel).read_text(encoding="utf-8"))
+            if isinstance(esc, dict) and esc.get("kind"):
+                ctx += (f"\n[prusik] drive stopped: {esc['kind']} in {esc.get('phase')} — "
+                        f"read {rel} (next, resume).")
+        except Exception:  # noqa: BLE001 — absent or unreadable: the hook must never fail
+            pass
     # fb-392958c3076a: name the feedback channel on the one prusik surface the agent always
     # reads — a harness insight/bug/friction otherwise gets parked where prusik can't see it.
     ctx += ("\n[prusik] Bug, friction, or idea about prusik itself? File it (rides to the "

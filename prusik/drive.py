@@ -19,6 +19,12 @@ measures before and after every spawn and escalates `budget_exceeded` at the fir
 crossed; a budget it cannot measure (including a model with no price) escalates
 `budget_unmeasurable`, never a silent pass. A leftover `budget_tokens` key is refused.
 
+Run it from a plain shell: drive is deterministic and spawns every role fresh, so a host LLM
+session only adds the cost of re-reading its own context (fb-d50f2764de21). Every exit is a
+hand-off: drive releases the writer lease it holds, and an escalation's file carries `next`
+(what to do) and `resume` (the command to re-run, or null when only the user decides), so a
+fresh session or the operator at a shell can pick it up from that file alone.
+
 Exit codes: 0 complete, 2 not drivable, 3 escalated.
 """
 
@@ -76,16 +82,75 @@ def _unmatched_denials(denials: Iterable[dict], events: Iterable[dict],
     return sorted({t for t in (_denial_tool(d) for d in denials) if t not in blocked})
 
 
+# What to do at each stop, written for a reader holding only drive-escalation.json (a fresh
+# session or the operator at a shell), and whether re-running drive is then the resume. The
+# one source of this text: /sprint-run points at the file's `next`, it does not restate it.
+_REMEDIES: dict[str, tuple[str, bool]] = {
+    "scope_rejected": ("The scope critic did not approve design/<f>/scope.md within "
+                       "drive.design_rounds. Read the critic report in evidence, fix scope.md "
+                       "(or raise drive.design_rounds), then resume.", True),
+    "plan_rejected": ("The plan critic did not approve design/<f>/plan.md within "
+                      "drive.design_rounds. Read the critic report in evidence, fix plan.md "
+                      "(or raise drive.design_rounds), then resume.", True),
+    "triage_rejected": ("Triage rejected the sprint or its decision was unreadable. Fix the "
+                        "brief or decisions/<f>.json, then resume.", True),
+    "trivial_fix": ("A reviewer FAILED a trivial-lane sprint (built by hand) and drive opened "
+                    "the fix round. Address the findings in the failing report in evidence, "
+                    "in worktrees/solo/, commit there, then resume: drive ends the round and "
+                    "re-reviews.", True),
+    "prove_red_failed": ("A RED baseline could not be captured. Fix the criterion or the "
+                         "cause named in evidence, then resume.", True),
+    "suite_failed": ("The suite failed on the built branches. Fix the cause named in evidence "
+                     "(drive.log has the output), then resume.", True),
+    "fix_round_cap": ("Reviewers still fail after the last allowed fix round. Read the failing "
+                      "reports in evidence and fix the cause, then resume.", True),
+    "advance_blocked": ("A phase advance was refused. Fix what the gate output in evidence "
+                        "names, then resume.", True),
+    "builder_stopped": ("A builder stopped and handed back on purpose; the reason is its stop "
+                        "file (first in evidence). Show it to the user and resolve what it "
+                        "asks (usually a decision or a plan change) with them. Resuming "
+                        "re-spawns that builder and clears the stop file.", True),
+    "empty_build": ("A builder ended with no commit past its worktree's fork point, so there "
+                    "is nothing to prove. Read its session in reports/<f>/drive.log for why, "
+                    "fix the cause, then resume.", True),
+    "permission_denied": ("A spawned role was denied a tool the gate did not deny. Show the "
+                          "evidence to the user and stop.", False),
+    "spawn_failed": ("A role could not be spawned or did not produce its artifact. Show the "
+                     "evidence to the user and stop.", False),
+    "tier_unresolved": ("`prusik tier resolve` failed for a role. Show the evidence to the "
+                        "user and stop.", False),
+    "auth_mismatch": ("The spawned sessions would authenticate differently from drive.auth. "
+                      "Show the evidence to the user and stop.", False),
+    "writer_busy": ("Another session holds the single-writer lease. Show the evidence to the "
+                    "user and stop; resume once that session is finished.", False),
+    "tree_written": ("A role changed shared-tree files its phase may not write, by a means "
+                     "the gate could not see. The files are left as the role left them. Show "
+                     "the paths in evidence to the user and stop: they decide whether to keep "
+                     "or restore them.", False),
+    "budget_exceeded": ("Measured cost (USD, API list price) crossed the cap the reason names; "
+                        "evidence has cost by role and raw tokens by category. Over the "
+                        "hosting session's cap (drive.session_budget_usd), resume from a "
+                        "plain shell or a fresh session. Over any other cap, show the numbers "
+                        "and stop: only the user raises a cap.", False),
+    "budget_unmeasurable": ("Drive could not read the cost a cap needs (registry or transcript "
+                            "unreadable, or a model with no price in prusik/prices.json). "
+                            "Show the reason to the user and stop; drive never runs past a "
+                            "budget it cannot read.", False),
+}
+
+
 class Escalation(Exception):
-    """A judgement point: drive stops, records why, and hands back to a person."""
+    """A judgement point: drive stops, records why, and hands back to a person. `resume`
+    overrides the kind's `_REMEDIES` default when one kind has both outcomes."""
 
     def __init__(self, kind: str, phase: str, role: str | None, reason: str,
-                 evidence: list[str] | None = None) -> None:
+                 evidence: list[str] | None = None, *, resume: bool | None = None) -> None:
         if kind not in ESCALATION_KINDS:
             raise ValueError(f"unknown escalation kind {kind!r}")
         super().__init__(f"{kind}: {reason}")
         self.kind, self.phase, self.role = kind, phase, role
         self.reason, self.evidence = reason, list(evidence or [])
+        self.resume = _REMEDIES[kind][1] if resume is None else resume
 
 
 class _Drive:
@@ -101,7 +166,6 @@ class _Drive:
         self.steps: list[str] = []
         self.session: str | None = None    # the host session running drive, if any
         self.spawned = False
-        self.hand_off = False              # the session cap stopped drive: release the lease
 
     # ── cli plumbing ────────────────────────────────────────────────────────
     @property
@@ -277,16 +341,16 @@ class _Drive:
         from prusik import effort
         for scope, used, cap, key in caps:
             if cap and used > float(cap):
-                self.hand_off = scope == "this session"
-                remedy = ("resume in a fresh session (drive released this session's writer "
-                          "lease)" if self.hand_off else f"raise {key} to continue")
+                resumable = scope == "this session"
+                remedy = ("resume from a plain shell or a fresh session" if resumable
+                          else f"raise {key} to continue")
                 prior = usage.prior_attempts_line(self.f)
                 raise Escalation("budget_exceeded", self.phase, role,
                                  f"{scope} cost {effort.fmt_usd(used)} ({pricing.LABEL}), over "
                                  f"its cap {effort.fmt_usd(float(cap))} ({key}); {remedy}",
                                  [f"{key}={cap}", f"cost={used:.2f}",
                                   f"sprint_cost={u.cost_usd:.2f}", *usage.spend_report(u),
-                                  *([prior] if prior else [])])
+                                  *([prior] if prior else [])], resume=resumable)
 
     def _tree_state(self) -> dict[str, tuple[int, int]]:
         """(mtime_ns, size) of every file in the shared tree (`gate.main_tree_files`)."""
@@ -855,26 +919,31 @@ class _Drive:
             self._escalate(e)
             return 3
         finally:
+            # Every exit is a hand-off (fb-d50f2764de21): whoever picks up next, a fresh
+            # session or another shell run, must not wait out this run's lease. Only drive's
+            # own lease is released; one another session took is left as it is.
             main_writer.clear_driver(self.root)
-            if self.hand_off and (main_writer.load(self.root) or {}).get("session") \
-                    == self.holder:
-                main_writer.release(self.root)
-                ledger.append("writer_lease_released", reason="drive session budget",
+            if self.holder and main_writer.release_if_held(self.root, self.holder):
+                ledger.append("writer_lease_released", reason="drive exit",
                               prior_holder=self.holder, feature=self.f)
 
     def _escalate(self, e: Escalation) -> None:
         path = self.reports / "drive-escalation.json"
         self.reports.mkdir(parents=True, exist_ok=True)
+        nxt = _REMEDIES[e.kind][0].replace("<f>", self.f)
+        resume = f"prusik drive {self.f}" if e.resume else None
         path.write_text(json.dumps({
             "kind": e.kind, "phase": e.phase, "role": e.role, "reason": e.reason,
-            "evidence": e.evidence, "ts": datetime.now(timezone.utc).isoformat()}, indent=1),
-            encoding="utf-8")
+            "evidence": e.evidence, "next": nxt, "resume": resume,
+            "ts": datetime.now(timezone.utc).isoformat()}, indent=1), encoding="utf-8")
         ledger.append("drive_escalated", feature=self.f, kind=e.kind, phase=e.phase,
                       role=e.role, reason=e.reason)
         print(f"[drive] ESCALATION {e.kind} in {e.phase} ({e.role or 'drive'})", file=self.out)
         print(e.reason.splitlines()[0][:300] if e.reason else "", file=self.out)
         for line in e.evidence[:10]:
             print(f"  {line[:200]}", file=self.out)
+        print(f"next: {nxt}", file=self.out)
+        print(f"resume: {resume or 'not until the user decides'}", file=self.out)
         print(f"details: reports/{self.f}/drive-escalation.json", file=self.out)
 
 

@@ -184,6 +184,16 @@ def release(root: Path) -> dict | None:
     return lease
 
 
+def release_if_held(root: Path, holder: str) -> dict | None:
+    """Delete the lease only when `holder` holds it (`prusik drive` at exit, fb-d50f2764de21).
+    Returns the released lease, or None when there was none or someone else holds it, whose
+    lease is left exactly as it is. The holder check lives with the delete, not in callers."""
+    lease = load(root)
+    if lease is None or lease.get("session") != holder:
+        return None
+    return release(root)
+
+
 def deny_message(holder: dict, command: str = "") -> str:
     ses = (holder.get("session") or "?")[:12]
     ctx = ""

@@ -3,6 +3,26 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.256.0] — drive runs from a plain shell, and every stop is a hand-off
+
+- **Drive releases its writer lease on every exit (fb-d50f2764de21).** A drive run from a
+  shell held the lease as a random `drive-<uuid>` that outlived the process, so the next run,
+  or a fresh session writing the fix, was `writer_busy` for up to 30 minutes. Drive now
+  releases the lease at exit, complete or escalated, through `main_writer.release_if_held`,
+  which leaves a lease anyone else holds untouched. The session-cap-only hand-off is gone:
+  release is the one path.
+- **An escalation is a self-contained file.** `reports/<f>/drive-escalation.json` carries
+  `next` (what to do, written for a reader holding only that file) and `resume`
+  (`prusik drive <f>`, or null when only the user decides); stdout prints both. The remedy
+  text lives once, in drive's table keyed by every escalation kind; `/sprint-run` points at
+  `next` instead of restating it.
+- **A fresh session is told.** The SessionStart banner names a pending escalation of the
+  active sprint: its kind, phase and file.
+- **The shell is the default host.** `/sprint-run` Step 3 hands `prusik drive` to the user to
+  run in a plain terminal and ends the turn. A session hosting drive paid to re-read its own
+  context on every turn, and in observed-writes attempt 1 that cost more than the builders.
+  `drive.session_budget_usd` still caps a session that hosts it.
+
 ## [0.255.0] — a sprint's cost counts only its current attempt
 
 - **A re-started feature is no longer charged for its dead attempt (fb-cb855f56b857).**

@@ -455,7 +455,7 @@ drive:
   design_rounds: 3         # author/critic rounds per design artifact (scope.md, plan.md); at the cap drive escalates
   # suite_command: "<your full test command>"   # required: drive escalates at building without it
   # budget_usd: 19                  # required: the sprint's measured cost cap in USD (API list price); drive will not run without one
-  # session_budget_usd: 19          # optional: cap on what the session running drive spends; over it, resume in a fresh session
+  # session_budget_usd: 19          # optional: cap on what an LLM session hosting drive spends (run drive from a plain shell and it has none); over it, resume from a shell or a fresh session
   # A phase's own `budget_usd` (under phases:) caps that phase. Drive measures before and after every spawn
   # and escalates budget_exceeded at the first cap crossed, or budget_unmeasurable when it cannot read the spend
   # or a model has no price in prusik/prices.json. The old `budget_tokens` keys are refused (exit 2).

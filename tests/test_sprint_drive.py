@@ -611,7 +611,7 @@ def test_drive_owns_the_phase_while_it_runs_and_lets_go_after(rig, proj):
     rig.adapter.probe = lambda req: seen.append(main_writer.live_owner(proj, F, None))
     assert rig.run() == 0
     assert seen and all(seen)
-    assert "driver" not in main_writer.load(proj)
+    assert "driver" not in (main_writer.load(proj) or {})   # released at exit (fb-d50f2764de21)
     assert not main_writer.live_owner(proj, F, None)
 
 
@@ -847,7 +847,8 @@ def test_the_driving_session_over_its_cap_must_resume_fresh(rig, proj, monkeypat
     _measuring(monkeypatch, _usage(3, session={"holder-1": 2, "b": 1}))
     assert rig.run() == 3
     esc = rig.escalation()
-    assert esc["kind"] == "budget_exceeded" and "resume in a fresh session" in esc["reason"]
+    assert esc["kind"] == "budget_exceeded" and "a fresh session" in esc["reason"]
+    assert esc["resume"] == "prusik drive feat" and main_writer.load(proj) is None
     assert rig.adapter.requests == []
     # The same spend seen from a fresh session is under every cap: drive proceeds.
     rig.adapter.current_session_id = lambda: "fresh-2"

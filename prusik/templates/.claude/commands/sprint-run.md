@@ -134,24 +134,16 @@ Loop until sprint-init exits 0 and the phase advances to `scoping`.
 
 ## Step 3 — hand off to the driver
 
-Once sprint-init passes (phase `scoping`), run the rest of the sprint in code. Run this with Bash `run_in_background: true` and wait for its completion notification (do not poll):
+Once sprint-init passes (phase `scoping`), the rest of the sprint runs in code, from a plain terminal, not from this session. Tell the user to run this in a terminal and end your turn; do not run it yourself, in the background or otherwise (a session hosting drive pays to re-read its own context on every turn, and that cost more than the builders):
 
     prusik drive $ARGUMENTS
 
 `prusik drive` runs scoping, triage and planning (each author and critic round in a fresh headless session, capped by `drive.design_rounds`), then, when triage chooses solo, `solo_execute` (a tier-resolved `solo-builder` builds in `worktrees/solo/`; solo fix rounds run the same way), or building when it chooses team, then reviewing and integrating, each role spawned headless with its tier model. It closes the sprint with `gate sprint-complete`, prints one line per phase and keeps gate output in `reports/$ARGUMENTS/drive.log`. Do not spawn those roles with `Agent(...)` yourself.
 
+When it exits, the user (or a fresh session) picks up from what it left:
+
 - **rc 0** — the sprint is complete and `gate sprint-complete` has run. Continue at Step 8, skipping its `sprint-complete` command.
-- **rc 3** — drive stopped at a judgement point. Read `reports/$ARGUMENTS/drive-escalation.json` and act on that file only. Report its `kind`, `reason` and `evidence` to the user, with the remedy for the kind:
-  - `scope_rejected` / `plan_rejected` — the critic did not approve within `drive.design_rounds`. Read the critic report in the evidence, fix the artifact or raise the cap, then re-run `prusik drive $ARGUMENTS`.
-  - `triage_rejected` — triage rejected the sprint or its decision was unreadable. Fix the brief or `decisions/$ARGUMENTS.json`, then re-run.
-  - `trivial_fix` — a reviewer FAILED a trivial-lane sprint (built by hand) and drive has opened the fix round. Address the findings in the failing report named in `evidence`, in `worktrees/solo/`, commit there, then re-run `prusik drive $ARGUMENTS`: it ends the open round and re-reviews.
-  - `prove_red_failed`, `suite_failed`, `fix_round_cap`, `advance_blocked` — a gate or proof failed; fix the cause named in the evidence, then re-run.
-  - `builder_stopped` — a builder stopped and handed back on purpose; the reason is its stop file (first in `evidence`). Show that file to the user and resolve what it asks (usually a decision or a plan change) with them; re-running drive re-spawns that builder and clears the stop file.
-  - `empty_build` — a builder ended with no commit past its worktree's fork point, so there is nothing to prove. Read its session in `reports/$ARGUMENTS/drive.log` for why, fix the cause, then re-run.
-  - `permission_denied`, `spawn_failed`, `tier_unresolved`, `auth_mismatch`, `writer_busy` — a spawn or setup problem; show the evidence and stop.
-  - `tree_written` — a role changed shared-tree files its phase may not write, by a means the gate could not see. The files are left as the role left them. Show the paths in the evidence and stop: the user decides whether to keep or restore them.
-  - `budget_exceeded` — measured cost (USD, API list price) crossed a cap; the reason names the key (`drive.budget_usd`, `phases[<phase>].budget_usd` or `drive.session_budget_usd`) and the evidence carries the cost by role and the raw tokens by category. For the session cap, drive has released this session's writer lease: re-run `prusik drive $ARGUMENTS` from a fresh session. For the others, show the numbers and stop: only the user raises a cap.
-  - `budget_unmeasurable` — drive could not read the cost a cap needs (registry or transcript unreadable, or a model with no price in prusik/prices.json). Show the reason and stop; drive never runs past a budget it cannot read.
+- **rc 3** — drive stopped at a judgement point and released its writer lease. Read `reports/$ARGUMENTS/drive-escalation.json` and act on that file only: report its `kind`, `reason` and `evidence` to the user, then do what its `next` says. When `resume` is a command, the user runs it from a plain terminal once `next` is done; when it is null, stop: only the user decides. A fresh session is told about a pending stop by the SessionStart banner.
 - **rc 2** — the sprint is not drivable yet (including the trivial lane: write `design/$ARGUMENTS/trivial.md`, run `prusik gate prove-red --feature $ARGUMENTS`, create the solo worktree with `prusik gate worktree-add --feature $ARGUMENTS --role solo`, implement in `worktrees/solo/`, re-run from reviewing). Show the message.
 
 ---
