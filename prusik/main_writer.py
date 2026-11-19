@@ -94,6 +94,19 @@ def check_and_touch(root: Path, session: str, *, feature: str | None = None,
     return True, prior, action
 
 
+def foreign_holder(root: Path, session: str | None) -> dict | None:
+    """The live lease when another session holds it: its `session` is neither `session` nor
+    one of its `delegates`. None when there is no lease, it is stale, or it is held by or
+    delegated to `session`. Read-only: never writes the lease."""
+    lease = load(root)
+    if not isinstance(lease, dict) or _is_stale(lease, datetime.now(timezone.utc)):
+        return None
+    if session and (lease.get("session") == session
+                    or session in (lease.get("delegates") or [])):
+        return None
+    return lease
+
+
 def delegate(root: Path, holder: str, delegate_session: str, *, role: str,
              feature: str) -> bool:
     """The live lease holder `holder` lets a session it spawned (`prusik drive`) write the
