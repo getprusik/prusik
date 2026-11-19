@@ -17,6 +17,15 @@
     "reason": "",
     "verify_kind": "tests"
   },
-  "verify_history": [],
-  "status": "fixed"
+  "verify_history": [
+    {
+      "at": "2026-11-19T06:19:51.892719+00:00",
+      "exit": 0,
+      "executed_count": 15,
+      "verdict": true,
+      "why": "15 test(s) executed, exit 0",
+      "worktree_hash": "d400e93"
+    }
+  ],
+  "status": "verified-closed"
 }
