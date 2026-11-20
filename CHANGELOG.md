@@ -3,6 +3,12 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.260.0] — The writer lease follows its holder's life and hands off to drive
+
+- **A dead holder no longer holds the lease (fb-702c70a3971f).** The lease records the holder's host process (Claude Code's `CLAUDE_PID`, plus its start time so a reused pid is not mistaken for it). A lease whose host process is gone is taken over at the next acquire, without waiting out the 30-minute TTL, with ledger `writer_lease_stolen_dead`. `foreign_holder` and `live_owner` use the same rule. An unreadable start time or a permission error counts as alive; a lease with no recorded process keeps the TTL rule.
+- **`prusik drive` takes over its own sprint (fb-ff93b3641749).** `sprint-start` stamps the holder's lease with the feature. `prusik drive <feature>` takes a live lease held by a session working that feature, when no drive for it runs, with ledger `writer_lease_handed_off`. The former holder's writes are denied with a message naming drive and the feature. Any other live holder still escalates `writer_busy`; drive's exit still releases the lease.
+- **The Stop hook does not block after the hand-off (fb-361ec4acd0ee).** While the lease is stamped for drive on the sprint's feature and the session has not written since, the first phase's exit artifacts are not required; a later write clears the stamp.
+
 ## [0.259.0] — Bash writes are checked by what changed in the tree
 
 - **Observed writes (fb-aa7a6121fcee, fb-c1d2d8dcabac, fb-16c859a406b9, fb-40a8a578d8e2).** After each Bash call in a sprint, or while another session holds the single-writer lease, prusik compares the main tree before and after the call, by content and not by command text. It reports every changed path the phase may not write, and every change made under a foreign lease, in that call's PostToolUse output and as an `observed_write_reported` ledger event. `gate advance` refuses to leave a phase while a path changed since phase entry is outside the phase's writable set. Phase-entry baselines live in `.sprint/observed-writes/baseline.json`; the fix-round assembly is folded into the baseline.

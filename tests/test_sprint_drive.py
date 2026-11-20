@@ -431,6 +431,35 @@ def test_auth_mismatch_fails_closed_before_any_spawn(rig):
     assert "[drive] auth: api_key (ANTHROPIC_API_KEY)" in rig.out
 
 
+def test_drive_takes_over_a_live_lease_of_its_own_feature(rig, proj):
+    # moat-finding: fb-ff93b3641749
+    main_writer.check_and_touch(proj, "host-session", feature=F, phase="scoping")
+    seen = []
+    rig.adapter.probe = lambda req: seen.append(main_writer.load(proj)["session"])
+    assert rig.run() == 0
+    ev = [e for e in ledger.read_all() if e["event"] == "writer_lease_handed_off"]
+    assert ev and ev[0]["prior_holder"] == "host-session" and ev[0]["feature"] == F
+    assert seen and "host-session" not in seen
+    assert main_writer.load(proj) is None               # released at drive exit as before
+
+
+@pytest.mark.parametrize("feature", [None, "other"])
+def test_drive_still_refuses_a_live_lease_of_another_or_no_feature(rig, proj, feature):
+    # moat-finding: fb-ff93b3641749
+    main_writer.check_and_touch(proj, "host-session", feature=feature, phase="scoping")
+    assert rig.run() == 3
+    assert rig.escalation()["kind"] == "writer_busy"
+    assert main_writer.load(proj)["session"] == "host-session"
+
+
+def test_drive_still_refuses_when_a_live_drive_runs_the_feature(rig, proj):
+    # moat-finding: fb-ff93b3641749
+    main_writer.check_and_touch(proj, "host-session", feature=F, phase="scoping")
+    main_writer.set_driver(proj, "host-session", F)     # this test process is the live driver
+    assert rig.run() == 3
+    assert rig.escalation()["kind"] == "writer_busy"
+
+
 def test_a_live_foreign_lease_is_writer_busy(rig, proj):
     main_writer.check_and_touch(proj, "somebody-else", feature="x", phase="building")
     assert rig.run() == 3

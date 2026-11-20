@@ -165,6 +165,11 @@ class PlatformAdapter(abc.ABC):
     def session_ref(self, payload: dict) -> SessionRef | None:
         """The session + transcript a hook payload identifies, or None."""
 
+    def host_pid(self) -> int | None:
+        """The pid of the host process the session runs in, or None when the host gives none.
+        The single-writer lease records it so a holder whose host died stops binding."""
+        return None
+
     @abc.abstractmethod
     def current_session_id(self) -> str | None:
         """The host session this process runs in, or None outside one."""
@@ -297,6 +302,14 @@ class ClaudeCodeAdapter(PlatformAdapter):
         # Verified 2026-11-14 on Claude Code 2.1.325: exported to every Bash subprocess,
         # subagents' included (they carry the parent's id).
         return os.environ.get("CLAUDE_CODE_SESSION_ID") or None
+
+    def host_pid(self) -> int | None:
+        # Verified 2026-11-19 on Claude Code 2.1.x: CLAUDE_PID is the claude process's own
+        # process.pid, set by the env builder for spawned shells (the Bash tool: live, equal
+        # to the parent pid, `prusik drive` inherits it from a session's Bash). Hooks are
+        # spawned by the same process; a hook without it records no host and keeps the TTL.
+        raw = os.environ.get("CLAUDE_PID", "")
+        return int(raw) if raw.isdigit() and int(raw) > 0 else None
 
     _AUTHS = ("claude.ai", "api_key")
 

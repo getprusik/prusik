@@ -55,6 +55,8 @@ def test_derives_every_class_from_pre_field_history():
         ({"event": "gate_blocked",
           "reason": "shared-tree writer lease held by another session"}, gc.WRITER_LEASE),
         ({"event": "gate_blocked",
+          "reason": "shared-tree writer lease held by drive"}, gc.WRITER_LEASE),
+        ({"event": "gate_blocked",
           "reason": "'reports/x.md' not in writable patterns for phase scoping"},
          gc.WRITABLE_SCOPE),
         ({"event": "gate_blocked",

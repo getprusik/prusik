@@ -144,10 +144,13 @@ def _pre_tool_decision(event) -> str | None:
                           command=event.command, phase=state0.get("phase"),
                           feature=state0.get("feature"),
                           gate_class=gate_class.WRITER_LEASE,
-                          reason="shared-tree writer lease held by another session",
+                          reason=("shared-tree writer lease held by drive"
+                                  if (prior or {}).get("handed_off_from")
+                                  or (prior or {}).get("driver")
+                                  else "shared-tree writer lease held by another session"),
                           holder=(prior or {}).get("session"))
             return main_writer.deny_message(prior or {}, event.command or "")
-        if action in ("acquired", "stolen_stale"):
+        if action in ("acquired", "stolen_stale", "stolen_dead"):
             ledger.append(f"writer_lease_{action}", session=event.session,
                           prior_holder=(prior or {}).get("session"))
 
@@ -1498,6 +1501,12 @@ def stop(args=None) -> int:
         ref = None
     if main_writer.live_owner(ledger.project_root(), feature, ref.session if ref else None):
         return 0
+    # fb-361ec4acd0ee: `sprint-start` stamped this session's live lease for drive on this
+    # feature and the session has not written since (a write refreshes the lease and clears
+    # the stamp), so the first phase's exit artifacts are drive's to produce.
+    if main_writer.stamped_for_drive(ledger.project_root(), ref.session if ref else None,
+                                     feature):
+        return 0
     phase_spec = phases.get_phase_spec(config, phase) or {}
     # One pass: the evidence validator spawns git, so the items feed both the message and
     # `_in_flight` rather than re-running the check.
@@ -2562,6 +2571,13 @@ def sprint_start(args) -> int:
         state["lane"] = "trivial"
 
     phases.set_sprint_state(state)
+    # fb-ff93b3641749: the pre-tool refresh recorded the state from before this command ran, so
+    # the holder's lease names no feature; stamp it so `prusik drive <feature>` can take over.
+    from prusik import main_writer as _mw
+    from prusik.platform_adapter import get_adapter as _get_adapter
+    if _mw.stamp_for_drive(root, _get_adapter().current_session_id(), feature,
+                           state["phase"]):
+        ledger.append("writer_lease_stamped", feature=feature)
     # fb-cda76f07f7e8: baseline the map's section hashes so sprint-complete
     # can flag sections that reference touched files yet never changed.
     from prusik import map_check as _mc
