@@ -894,12 +894,21 @@ class _Drive:
                               "env=ANTHROPIC_API_KEY"])
         self.session = self.adapter.current_session_id()
         self.holder = self.session or f"drive-{uuid.uuid4()}"
-        ok, holder, _ = main_writer.check_and_touch(self.root, self.holder, feature=self.f,
-                                                    phase=self.phase)
+        ok, holder, action = main_writer.check_and_touch(
+            self.root, self.holder, feature=self.f, phase=self.phase)
         if not ok:
-            raise Escalation("writer_busy", self.phase, None,
-                             f"session {((holder or {}).get('session') or '?')[:12]} holds "
-                             f"the single-writer lease", [])
+            # The live holder is a session working this feature (`sprint-start` stamped the
+            # lease): drive takes over its sprint. Any other live holder stays writer_busy.
+            prior = main_writer.hand_off_to_drive(self.root, self.holder, self.f)
+            if prior is None:
+                raise Escalation("writer_busy", self.phase, None,
+                                 f"session {((holder or {}).get('session') or '?')[:12]} holds "
+                                 f"the single-writer lease", [])
+            ledger.append("writer_lease_handed_off", prior_holder=prior.get("session"),
+                          feature=self.f, session=self.holder)
+        elif action in ("stolen_stale", "stolen_dead"):
+            ledger.append(f"writer_lease_{action}", session=self.holder,
+                          prior_holder=(holder or {}).get("session"))
         main_writer.set_driver(self.root, self.holder, self.f)
 
     def run(self) -> int:

@@ -52,6 +52,80 @@ def _is_stale(lease: dict, now: datetime) -> bool:
     return (now - refreshed) > timedelta(minutes=LEASE_TTL_MIN)
 
 
+def host_process() -> dict | None:
+    """The host process this call runs under: {"pid", "since"}, or None when the host gives
+    none (the lease then keeps the TTL rule). `since` is when the lease first recorded this
+    pid: a process that STARTED after it is not the holder (the pid was reused). Recording it
+    spawns nothing, which the hook hot path requires."""
+    return _proc(_env_pid())
+
+
+def _proc(pid: int | None) -> dict[str, object] | None:
+    if not pid:
+        return None
+    return {"pid": pid, "since": datetime.now(timezone.utc).isoformat()}
+
+
+def process_started_at(pid: int) -> datetime | None:
+    """When `pid` started, or None when it can't be read. Linux reads /proc; elsewhere `ps`
+    (lazy import: only a liveness check of ANOTHER session's lease pays for it)."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+            ticks = int(f.read().rsplit(")", 1)[1].split()[19])      # field 22, starttime
+        with open("/proc/stat", encoding="utf-8") as f:
+            btime = next(int(ln.split()[1]) for ln in f if ln.startswith("btime "))
+        return datetime.fromtimestamp(btime + ticks / os.sysconf("SC_CLK_TCK"), timezone.utc)
+    except (OSError, IndexError, ValueError, StopIteration):
+        pass
+    import subprocess
+    import time
+    try:
+        out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True,
+                             text=True, timeout=5, check=False,
+                             env={**os.environ, "LC_ALL": "C"}).stdout.strip()
+        return datetime.fromtimestamp(time.mktime(time.strptime(out, "%a %b %d %H:%M:%S %Y")),
+                                      timezone.utc)
+    except (OSError, subprocess.SubprocessError, ValueError, OverflowError):
+        return None
+
+
+_REUSE_SLACK = timedelta(seconds=5)       # lstart has 1s resolution; clocks round
+
+
+def _proc_alive(pid: object, since: object = None) -> bool:
+    """Is process `pid` running, and not a later process that reused the pid (it started after
+    `since`, when the lease recorded it)? Unverifiable answers fail safe toward alive: a wrong
+    "dead" lets a second session write the shared tree."""
+    if not _alive(pid):
+        return False
+    try:
+        recorded = datetime.fromisoformat(str(since)) if since else None
+    except ValueError:
+        recorded = None
+    if recorded is not None:
+        started = process_started_at(pid)      # type: ignore[arg-type]
+        if started is not None and started > recorded + _REUSE_SLACK:
+            return False
+    return True
+
+
+def _holder_dead(lease: dict) -> bool:
+    """True only when the lease records a holder process and it is provably gone. No record
+    (older lease, host with no process) is never dead: that lease keeps the TTL rule."""
+    host = lease.get("host")
+    if not isinstance(host, dict) or not isinstance(host.get("pid"), int):
+        return False
+    return not _proc_alive(host["pid"], host.get("since"))
+
+
+def _gone(lease: dict, now: datetime) -> str | None:
+    """Why the lease no longer binds: 'stale' (TTL) or 'dead' (holder process gone), else None.
+    The one liveness rule behind check_and_touch, foreign_holder and live_owner."""
+    if _is_stale(lease, now):
+        return "stale"
+    return "dead" if _holder_dead(lease) else None
+
+
 def _write(root: Path, lease: dict) -> None:
     """Atomic lease write: tmp + replace, so a concurrent reader never sees half a file."""
     path = _lease_path(root)
@@ -68,6 +142,7 @@ def check_and_touch(root: Path, session: str, *, feature: str | None = None,
       own live lease      → refresh            → (True,  None,   'refreshed')
       delegate, live      → refresh timestamp  → (True,  None,   'refreshed')
       other, stale        → take over          → (True,  old,    'stolen_stale')
+      other, holder dead  → take over          → (True,  old,    'stolen_dead')
       other, live         → DENY               → (False, holder, 'denied')
     A delegate (`delegate`) acts as the holder and never changes the holder's identity.
     """
@@ -75,23 +150,40 @@ def check_and_touch(root: Path, session: str, *, feature: str | None = None,
     lease = load(root)
     prior: dict | None = None
     if lease is not None:
-        stale = _is_stale(lease, now)
         if lease.get("session") == session:
+            host = lease.get("host")
+            env_pid = _env_pid()
+            if env_pid is not None and not (isinstance(host, dict) and host.get("pid") == env_pid):
+                host = host_process()           # a new host process for this session
             lease.update(refreshed_at=now.isoformat(), feature=feature, phase=phase)
+            lease.pop("drive_stamp", None)      # a write by the holder ends the Stop exemption
+            if host:
+                lease["host"] = host
             _write(root, lease)
             return True, None, "refreshed"
-        if not stale and session in (lease.get("delegates") or []):
+        gone = _gone(lease, now)
+        if gone is None and session in (lease.get("delegates") or []):
             lease["refreshed_at"] = now.isoformat()
             _write(root, lease)
             return True, None, "refreshed"
-        if not stale:
+        if gone is None:
             return False, lease, "denied"
-        action, prior = "stolen_stale", lease
+        action, prior = f"stolen_{gone}", lease
     else:
         action = "acquired"
-    _write(root, {"session": session, "feature": feature, "phase": phase,
-                  "acquired_at": now.isoformat(), "refreshed_at": now.isoformat()})
+    fresh: dict[str, object] = {"session": session, "feature": feature, "phase": phase,
+                                "acquired_at": now.isoformat(),
+                                "refreshed_at": now.isoformat()}
+    host = host_process()
+    if host:
+        fresh["host"] = host
+    _write(root, fresh)
     return True, prior, action
+
+
+def _env_pid() -> int | None:
+    from prusik.platform_adapter import get_adapter
+    return get_adapter().host_pid()
 
 
 def foreign_holder(root: Path, session: str | None) -> dict | None:
@@ -99,12 +191,12 @@ def foreign_holder(root: Path, session: str | None) -> dict | None:
     one of its `delegates`. None when there is no lease, it is stale, or it is held by or
     delegated to `session`. Read-only: never writes the lease."""
     lease = load(root)
-    if not isinstance(lease, dict) or _is_stale(lease, datetime.now(timezone.utc)):
+    if not isinstance(lease, dict):
         return None
     if session and (lease.get("session") == session
                     or session in (lease.get("delegates") or [])):
-        return None
-    return lease
+        return None                       # own lease: no liveness lookup on the hot path
+    return None if _gone(lease, datetime.now(timezone.utc)) else lease
 
 
 def delegate(root: Path, holder: str, delegate_session: str, *, role: str,
@@ -146,7 +238,8 @@ def set_driver(root: Path, holder: str, feature: str) -> bool:
     if lease is None or lease.get("session") != holder or _is_stale(
             lease, datetime.now(timezone.utc)):
         return False
-    lease["driver"] = {"pid": os.getpid(), "feature": feature}
+    lease["driver"] = {"pid": os.getpid(), "feature": feature,
+                       "since": datetime.now(timezone.utc).isoformat()}
     _write(root, lease)
     return True
 
@@ -164,12 +257,55 @@ def live_owner(root: Path, feature: str | None, session: str | None) -> bool:
     lease is live, and either `session` is a session the holder delegated to (a role drive
     spawned) or a drive process for `feature` is still running."""
     lease = load(root)
-    if lease is None or _is_stale(lease, datetime.now(timezone.utc)):
+    if lease is None or _gone(lease, datetime.now(timezone.utc)):
         return False
     if session and session in (lease.get("delegates") or []):
         return True
+    return _driver_live(lease, feature)
+
+
+def _driver_live(lease: dict, feature: str | None) -> bool:
     driver = lease.get("driver") or {}
-    return bool(feature) and driver.get("feature") == feature and _alive(driver.get("pid"))
+    return (bool(feature) and driver.get("feature") == feature
+            and _proc_alive(driver.get("pid"), driver.get("since")))
+
+
+def stamp_for_drive(root: Path, session: str | None, feature: str, phase: str | None) -> bool:
+    """`sprint-start` run by the live lease holder: record the sprint on the lease (the pre-tool
+    refresh recorded the state from before the command ran) and mark it for drive. The stamp is
+    its own field; the holder's next refresh clears it. False unless `session` holds the lease."""
+    lease = load(root)
+    if (not session or lease is None or lease.get("session") != session
+            or _gone(lease, datetime.now(timezone.utc))):
+        return False
+    lease.update(feature=feature, phase=phase, drive_stamp=feature)
+    _write(root, lease)
+    return True
+
+
+def stamped_for_drive(root: Path, session: str | None, feature: str | None) -> bool:
+    """True when the live lease is `session`'s and stamped for drive on `feature`."""
+    lease = load(root)
+    return bool(session and feature and lease and lease.get("session") == session
+                and lease.get("drive_stamp") == feature
+                and not _gone(lease, datetime.now(timezone.utc)))
+
+
+def hand_off_to_drive(root: Path, drive_session: str, feature: str) -> dict | None:
+    """`prusik drive <feature>` takes the live lease of a host session working that feature,
+    when no drive for it already runs. Returns the prior lease, or None (nothing changed) when
+    there is no live lease, it is drive's own, its feature differs, or a live driver exists.
+    Writes a fresh lease for drive: no delegates, host = drive's own process."""
+    now = datetime.now(timezone.utc)
+    lease = load(root)
+    if (lease is None or lease.get("session") == drive_session or _gone(lease, now)
+            or not feature or lease.get("feature") != feature
+            or _driver_live(lease, feature)):
+        return None
+    _write(root, {"session": drive_session, "feature": feature, "phase": lease.get("phase"),
+                  "acquired_at": now.isoformat(), "refreshed_at": now.isoformat(),
+                  "host": _proc(os.getpid()), "handed_off_from": lease.get("session")})
+    return lease
 
 
 def _alive(pid: object) -> bool:
@@ -210,6 +346,15 @@ def release_if_held(root: Path, holder: str) -> dict | None:
 def deny_message(holder: dict, command: str = "") -> str:
     ses = (holder.get("session") or "?")[:12]
     ctx = ""
+    if holder.get("handed_off_from") or holder.get("driver"):
+        feat = holder.get("feature") or (holder.get("driver") or {}).get("feature") or "?"
+        return (f"[prusik-gate] the shared main tree is held by `prusik drive {feat}` "
+                f"(feature {feat}) — it took the single-writer lease from the session that "
+                f"started the sprint, and returns it when it exits. Writing the shared tree "
+                f"now would collide with it (fb-0b9d0a6d1ce6).\n"
+                f"  → Wait for the drive run to finish, work in a worktree "
+                f"(worktrees/<role>/…), or stop the drive run."
+                f"{_release_chained_note(command)}")
     if holder.get("feature") or holder.get("phase"):
         ctx = f" (feature {holder.get('feature') or '?'}, phase {holder.get('phase') or '?'})"
     return (f"[prusik-gate] the shared main tree has an active writer — session "
