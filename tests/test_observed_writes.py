@@ -288,6 +288,59 @@ def test_deleted_tracked_file_is_reported(building):
     assert _reported(building)[0]["unwritable"] == ["docs.md"]
 
 
+# moat-finding: fb-331f8487c548 (file verbs the text reader does not read)
+# moat-finding: fb-a0dd3c924838 (a command whose first word expands to nothing)
+# moat-finding: fb-9b48baaee117 (/usr/bin/time as a wrapper after a redirect or assignment)
+_UNREAD_SHAPES = {
+    "ln": "ln -s README.md README.lnk",
+    "rsync": "rsync README.md README.copy",
+    "tar_c": "tar cf out.tar README.md",
+    "tar_x": "tar xf {tmp}/a.tar",
+    "unzip": "unzip -oq {tmp}/a.zip",
+    "patch": "patch -s -p0 -i {tmp}/new.diff",
+    "curl_o": "curl -s -o curl.out file:///etc/hosts",
+    "mkdir_then_file": "mkdir nd && cp README.md nd/f",
+    "empty_subst": "$(:) rm README.md",
+    "empty_subst_redirect": "$(:) 2>&1 rm README.md",
+    "unset_var": "$prusik_unset_var rm README.md",
+    "unset_var_redirect": "$prusik_unset_var > f rm README.md",
+    "time_after_redirect": "> o time rm README.md",
+    "time_after_assignment": "a=1 time rm README.md",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_UNREAD_SHAPES))
+def test_write_the_text_reader_misses_is_denied_or_reported(building, tmp_path, shape):
+    """The bash reader does not name these writes from the command text. The tree diff must
+    still catch every one: the call is either refused before it runs or reported after.
+    A silent pass is the bug. (An empty `mkdir`/`rmdir` changes no content and is not a
+    write; a file put in the new dir is, shape mkdir_then_file.)"""
+    import tarfile
+    import zipfile
+    (tmp_path / "x").mkdir()
+    (tmp_path / "x" / "README.md").write_text("from tar\n")
+    with tarfile.open(tmp_path / "a.tar", "w") as tf:
+        tf.add(tmp_path / "x" / "README.md", arcname="README.md")
+    with zipfile.ZipFile(tmp_path / "a.zip", "w") as zf:
+        zf.writestr("unzipped.txt", "from zip\n")
+    (tmp_path / "new.diff").write_text(
+        "--- /dev/null\n+++ patched.txt\n@@ -0,0 +1 @@\n+from patch\n")
+    cmd = _UNREAD_SHAPES[shape].format(tmp=tmp_path)
+    pre = _pre(building, cmd)
+    if pre.stdout.strip():
+        decision = json.loads(pre.stdout)["hookSpecificOutput"]["permissionDecision"]
+        assert decision == "deny", pre.stdout
+        return
+    run = subprocess.run(["/bin/sh", "-c", cmd], cwd=building, env=_env(building),
+                         capture_output=True, text=True, timeout=120)
+    assert run.returncode == 0, (shape, run.stderr)
+    out = _post(building, cmd, run.returncode)
+    text = (out or {}).get("additionalContext", "")
+    assert text.startswith(PREFIX), (shape, text)
+    ev = _reported(building)
+    assert len(ev) == 1 and ev[0]["unwritable"], (shape, ev)
+
+
 def test_revert_is_not_damage(building):
     """Decision 13. The revert the message asks for must not itself be reported. The gate
     refuses `git checkout -- README.md` in building (so it leaves no pending snapshot);
