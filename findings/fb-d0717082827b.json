@@ -1,0 +1,16 @@
+{
+  "id": "fb-d0717082827b",
+  "created_at": "2026-11-20T06:36:18.945249+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "/sprint-start spawns subagent_type=<role>, which fails where .claude/agents/ is not installed; drive falls back to the packaged spec, the manual path does not",
+  "detail": "In the engine repo (no .claude/agents/), /sprint-start step 2 Agent(subagent_type=brief-critic) errors 'Agent type not found'. drive._agent_spec (drive.py:205) falls back to prusik/templates/.claude/agents/<role>.md; the manual command path has no fallback, so the operator hand-rolls a general-purpose agent reading the spec. That stand-in has no tools: Read, Write limit and a bigger system prompt (~47-52k tokens per brief-critic round on haiku vs the spec's own '<5k tokens').",
+  "feature": null,
+  "content_hash": "d0717082827b",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}

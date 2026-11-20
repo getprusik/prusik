@@ -1,0 +1,16 @@
+{
+  "id": "fb-d39ef32820e4",
+  "created_at": "2026-11-20T07:05:36.323948+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "A green full-suite capture from solo_execute is not reused by regression-sentinel, which re-runs the suite under --phase regression",
+  "detail": "red-on-fork-point (2026-11-20): solo_execute capture on 2df7dfd (4527 passed) was recorded under phase solo_execute; regression-sentinel re-ran the identical suite on the same commit under --phase regression because the reviewing gate reads regression-phase evidence (~4m38s, a second full run). Evidence for the same tree hash should credit across phases, or the solo-lane capture hint should name --phase regression.",
+  "feature": "red-on-fork-point",
+  "content_hash": "d39ef32820e4",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
