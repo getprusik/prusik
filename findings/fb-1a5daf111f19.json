@@ -1,0 +1,16 @@
+{
+  "id": "fb-1a5daf111f19",
+  "created_at": "2026-11-20T05:16:50.714375+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "prove-red runs at the root, so a solo-lane RED is pytest exit 4 (test file absent), not a failing assertion",
+  "detail": "On the trivial/solo lane the new test lives only in worktrees/solo. gate prove-red runs verify_command with cwd=root (gate.py ~2749), so pytest exits 4 (file not found) and the gate records 'RED baseline captured (exit 4 != 0) \u2014 verify is load-bearing'. Nothing was proved about the test's assertions. Seen in wrapped-command-naming 2026-11-19. Fix: run prove-red in the lane's worktree when one exists, and treat collection/usage exits (pytest 4/5) as no verdict, not RED.",
+  "feature": "wrapped-command-naming",
+  "content_hash": "1a5daf111f19",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
