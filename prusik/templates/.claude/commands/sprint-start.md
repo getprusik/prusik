@@ -65,9 +65,11 @@ the trivial lane:
      `## Change` and `## How verified`.
    - Then `/sprint-advance solo_execute $ARGUMENTS` directly (the engine's
      lane-aware exit gate accepts `trivial.md` in place of
-     scope.md+scope-approval), run `prusik gate prove-red --feature $ARGUMENTS`
-     (leaving `solo_execute` is refused without the RED baselines), implement in
-     `worktrees/solo/`, then
+     scope.md+scope-approval), create the solo worktree with `prusik gate
+     worktree-add --feature $ARGUMENTS --role solo`, implement in `worktrees/solo/`
+     with its tests, run `prusik gate prove-red --feature $ARGUMENTS` (it runs the
+     sprint's changed tests on the fork point; leaving `solo_execute` is refused
+     without the RED baselines), then
      `/sprint-advance reviewing` → `/sprint-advance integrating` as normal.
 
    This is ceremony proportional to blast radius — prusik's stated value —

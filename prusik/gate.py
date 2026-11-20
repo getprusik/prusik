@@ -1196,13 +1196,19 @@ def _named_commands(cmd: str, names: frozenset[str], start: str = "") -> list[tu
     would refuse `$PYTHON -m pytest`. The same goes for a substitution before the command word.
     A command behind a wrapper is read too; see `_command_spans`. Code nested past
     `_MAX_CODE_DEPTH` raises, which `pre_tool` turns into a refusal."""
+    return [(argv, cwd) for argv, cwd in _commands(cmd, start)
+            if os.path.basename(argv[0]) in names]
+
+
+def _commands(cmd: str, start: str = "") -> list[tuple[list[str], str]]:
+    """Every command `cmd` runs, as `_named_commands` reads them, before any name filter."""
     found: list[tuple[list[str], str]] = []
     for stage, cwd, bindings in _stages(cmd, start):
         if not isinstance(stage, bash_reader.Simple):
             continue
         for span in _command_spans(stage, bindings):
             argv = _argv_at(stage, span, bindings)
-            if os.path.basename(argv[0]) in names:
+            if argv:
                 found.append((argv, cwd))
     return found
 
@@ -2863,16 +2869,174 @@ def _ev_run_start() -> int:
     return _ev.run_start()
 
 
+_PYTEST_NAMES = frozenset(("pytest", "py.test"))
+_PYTHON_NAME = re.compile(r"^python(?:\d+(?:\.\d+)*)?$")
+_RUNNER_NAMES = frozenset(("uv", "poetry", "pipenv", "pdm", "hatch"))
+# pytest's exit codes that carry no verdict on the tests: 3 internal error, 4 usage error
+# (a named test path that does not exist), 5 no tests collected.
+_PYTEST_NO_VERDICT = frozenset((3, 4, 5))
+
+
+def _argv_runs_pytest(argv: list[str]) -> bool:
+    """`pytest`, `py.test` or `python* -m pytest`, directly or past a `<runner> run` prefix.
+    A runner's own flags are not parsed: any later word that starts a pytest command counts,
+    which can only read a non-pytest command as pytest, the direction that withholds a
+    baseline."""
+    if not argv:
+        return False
+    name = os.path.basename(argv[0])
+    if name in _PYTEST_NAMES:
+        return True
+    if _PYTHON_NAME.match(name):
+        rest = argv[1:]
+        return any(w == "-mpytest" or (w == "-m" and rest[i + 1:i + 2] == ["pytest"])
+                   for i, w in enumerate(rest))
+    if name in _RUNNER_NAMES and "run" in argv[1:]:
+        tail = argv[argv.index("run", 1) + 1:]
+        return any(_argv_runs_pytest(tail[i:]) for i in range(len(tail)))
+    return False
+
+
+def _runs_pytest(verify_command: str) -> bool:
+    """A verify runs pytest when any command it runs does (`_argv_runs_pytest`). A command
+    line the reader cannot parse counts as pytest: that only withholds a baseline."""
+    try:
+        return any(_argv_runs_pytest(argv) for argv, _ in _commands(verify_command))
+    except (RecursionError, ValueError):
+        return True
+
+
+class _ForkPointRefused(Exception):
+    """The fork-point tree cannot be built honestly; prove-red refuses (rc 2)."""
+
+
+def _feature_worktrees(root: Path, feature: str) -> list[Path]:
+    """worktrees/<role> directories that are git worktrees on `sprint/<feature>-<role>`."""
+    import subprocess
+    from prusik import worktrees
+    wt_dir = root / "worktrees"
+    if not (root / ".git").exists() or not wt_dir.is_dir():
+        return []
+    found = []
+    for d in sorted(p for p in wt_dir.iterdir() if p.is_dir()):
+        if not worktrees.is_git_worktree_root(d):
+            continue
+        head = subprocess.run(["git", "-C", str(d), "rev-parse", "--abbrev-ref", "HEAD"],
+                              capture_output=True, text=True, check=False)
+        if head.returncode == 0 and \
+                head.stdout.strip() == worktrees.branch_name(feature, d.name):
+            found.append(d)
+    return found
+
+
+def _git_paths(d: Path, *args: str) -> list[str]:
+    import subprocess
+    p = subprocess.run(["git", "-C", str(d), *args, "-z"], capture_output=True, text=True,
+                       check=False)
+    if p.returncode != 0:
+        raise _ForkPointRefused(f"`git {' '.join(args)}` failed in worktrees/{d.name}: "
+                                f"{(p.stderr or '').strip()[:200]}")
+    return [x for x in p.stdout.split("\0") if x]
+
+
+def _fork_point_overlay(wts: list[Path]) -> tuple[str, dict[str, bytes | None]]:
+    """(the shared fork point, {test path: content, or None for deleted}) over every feature
+    worktree's committed, uncommitted and untracked test-file changes against that base.
+    Raises `_ForkPointRefused` for a missing base, differing bases, or two worktrees whose
+    copies of one test path differ."""
+    from prusik import worktrees
+    from prusik.consistency import UnmeasuredChangeSet
+    from prusik.testfiles import is_test_path
+    bases: dict[str, str] = {}
+    for d in wts:
+        try:
+            bases[d.name] = worktrees.recorded_base(d)
+        except UnmeasuredChangeSet as e:
+            raise _ForkPointRefused(str(e)) from e
+    if len(set(bases.values())) > 1:
+        raise _ForkPointRefused(
+            "the feature's worktrees fork from different commits ("
+            + ", ".join(f"worktrees/{n} at {b[:12]}" for n, b in sorted(bases.items()))
+            + "), so there is no one fork point to prove RED on. Re-create them from one "
+              "base with `prusik gate worktree-add`.")
+    base = next(iter(bases.values()))
+    overlay: dict[str, bytes | None] = {}
+    owner: dict[str, str] = {}
+    for d in wts:
+        changed = set(_git_paths(d, "diff", "--name-only", "--no-renames", base))
+        changed |= set(_git_paths(d, "ls-files", "--others", "--exclude-standard"))
+        for rel in sorted(r for r in changed if is_test_path(r, d)):
+            f = d / rel
+            content = f.read_bytes() if f.is_file() else None
+            if rel in overlay and overlay[rel] != content:
+                raise _ForkPointRefused(
+                    f"{rel} differs between worktrees/{owner[rel]} and worktrees/{d.name}; "
+                    f"the fork-point tree cannot hold both. Make the copies agree.")
+            overlay[rel] = content
+            owner[rel] = d.name
+    return base, overlay
+
+
+class _ForkPointTree:
+    """`with _ForkPointTree(root, feature, base, overlay) as view:` a temporary detached git
+    worktree at `base` with `overlay` applied. It is removed, and its registration pruned,
+    whatever happens."""
+
+    def __init__(self, root: Path, feature: str, base: str,
+                 overlay: dict[str, bytes | None]) -> None:
+        self.root, self.feature, self.base, self.overlay = root, feature, base, overlay
+        self.scratch: Path | None = None
+
+    def _git(self, *args: str):
+        import subprocess
+        return subprocess.run(["git", "-C", str(self.root), *args], capture_output=True,
+                              text=True, check=False)
+
+    def __enter__(self) -> Path:
+        import tempfile
+        self.scratch = Path(tempfile.mkdtemp(prefix=f"prusik-red-{self.feature}-"))
+        view = self.scratch / "view"
+        try:
+            add = self._git("worktree", "add", "--detach", str(view), self.base)
+            if add.returncode != 0:
+                raise _ForkPointRefused(f"could not build the fork-point tree at "
+                                        f"{self.base[:12]}: {(add.stderr or '').strip()[:200]}")
+            for rel, content in self.overlay.items():
+                target = view / rel
+                if content is None:
+                    if target.is_file() or target.is_symlink():
+                        target.unlink()
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(content)
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+        return view
+
+    def __exit__(self, *_exc) -> None:
+        import shutil
+        if self.scratch is None:
+            return
+        self._git("worktree", "remove", "--force", str(self.scratch / "view"))
+        shutil.rmtree(self.scratch, ignore_errors=True)
+        self._git("worktree", "prune")
+        self.scratch = None
+
+
 def prove_red(args) -> int:
     """`prusik gate prove-red --feature F [--id C]` — acceptance-TDD capture.
 
-    For each `prove_red` criterion, run its verify against the CURRENT (pre-change)
-    state and require it to be RED. A verify that PASSES here asserts nothing about
-    the change (vacuous-green — the failure mode that survives execution-evidence);
-    it is rejected until made load-bearing. A RED verify is recorded as the baseline
-    the sprint-complete gate then requires alongside GREEN. Run before implementing.
+    For each `prove_red` criterion, run its verify against the state WITHOUT the change and
+    require it to be RED. With feature worktrees that state is the fork point
+    (`worktrees.recorded_base`) overlaid with the sprint's changed test files, built in a
+    temporary detached worktree, so the sprint's new tests run against the code they were
+    written to change (fb-1a5daf111f19). Without one it is the project root. A verify that
+    PASSES there asserts nothing about the change and is rejected until made load-bearing.
+    A pytest verify that exits 3/4/5 (internal error, no such file, nothing collected), or a
+    fork-point run with no changed test file, is no verdict: no baseline. Run it after
+    writing the tests; the code changes may already be in the worktree.
     """
-    import subprocess
     from prusik import schema
     feature = args.feature
     root = ledger.project_root()
@@ -2895,6 +3059,50 @@ def prove_red(args) -> int:
     except CriterionTimeoutInvalid as e:
         print(f"[prusik-gate] {e}", file=sys.stderr)
         return 2
+    wts = _feature_worktrees(root, feature)
+    if not wts:
+        print("[prusik-gate] prove-red runs at the project root (the feature has no "
+              "worktree yet).")
+        return _prove_red_in(root, root, feature, targets, limits, {"tree": "root"})
+    try:
+        base, overlay = _fork_point_overlay(wts)
+        tree = {"tree": "fork-point", "base": base, "test_files": sorted(overlay)}
+        if not overlay:
+            for entry in targets:
+                ledger.append("criterion_prove_red_no_verdict", feature=feature,
+                              id=entry.get("id"), verify_command=entry.get("verify_command"),
+                              reason="no changed test file", **tree)
+            print(f"[prusik-gate] ✗ no RED baseline captured: no feature worktree changed a "
+                  f"test file against the fork point {base[:12]}, so there is no sprint test "
+                  f"to prove RED. Write the tests in the worktree first.", file=sys.stderr)
+            return 1
+        print(f"[prusik-gate] prove-red runs on the fork point {base[:12]} with the sprint's "
+              f"{len(overlay)} changed test file(s): {', '.join(sorted(overlay))}")
+        with _ForkPointTree(root, feature, base, overlay) as view:
+            return _prove_red_in(root, view, feature, targets, limits, tree)
+    except _ForkPointRefused as e:
+        ledger.append("criterion_prove_red_refused", feature=feature, reason=str(e))
+        print(f"[prusik-gate] prove-red refused: {e}", file=sys.stderr)
+        return 2
+
+
+# The shell's own "cannot execute" (126) and "command not found" (127): the verify never ran.
+_SHELL_NO_VERDICT = frozenset((126, 127))
+
+
+def _prove_red_in(root: Path, run_dir: Path, feature: str, targets: list, limits: dict,
+                  tree: dict) -> int:
+    """Run each target's verify in `run_dir` and record RED / no verdict / not load-bearing.
+    `tree` names where it ran and goes on every record."""
+    import subprocess
+    env = None
+    if run_dir != root:
+        # The fork-point tree's own code is what the verify imports, never an editable
+        # install of the project root.
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(run_dir), *([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])])
+    where = "on the fork point" if tree["tree"] == "fork-point" else "at the root"
     all_red = True
     for entry in targets:
         cid = entry.get("id")
@@ -2904,8 +3112,8 @@ def prove_red(args) -> int:
         since = _ev_run_start() if junit else 0
         limit = limits[id(entry)]
         try:
-            proc = subprocess.run(["/bin/bash", "-c", vc], cwd=str(root),
-                                  capture_output=True, text=True,
+            proc = subprocess.run(["/bin/bash", "-c", vc], cwd=str(run_dir),
+                                  capture_output=True, text=True, env=env,
                                   timeout=limit, check=False)
             code = proc.returncode
         except subprocess.TimeoutExpired:
@@ -2919,23 +3127,34 @@ def prove_red(args) -> int:
             continue
         except OSError:
             code = -3
-        if code != expected:  # RED — the verify fails without the change
+        no_verdict = (code == -3 or code in _SHELL_NO_VERDICT
+                      or (code in _PYTEST_NO_VERDICT and _runs_pytest(vc)))
+        if code != expected and no_verdict:
+            all_red = False
+            ledger.append("criterion_prove_red_no_verdict", feature=feature, id=cid,
+                          verify_command=vc, exit_code=code,
+                          reason="the verify gave no verdict on the tests", **tree)
+            print(f"[prusik-gate] ✗ {cid}: no RED baseline captured {where}: exit {code} is "
+                  f"no verdict (the verify did not run its tests: a missing file, nothing "
+                  f"collected, an internal error, or a command not found there).",
+                  file=sys.stderr)
+        elif code != expected:  # RED — the verify fails without the change
             jfields: dict = {}
             if junit:
                 from prusik import evidence as _ev
-                jr = _ev.read_junit(junit, root, since)
+                jr = _ev.read_junit(junit, run_dir, since)
                 jfields = {"junit": junit, "junit_files": list(jr.files),
                            "executed": jr.executed,
                            "failed_tests": list(jr.failed_tests)}
                 if jr.error:
                     jfields["junit_error"] = jr.error
             ledger.append("criterion_red_baseline", feature=feature, id=cid,
-                          verify_command=vc, exit_code=code, **jfields)
-            print(f"[prusik-gate] ✓ {cid}: RED baseline captured (exit {code} ≠ "
+                          verify_command=vc, exit_code=code, **tree, **jfields)
+            print(f"[prusik-gate] ✓ {cid}: RED baseline captured {where} (exit {code} ≠ "
                   f"expected {expected}) — verify is load-bearing.")
         else:
             all_red = False
-            print(f"[prusik-gate] ✗ {cid}: verify PASSES without the change "
+            print(f"[prusik-gate] ✗ {cid}: verify PASSES without the change {where} "
                   f"(exit {code} == expected {expected}) — it asserts nothing / "
                   f"isn't load-bearing. Make it fail when the behavior is absent "
                   f"before capturing.", file=sys.stderr)
@@ -3275,8 +3494,9 @@ def _run_success_criteria(feature: str, root: Path) -> tuple[bool, list[dict]]:
                              "baseline for this criterion+verify — an acceptance "
                              "test that was never red proves nothing. Run "
                              "`prusik gate prove-red --feature "
-                             f"{feature}` before implementing (the verify must FAIL "
-                             "without the change to be load-bearing).\n")
+                             f"{feature}` while the sprint's worktrees exist (it runs "
+                             "their changed tests on the fork point; the verify must "
+                             "FAIL without the change to be load-bearing).\n")
 
         out_path.write_text(out_text)
         if not passed:

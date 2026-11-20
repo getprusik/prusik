@@ -362,7 +362,10 @@ def main():
                              help="Acceptance-TDD: capture the RED baseline for "
                                   "prove_red criteria — prove each verify FAILS "
                                   "WITHOUT the change (it's load-bearing, not "
-                                  "vacuous-green). Run BEFORE implementing; "
+                                  "vacuous-green). With feature worktrees it runs on "
+                                  "their fork point plus the sprint's changed test "
+                                  "files, so run it AFTER writing the tests (the "
+                                  "implementation may already be there); "
                                   "sprint-complete then requires red-baseline + green.")
     p_pred.add_argument("--feature", required=True, type=_slug)
     p_pred.add_argument("--id", default=None,

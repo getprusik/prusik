@@ -305,11 +305,14 @@ def _branch_moves(root: Path, feature: str, wts: list[str], rel: str,
     return moves
 
 
+RELEASE_OWNS_BUMP = ("the release owns the version bump (scripts/release.sh in the prusik "
+                     "repo, `prusik refresh` in a project), so a sprint never changes it")
+
+
 def moves_message(moves: list[dict]) -> str:
     """The refusal for `sprint_moves`: what moved, where, and the revert."""
-    lines = ["sprint changes the version pin; the release owns the version bump "
-             "(scripts/release.sh in the prusik repo, `prusik refresh` in a project), so a "
-             "sprint never changes it. Merged, it would put the checkout out of step with the "
+    lines = [f"sprint changes the version pin; {RELEASE_OWNS_BUMP}. Merged, it would put "
+             "the checkout out of step with the "
              "installed prusik and the pin gate would refuse every tool call. Revert it on the "
              "builder's side:"]
     for m in moves:

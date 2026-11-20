@@ -1,7 +1,7 @@
-"""The solo lanes capture prove_red baselines before the build (fb-221b8b5df7e6).
+"""The solo lanes capture prove_red baselines inside the build phase (fb-221b8b5df7e6).
 
-Drive's triage→solo hand-off runs `prove-red` while the shared tree is still pre-change,
-and leaving any build phase (building, solo_execute) without a baseline for every local
+Drive's solo_execute step runs `prove-red` after the builder wrote the tests and before the
+suite proof; prove-red runs them on the worktree's fork point (fb-1a5daf111f19). Leaving any build phase (building, solo_execute) without a baseline for every local
 prove_red criterion is refused — so the gap can no longer first surface at
 sprint-complete, after integration, when no honest RED capture is possible.
 moat-finding: fb-221b8b5df7e6
@@ -19,14 +19,15 @@ from tests.test_drive_design_phases import _fake_triage
 from tests.test_sprint_drive import F, escalated_events, proj, rig, set_phase  # noqa: F401
 
 
-# ── drive: the solo_execute step captures RED before the build ─────────────────────────────
+# ── drive: the solo_execute step captures RED after the build, before the suite ─────────────
 
-def test_triage_solo_captures_red_before_the_solo_build(rig, proj, monkeypatch):
+def test_triage_solo_captures_red_after_the_solo_build(rig, proj, monkeypatch):
     set_phase(proj, "triage")
     _fake_triage(monkeypatch, proj, {"mode": "solo", "reason": "r"})
     rig.run()
     kinds = [e[1] if e[0] == "gate" else e[0] for e in rig.events]
-    assert kinds.index("prove-red") < kinds.index("spawn"), "RED is captured before the spawn"
+    assert kinds.index("spawn") < kinds.index("prove-red") < kinds.index("prove"), \
+        "RED is captured after the spawn and before the suite proof"
     assert ("spawn", "solo-builder") in rig.events
     assert [e[1] for e in rig.events if e[0] == "gate"][:2] == ["advance", "prove-red"]
     assert gate.missing_red_baselines(proj, F) == []

@@ -226,13 +226,14 @@ def test_planning_approved_then_advances_to_building_and_on(rig, proj):
 
 # ── building ──────────────────────────────────────────────────────────────────────────────
 
-def test_building_order_prove_red_then_builders_then_suite_then_advance(rig):
+def test_building_order_builders_then_prove_red_then_suite_then_advance(rig):
+    # RED is captured on the fork point after the builders wrote the tests (fb-1a5daf111f19).
     rig.run()
     seq = [e for e in rig.events if e[0] in ("spawn", "prove") or e[:2] == ("gate", "prove-red")
            or e[:2] == ("gate", "advance")]
     first = [e[:2] if e[0] == "gate" else e[0] for e in seq][:4]
-    assert first == [("gate", "prove-red"), "spawn", "prove", ("gate", "advance")]
-    assert seq[0] == ("gate", "prove-red", "--feature", F)
+    assert first == ["spawn", ("gate", "prove-red"), "prove", ("gate", "advance")]
+    assert seq[1] == ("gate", "prove-red", "--feature", F)
     assert seq[2][1].endswith("worktrees/backend-builder")
 
 
@@ -247,7 +248,12 @@ def test_building_skips_prove_red_when_every_baseline_exists(rig):
 def test_building_prove_red_that_captures_nothing_escalates(rig):
     rig.effect = lambda a: None                         # prove-red "succeeds" but records none
     assert rig.run() == 3
-    assert rig.escalation()["kind"] == "prove_red_failed" and ("spawn", "backend-builder") not in rig.events
+    # RED is captured after the builders (fb-1a5daf111f19); a failed capture stops before the
+    # suite proof and the advance.
+    assert rig.escalation()["kind"] == "prove_red_failed"
+    assert ("spawn", "backend-builder") in rig.events
+    assert not any(e[0] == "prove" for e in rig.events)
+    assert not any(e[:3] == ("gate", "advance", "reviewing") for e in rig.events)
 
 
 def test_building_suite_failure_escalates_and_does_not_advance(rig):

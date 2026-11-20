@@ -547,8 +547,10 @@ class _Drive:
         return gate.missing_red_baselines(self.root, self.f)
 
     def _capture_red(self, phase: str) -> None:
-        """Capture every missing RED baseline while the shared tree is still pre-change
-        (before any builder runs), or escalate prove_red_failed."""
+        """Capture every missing RED baseline, or escalate prove_red_failed. Called after the
+        builders commit: prove-red runs the sprint's tests on the worktrees' fork point, so
+        it needs the tests written and must not run before a worktree exists
+        (fb-1a5daf111f19)."""
         if not self._missing_red_baselines():
             self.steps.append("prove-red satisfied")
             return
@@ -598,7 +600,6 @@ class _Drive:
             raise Escalation("suite_failed", "solo_execute", None,
                              "drive.suite_command is not set; drive proves the full suite "
                              "before advancing solo_execute", [".claude/sprint-config.yaml"])
-        self._capture_red("solo_execute")
         # The solo worktree records its fork point before the spawn, like every builder's,
         # so the reviewing checks can measure what the build changed (fb-95d0c641cd90).
         self._worktree(SOLO_WORKTREE)
@@ -612,6 +613,7 @@ class _Drive:
             tip = self._built_tip(SOLO_BUILDER, SOLO_WORKTREE)
             if tip:
                 ledger.append("drive_builder_done", feature=f, role=SOLO_BUILDER, commit=tip)
+        self._capture_red("solo_execute")
         self._prove_suite([(SOLO_BUILDER, SOLO_WORKTREE)], str(suite))
         self.steps.append("prove suite")
         self._advance("reviewing")
@@ -624,7 +626,6 @@ class _Drive:
                              "drive.suite_command is not set; drive proves the full suite "
                              "before advancing building", [".claude/sprint-config.yaml"])
         builders = self._builders()
-        self._capture_red("building")
         for role in builders:
             self._worktree(role)
             if self._builder_done(role, role):
@@ -636,6 +637,7 @@ class _Drive:
             tip = self._built_tip(role, role)
             if tip:
                 ledger.append("drive_builder_done", feature=f, role=role, commit=tip)
+        self._capture_red("building")
         self._prove_suite([(r, r) for r in builders], str(suite))
         self.steps.append("prove suite")
         self._advance("reviewing")
@@ -848,8 +850,9 @@ class _Drive:
         if (phase == "scoping" and state.get("lane") == "trivial") \
                 or (phase == "solo_execute" and self._lane() == "trivial"):
             print(f"[drive] sprint {self.f} is on the trivial lane: write "
-                  f"design/{self.f}/trivial.md, implement in worktrees/solo/, then re-run "
-                  f"drive from reviewing", file=self.out)
+                  f"design/{self.f}/trivial.md, implement in worktrees/solo/ (tests with "
+                  f"the change), run `prusik gate prove-red --feature {self.f}` once the "
+                  f"tests are written, then re-run drive from reviewing", file=self.out)
             return 2
         sprint_cfg = phases.load_sprint_config(self.root) or {}
         legacy = pricing.legacy_budget_keys(sprint_cfg)

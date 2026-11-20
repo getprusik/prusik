@@ -29,6 +29,7 @@ from typing import Any, Callable
 
 from prusik import blast_plan, catch_quality, ledger, schema
 from prusik.gate import _DERIVED_DIRS
+from prusik.testfiles import is_test_path
 
 # dirs to skip when indexing the tree for presence — the canonical derived-build set
 # (single source of truth in gate.py) plus VCS + orchestration dirs that hold no
@@ -42,18 +43,11 @@ _SKIP_DIRS = _DERIVED_DIRS | {".git", ".sprint", "reports"}
 _BACKTICK_FILE = re.compile(r"`([\w][\w./-]*\.[A-Za-z][\w]{0,5})`")
 # template placeholders (`<happy path>`) — unfilled, never counted as a commitment.
 _PLACEHOLDER = re.compile(r"^\s*<.*>\s*$")
-# test files across ecosystems: Python (test_*.py, *_test.py) + JS/TS
-# (*.test.ts, *.spec.ts, *.e2e.ts, and e2e/ or __tests__/ dirs).
-_TEST_FILE = re.compile(
-    r"(?:^|/)(?:test_[\w-]+\.py"
-    r"|[\w-]+_test\.py"
-    r"|[\w.-]+\.(?:test|spec|e2e)\.[jt]sx?)$"
-    r"|(?:^|/)(?:__tests__|e2e)/")
 _SECTIONS = ("## Build order", "## Test plan")
 
 
-def _is_test_path(rel: str) -> bool:
-    return bool(_TEST_FILE.search(rel))
+def _is_test_path(rel: str, root: Path | None = None) -> bool:
+    return is_test_path(rel, root)
 
 
 def _looks_like_file(tok: str) -> bool:
@@ -117,7 +111,7 @@ def absence_check(feature: str, root: Path) -> dict[str, Any]:
         sections = schema.parse_sections(plan_path.read_text())
         items = [t for t in schema.extract_list_items(sections.get("## Test plan", ""))
                  if t.strip() and not _PLACEHOLDER.match(t)]
-        changed_tests = {c for c in changed if _is_test_path(c)}
+        changed_tests = {c for c in changed if _is_test_path(c, root)}
         # only assert "tests committed but none produced" when we can SEE the diff
         # (worktrees present mid-sprint). Post-integration the worktrees are gone →
         # `changed` is empty → we have no visibility, so we don't claim a miss.
