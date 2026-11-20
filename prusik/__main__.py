@@ -207,6 +207,10 @@ def main():
                              "CLEAR the evidence — never fake a clear with a no-op "
                              "like `-- echo reset` (it appends a tests=0 entry that "
                              "trips the false-clean guard at every advance).")
+    p_cap.add_argument("--same-as", default=None, metavar="PHASE",
+                        help="take the command from the one green capture of this "
+                             "--kind that PHASE recorded in this directory (no command "
+                             "after --); capture then reuses or runs it as usual")
     p_cap.add_argument("--junit", default=None, metavar="GLOB",
                         help="kind=tests: take executed/failed/skipped from the "
                              "JUnit XML reports this run wrote (glob resolved "

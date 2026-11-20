@@ -135,6 +135,18 @@ from pytest's OWN output:
 
     prusik gate capture --feature {feature} --phase regression --kind tests -- <your full test command>
 
+**In a solo sprint, don't type the full-suite command: name the phase that recorded it**
+(fb-4c17172a6c89). The solo builder already captured the full suite under `solo_execute`.
+From the same directory it ran in (usually `worktrees/solo`), run:
+
+    prusik gate capture --feature {feature} --phase regression --kind tests --same-as solo_execute
+
+Capture takes that entry's command verbatim. If the tree is unchanged it reuses the entry and
+runs nothing; if the tree has changed it runs that exact command. Reuse matches only
+byte-exact command text, so a retyped command (even with a trailing ` .`) re-runs the whole
+suite. If `--same-as` refuses (nothing recorded in this directory, or several commands to
+choose from), type the command after `--` as above. Never combine `--same-as` with a command.
+
 **Step 6's project-policy command goes through `--kind policy`, with NO command.** A
 policy pipeline has an exit code and no test count, so under `--kind tests` it counts
 nothing and capture refuses it. `--kind policy` reads `project_policy.command` from

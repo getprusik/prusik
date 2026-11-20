@@ -5082,6 +5082,18 @@ def capture(args) -> int:
     cmd = list(args.command or [])
     if cmd and cmd[0] == "--":
         cmd = cmd[1:]
+    same_as = getattr(args, "same_as", None)
+    if same_as is not None:
+        # fb-4c17172a6c89: reuse keys on byte-exact command text, so a reviewer that retypes
+        # a recorded command (a trailing ` .`) re-runs the suite. `--same-as Q` makes Q's
+        # recorded entry the command's one source instead of the agent's retyping.
+        resolved, refusal = _same_as_command(root, args.feature, same_as, args.kind, cmd)
+        if refusal:
+            print(f"[prusik-gate] capture: {refusal}", file=sys.stderr)
+            return 2
+        print(f"[prusik-gate] capture: --same-as {same_as}: using its recorded command: "
+              f"{resolved}", file=sys.stderr)
+        cmd = [resolved]
     if args.kind == "policy" and (cmd or not getattr(args, "reset", False)):
         # kind=policy takes its command from sprint-config, so none need be given. A
         # bare `--reset` keeps its meaning for every kind: clear, record nothing.
@@ -5151,10 +5163,7 @@ def capture(args) -> int:
     role = _PHASE_ROLE.get(args.phase, "")
     extra = _REVIEWER_INPUTS.get(role, ())
     wt_hash, pre_digests = _judged_snapshot(root, extra)
-    try:
-        exec_rel = str(exec_dir.resolve().relative_to(root.resolve())) or "."
-    except ValueError:
-        exec_rel = "."
+    exec_rel = _exec_rel(root, exec_dir)
     asks_baseline = (getattr(args, "baseline_domain", None)
                      or getattr(args, "baseline_source", None)
                      or getattr(args, "baseline_known_failures", None) is not None)
@@ -5401,6 +5410,71 @@ def _record_repeat(args, entry: dict) -> int:
     return 0
 
 
+def _exec_rel(root: Path, exec_dir: Path) -> str:
+    """`exec_dir` relative to the project root, as evidence entries record it."""
+    try:
+        return str(exec_dir.resolve().relative_to(root.resolve())) or "."
+    except ValueError:
+        return "."
+
+
+def _reusable_green(e: object, kind: str) -> bool:
+    """A prusik-captured green `kind` entry that counted real work and read neither JUnit
+    files nor a declared baseline: the only kind of entry capture reuses, or names as a
+    command source."""
+    from prusik import schema
+    if not isinstance(e, dict):
+        return False
+    np = e.get("nonempty_primitive")
+    if not isinstance(np, dict):
+        return False
+    value = np.get("value")
+    return (e.get("captured_by") == schema.EVIDENCE_CAPTURED_BY and np.get("kind") == kind
+            and e.get("exit_code") == 0
+            and (kind == "policy" or (isinstance(value, int) and value > 0))
+            and "junit_files" not in e and "baseline" not in e)
+
+
+def _same_as_command(root: Path, feature: str, source: str, kind: str,
+                     typed: list[str]) -> tuple[str | None, str | None]:
+    """(command, None) when phase `source` recorded exactly one distinct green `kind`
+    command in this exec dir, else (None, refusal) (fb-4c17172a6c89). The command is taken
+    verbatim from that entry, so capture's ordinary reuse then matches it byte-exact; it is
+    never borrowed from another exec dir, and never normalised."""
+    from prusik import schema
+    if typed:
+        return None, (f"--same-as {source} takes the command from {source}'s evidence; give "
+                      f"no command after `--`, or drop --same-as and type the command.")
+    if kind == "policy":
+        return None, ("--kind policy already reads project_policy.command from "
+                      "sprint-config; drop --same-as.")
+    exec_rel = _exec_rel(root, _resolve_exec_dir(root))
+    path = schema.evidence_path_for(root / "reports" / feature, source)
+    try:
+        ok, _ = schema.validate_evidence_file(path) if path.is_file() else (False, None)
+        entries = schema.load_evidence(path) if ok else []
+    except (OSError, ValueError):
+        entries = []
+    greens = [e for e in entries if _reusable_green(e, kind)]
+    here = list(dict.fromkeys(e.get("command") for e in greens
+                              if e.get("exec_dir") == exec_rel and e.get("command")))
+    if len(here) == 1:
+        return here[0], None
+    if here:
+        listed = "\n".join(f"  -- {c}" for c in here)
+        return None, (f"--same-as {source}: {source} recorded {len(here)} distinct green "
+                      f"--kind {kind} commands in {exec_rel}; drop --same-as and pass the "
+                      f"one you mean, byte-exact, after `--`:\n{listed}")
+    held = sorted({f"--kind {e['nonempty_primitive'].get('kind')} in "
+                   f"{e.get('exec_dir')}" for e in entries
+                   if isinstance(e, dict) and isinstance(e.get("nonempty_primitive"), dict)
+                   and e.get("exit_code") == 0})
+    holds = ("green " + ", ".join(held)) if held else "no green entry"
+    return None, (f"--same-as {source}: {source} has no green --kind {kind} capture in "
+                  f"{exec_rel} (it holds {holds}); nothing run. Type the command after "
+                  f"`--` instead.")
+
+
 def _reusable_capture(root: Path, feature: str, phase: str, kind: str, command: str,
                       exec_rel: str, wt_hash: str) -> dict | None:
     """A green capture another phase of `feature` already recorded for this exact run, or
@@ -5424,16 +5498,8 @@ def _reusable_capture(root: Path, feature: str, phase: str, kind: str, command: 
         except (OSError, ValueError):
             continue
         for e in entries:
-            np = e.get("nonempty_primitive") if isinstance(e, dict) else None
-            if not isinstance(np, dict):
-                continue
-            value = np.get("value")
-            if (e.get("captured_by") == schema.EVIDENCE_CAPTURED_BY
-                    and np.get("kind") == kind and e.get("command") == command
-                    and e.get("exec_dir") == exec_rel and e.get("worktree_hash") == wt_hash
-                    and e.get("exit_code") == 0
-                    and (kind == "policy" or (isinstance(value, int) and value > 0))
-                    and "junit_files" not in e and "baseline" not in e):
+            if (_reusable_green(e, kind) and e.get("command") == command
+                    and e.get("exec_dir") == exec_rel and e.get("worktree_hash") == wt_hash):
                 if path.name == own:
                     return {**e, "reused_from": {"phase": phase}}
                 source = (e.get("reused_from") or {}).get("phase") or _evidence_phase(path.name)
