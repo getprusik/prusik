@@ -1,0 +1,16 @@
+{
+  "id": "fb-6dcd2bec99ad",
+  "created_at": "2026-11-20T23:51:25.137786+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "test_a_long_command_stays_fast exceeded its 1s wall-clock bound once in a full-suite run (1.51s)",
+  "detail": "Full suite at 3570a1e+release-uncommitted-bump (616s, 4579 passed): tests/test_gate_reads_commands.py::test_a_long_command_stays_fast[if-true x2000] measured 1.51s vs assert < 1. Alone: 0.1s (3/3 pass); whole file and all gate tests (673) pass; a 3M-object heap does not slow it (0.02s warm, 0.28s first cold call). Not reproduced by ordering or heap. Neighbouring tests take 1.1-1.8s each with the same 1s-class bounds, so headroom is thin under load. Needs a bound that measures work (e.g. op count or relative to a calibrated baseline), not raw wall-clock.",
+  "feature": "release-uncommitted-bump",
+  "content_hash": "6dcd2bec99ad",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
