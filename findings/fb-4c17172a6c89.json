@@ -1,0 +1,16 @@
+{
+  "id": "fb-4c17172a6c89",
+  "created_at": "2026-11-20T19:38:24.484114+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "capture reuse misses when the reviewer retypes an equivalent command (trailing ' .'), re-running the full suite",
+  "detail": "same-phase-capture-reuse: solo_execute captured '../../.venv/bin/python -m pytest -q' green (4564) at tree 595f6f95666258f4, exec_dir worktrees/solo. regression-sentinel captured '../../.venv/bin/python -m pytest -q .' (it appended ' .' on its own; its spec gives no exact command) at the same tree and exec dir; reuse keys on byte-exact command text, so it re-ran the suite (478s, identical result). Class: reuse depends on an agent retyping a command exactly. The sentinel should be handed or able to look up the recorded command (e.g. capture names the reusable command, or the spec / dispatch tells the sentinel to copy the command from solo_execute.evidence.json) rather than relying on retyping; normalising arbitrary commands is unsafe.",
+  "feature": "same-phase-capture-reuse",
+  "content_hash": "4c17172a6c89",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
