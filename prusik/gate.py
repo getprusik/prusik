@@ -5119,6 +5119,18 @@ def capture(args) -> int:
     role = _PHASE_ROLE.get(args.phase, "")
     extra = _REVIEWER_INPUTS.get(role, ())
     wt_hash, pre_digests = _judged_snapshot(root, extra)
+    try:
+        exec_rel = str(exec_dir.resolve().relative_to(root.resolve())) or "."
+    except ValueError:
+        exec_rel = "."
+    asks_baseline = (getattr(args, "baseline_domain", None)
+                     or getattr(args, "baseline_source", None)
+                     or getattr(args, "baseline_known_failures", None) is not None)
+    if junit is None and not asks_baseline and not getattr(args, "reset", False):
+        reused = _reusable_capture(root, args.feature, args.phase, args.kind, cmd_str,
+                                   exec_rel, wt_hash)
+        if reused is not None:
+            return _record_capture(root, args, reused, wt_hash)
     since = _ev_run_start() if junit is not None else 0
     try:
         proc = subprocess.run(["/bin/bash", "-c", cmd_str], cwd=str(exec_dir), env=cap_env,
@@ -5186,10 +5198,6 @@ def capture(args) -> int:
         suite_baseline.update(root, value)
     out_sha = hashlib.sha256(combined.encode("utf-8")).hexdigest()[:16]
 
-    try:
-        exec_rel = str(exec_dir.resolve().relative_to(root.resolve())) or "."
-    except ValueError:
-        exec_rel = "."
     entry = {
         "phase": args.phase,
         "command": cmd_str,
@@ -5271,6 +5279,14 @@ def capture(args) -> int:
         if skips:
             entry["skips"] = skips
 
+    return _record_capture(root, args, entry, wt_hash)
+
+
+def _record_capture(root: Path, args, entry: dict, wt_hash: str) -> int:
+    """Write `entry` into the phase's evidence file (keeping the prior entries at `wt_hash`),
+    append `reviewer_execution_verified`, and surface flagged skips. One record path for a
+    fresh run and a reuse. Returns the entry's exit code."""
+    from prusik import schema
     reports_dir = root / "reports" / args.feature
     reports_dir.mkdir(parents=True, exist_ok=True)
     ev_path = schema.evidence_path_for(reports_dir, args.phase)
@@ -5300,12 +5316,22 @@ def capture(args) -> int:
     import os as _os
     _os.replace(tmp, ev_path)
 
+    exit_code = entry["exit_code"]
+    kind = entry["nonempty_primitive"]["kind"]
+    value = entry["nonempty_primitive"]["value"]
     ok = exit_code == 0 and (value > 0 or kind == "policy")
+    reused = (entry.get("reused_from") or {}).get("phase")
     ledger.append("reviewer_execution_verified", feature=args.feature,
                    phase=args.phase, exit_code=exit_code,
-                   nonempty=value, kind=kind, ok=ok)
-    print(f"\n[prusik-gate] evidence recorded: {args.phase} "
-          f"exit={exit_code} {kind}={value} → {ev_path.name}")
+                   nonempty=value, kind=kind, ok=ok,
+                   **({"reused_from": reused} if reused else {}))
+    if reused:
+        print(f"[prusik-gate] evidence reused: the {reused} capture of this command "
+              f"(exit={exit_code} {kind}={value}) at tree {entry['worktree_hash']} was "
+              f"recorded for {args.phase}; the command was not re-run → {ev_path.name}")
+    else:
+        print(f"\n[prusik-gate] evidence recorded: {args.phase} "
+              f"exit={exit_code} {kind}={value} → {ev_path.name}")
 
     # v0.18.0: surface flagged skips at capture time so the reviewer sees
     # them in their session (alongside the regression.txt output) — not
@@ -5326,6 +5352,42 @@ def capture(args) -> int:
                               phase=args.phase, test_id=sk["test_id"],
                               reason=sk["reason"], cites=sk["cites"])
     return exit_code
+
+def _reusable_capture(root: Path, feature: str, phase: str, kind: str, command: str,
+                      exec_rel: str, wt_hash: str) -> dict | None:
+    """A green capture another phase of `feature` already recorded for this exact run, or
+    None (fb-d39ef32820e4). Evidence is identified by command, kind, exec dir and the judged
+    tree hash (computed with the REQUESTED phase's reviewer inputs), not by the phase it was
+    filed under, so re-running it under a second phase measures nothing new. The phase's own
+    file is never a source: a same-phase re-capture is deliberate. A red, junit-read or
+    baseline-declaring entry is never reused; an unreadable file is skipped."""
+    from prusik import schema
+    reports_dir = root / "reports" / feature
+    if not reports_dir.is_dir():
+        return None
+    own = schema.evidence_path_for(reports_dir, phase).name
+    for path in sorted(reports_dir.glob("*.evidence.json")):
+        if path.name == own:
+            continue
+        try:
+            ok, _ = schema.validate_evidence_file(path)
+            entries = schema.load_evidence(path) if ok else []
+        except (OSError, ValueError):
+            continue
+        for e in entries:
+            np = e.get("nonempty_primitive") if isinstance(e, dict) else None
+            if not isinstance(np, dict):
+                continue
+            value = np.get("value")
+            if (e.get("captured_by") == schema.EVIDENCE_CAPTURED_BY
+                    and np.get("kind") == kind and e.get("command") == command
+                    and e.get("exec_dir") == exec_rel and e.get("worktree_hash") == wt_hash
+                    and e.get("exit_code") == 0
+                    and (kind == "policy" or (isinstance(value, int) and value > 0))
+                    and "junit_files" not in e and "baseline" not in e):
+                source = (e.get("reused_from") or {}).get("phase") or _evidence_phase(path.name)
+                return {**e, "phase": phase, "reused_from": {"phase": source}}
+    return None
 
 
 # ---- v0.18.0 F §3.5 companion #2 — pytest skip parsing + ground-truth flag ----
