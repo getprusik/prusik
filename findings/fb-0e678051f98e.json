@@ -19,6 +19,11 @@
       "at": "2026-11-02T17:57:34.467578+00:00",
       "role": "adopter",
       "body": "From heredocs-read-as-bash (v0.238.5), wrappers hide a shell from heredoc reading too: 'sudo bash <<EOF', 'env bash <<EOF', 'exec bash <<EOF', 'time bash <<EOF', 'command bash <<EOF', and on a pipe 'cat <<EOF | env bash' and '| exec sh'. _shell_reads_body should use whatever reads past wrappers when this is fixed."
+    },
+    {
+      "at": "2026-11-20T04:44:14.381137+00:00",
+      "role": "prusik-author",
+      "body": "Narrowed 2026-11-19 (post 0.260.0): the WRITE half is covered by the observed-writes tree diff. Probed through the real hooks in building: find -exec rm, xargs rm, env rm, nohup rm, command rm and exec rm all report README.md. Still open is the deny_commands half: 'env git push origin main' and 'command git push origin main' pass pre-tool while a bare 'git push origin main' is denied. No tree state shows a push, so this needs the wrapper reading in _command_starts/_prefix_end for _named_commands (and _shell_reads_body for wrapped heredoc shells)."
     }
   ],
   "resolution": null,
