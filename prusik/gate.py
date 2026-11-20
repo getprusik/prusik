@@ -3910,19 +3910,49 @@ _FULL_SUITE_REMEDY = ("`prusik prove --kind tests -- <full test command>`, or a 
                       "full-suite `prusik gate capture --kind tests`")
 
 
-def _green_tests_count(r: dict, feature: str) -> int | None:
-    """The executed-test count when ledger record `r` is green tests proof for
-    `feature`'s full-suite check, else None. Two proof kinds, one rule: a proven
-    `prove_run`, or a capture prusik itself recorded (`reviewer_execution_verified`,
-    ok = exit 0 and tests > 0) for THIS feature (fb-6916f692908a)."""
-    if r.get("kind") != "tests":
-        return None
-    if r.get("event") == "prove_run" and r.get("proven"):
+def _proven_prove_run_count(r: dict) -> int | None:
+    """The executed-test count when ledger record `r` is a proven tests `prove_run`, else
+    None. A prove_run records no tree hash, so the full-suite check credits it inside the
+    current phase's window."""
+    if r.get("event") == "prove_run" and r.get("kind") == "tests" and r.get("proven"):
         return int(r.get("executed", 0) or 0)
-    if (r.get("event") == "reviewer_execution_verified" and r.get("ok") is True
-            and r.get("feature") == feature):
-        return int(r.get("nonempty", 0) or 0)
     return None
+
+
+def _current_tree_capture_counts(root: Path, feature: str) -> list[int]:
+    """The test counts of `feature`'s green tests captures taken at the tree being judged now
+    (fb-1f42f449f29d). Capture proof is a statement about a tree, so it is read from the
+    evidence entries, wherever in the sprint they were captured, and an entry counts only when
+    its `worktree_hash` is the current hash for its phase's reviewer inputs (the hash
+    `_evidence_unsatisfied` calls current). Each entry is judged on its own; an unreadable
+    or invalid file is skipped."""
+    from prusik import schema
+    reports_dir = root / "reports" / feature
+    if not reports_dir.is_dir():
+        return []
+    hashes: dict[tuple[str, ...], str] = {}
+    counts: list[int] = []
+    for path in sorted(reports_dir.glob("*.evidence.json")):
+        try:
+            ok, _ = schema.validate_evidence_file(path)
+            entries = schema.load_evidence(path) if ok else []
+        except (OSError, ValueError):
+            continue
+        extra = _REVIEWER_INPUTS.get(_PHASE_ROLE.get(_evidence_phase(path.name), ""), ())
+        for e in entries:
+            np = e.get("nonempty_primitive") if isinstance(e, dict) else None
+            if not isinstance(np, dict):
+                continue
+            value = np.get("value")
+            if not (e.get("captured_by") == schema.EVIDENCE_CAPTURED_BY
+                    and np.get("kind") == "tests" and e.get("exit_code") == 0
+                    and isinstance(value, int) and value > 0):
+                continue
+            if extra not in hashes:
+                hashes[extra] = _worktree_substantive_hash(root, extra)
+            if e.get("worktree_hash") == hashes[extra]:
+                counts.append(value)
+    return counts
 
 
 def _full_suite_gate(current: str, target_phase: str, feature: str) -> int | None:
@@ -3930,8 +3960,9 @@ def _full_suite_gate(current: str, target_phase: str, feature: str) -> int | Non
     v1+v2, and reviewing→integrating, fb-90cfcfa8b918). Returns 2 to BLOCK (only when
     `require_full_suite_at_build` is set in sprint-config, or shared test-infra was
     touched), else None to proceed (printing an advisory if the full suite wasn't
-    proven). Proof is a proven `prove_run` OR a green `prusik gate capture` of this
-    feature (`reviewer_execution_verified`, fb-6916f692908a) recorded this phase. The
+    proven). Proof is a proven `prove_run` recorded this phase, OR a green `prusik gate
+    capture` of this feature (fb-6916f692908a) whose evidence entry is at the tree being
+    judged now, in whichever phase it was taken (fb-1f42f449f29d). The
     learned test-count baseline distinguishes a real full-suite proof from a subset
     of just-the-new-tests."""
     try:
@@ -3966,7 +3997,8 @@ def _full_suite_gate(current: str, target_phase: str, feature: str) -> int | Non
                        if r.get("event") == "phase_advance"
                        and r.get("to_phase") == current), default="")
         green = [n for r in records if r.get("ts", "") >= entered
-                 and (n := _green_tests_count(r, feature)) is not None]
+                 and (n := _proven_prove_run_count(r)) is not None]
+        green += _current_tree_capture_counts(root, feature)
         best = max(green) if green else None
         baseline = suite_baseline.load(root)
         if best is None:

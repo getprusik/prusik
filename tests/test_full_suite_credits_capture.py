@@ -5,6 +5,7 @@ full-suite run (fb-6916f692908a)."""
 from __future__ import annotations
 
 import io
+import json
 import os
 import shutil
 from contextlib import redirect_stderr, redirect_stdout
@@ -13,17 +14,30 @@ from unittest import mock
 import yaml
 
 from tests._common import _mktmp_project, _write_ledger  # noqa: F401,E402
-from prusik import gate, ledger, shared_infra, suite_baseline
+from prusik import gate, ledger, schema, shared_infra, suite_baseline
 
 _ENTERED = "2026-06-05T12:00:00+00:00"
 _IN_WINDOW = "2026-06-05T12:30:00+00:00"
-_BEFORE = "2026-06-05T11:00:00+00:00"
 
 
-def _capture(*, feature="feat", ok=True, nonempty=906, kind="tests", ts=_IN_WINDOW):
-    return {"ts": ts, "event": "reviewer_execution_verified", "feature": feature,
-            "phase": "regression", "exit_code": 0 if ok else 1, "nonempty": nonempty,
-            "kind": kind, "ok": ok}
+def _capture(*, feature="feat", ok=True, nonempty=906, kind="tests", stale=False):
+    """A capture as prusik records it: an evidence entry (fb-1f42f449f29d credits capture
+    proof by the tree it ran against, not by a ledger window). `stale` stamps an older tree."""
+    return {"_capture": True, "feature": feature, "ok": ok, "nonempty": nonempty,
+            "kind": kind, "stale": stale}
+
+
+def _write_capture(proj, c):
+    d = proj / "reports" / c["feature"]
+    d.mkdir(parents=True, exist_ok=True)
+    wt_hash = "f" * 16 if c["stale"] else gate._worktree_substantive_hash(proj)
+    schema.evidence_path_for(d, "regression").write_text(json.dumps({
+        "schema_version": schema.EVIDENCE_SCHEMA_VERSION, "entries": [{
+            "phase": "regression", "command": "pytest -q",
+            "exit_code": 0 if c["ok"] else 1,
+            "nonempty_primitive": {"kind": c["kind"], "value": c["nonempty"]},
+            "output_sha": "0" * 16, "worktree_hash": wt_hash, "exec_dir": ".",
+            "captured_by": schema.EVIDENCE_CAPTURED_BY}]}))
 
 
 def _setup(proj, *, current, events, require=False, baseline=906):
@@ -33,8 +47,12 @@ def _setup(proj, *, current, events, require=False, baseline=906):
     (proj / ".claude").mkdir(exist_ok=True)
     (proj / ".claude" / "sprint-config.yaml").write_text(
         yaml.safe_dump({"require_full_suite_at_build": require}))
+    shutil.rmtree(proj / "reports", ignore_errors=True)
+    for c in (e for e in events if e.get("_capture")):
+        _write_capture(proj, c)
     _write_ledger(proj, [{"ts": _ENTERED, "event": "phase_advance",
-                          "to_phase": current, "feature": "feat"}] + events)
+                          "to_phase": current, "feature": "feat"}]
+                  + [e for e in events if not e.get("_capture")])
 
 
 def _run(current, target, *, shared=()):
@@ -105,7 +123,7 @@ def test_weaker_captures_are_not_credited():
     cases = {
         "red": _capture(ok=False),
         "other feature": _capture(feature="other"),
-        "before the phase": _capture(ts=_BEFORE),
+        "older tree": _capture(stale=True),
         "subset": _capture(nonempty=133),
         "non-tests kind": _capture(kind="lint"),
     }
@@ -120,11 +138,11 @@ def test_weaker_captures_are_not_credited():
 
 
 def test_capture_before_a_rewind_is_not_credited():
-    """reviewing capture → rewind to building → back to reviewing: the old capture
-    predates the latest entry into reviewing, so it is stale."""
+    """reviewing capture → rewind to building → rebuilt → back to reviewing: the old
+    capture is of the tree before the rebuild, so it is stale."""
     def body(proj):
         _setup(proj, current="reviewing", require=True, events=[
-            _capture(ts="2026-06-05T12:10:00+00:00"),
+            _capture(stale=True),
             {"ts": "2026-06-05T12:20:00+00:00", "event": "phase_advance",
              "to_phase": "building", "feature": "feat"},
             {"ts": "2026-06-05T12:40:00+00:00", "event": "phase_advance",

@@ -3,6 +3,11 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.263.0] — The full-suite check credits a green capture of the tree it judges
+
+- **Capture proof is keyed by tree, not by phase window (fb-1f42f449f29d).** The full-suite check at building and reviewing exit counted a capture only when its ledger record fell inside the current phase, so a full suite captured green in `solo_execute` and reused by the reviewers drew "no green full-suite tests run ... this reviewing phase" for a proven tree, while an in-window capture stayed credited after the code changed. It now reads the feature's evidence entries: a prusik-captured tests entry with exit 0 and a positive count counts when its `worktree_hash` is the current hash for its phase's reviewer inputs, whichever phase took it. A proven `prove_run`, which records no tree hash, is still credited inside the phase window. The subset rule, the shared-test-infra block and the texts are unchanged.
+- **Closure manifest.** `fb-1f42f449f29d` joins `_closures.json`, pinned at 0.263.0.
+
 ## [0.262.0] — A green capture credits every phase that judges the same tree
 
 - **A capture is not re-run under a second phase (fb-d39ef32820e4).** The reviewing gate reads only `regression.evidence.json`, so a green full-suite capture recorded under `solo_execute` was ignored and regression-sentinel re-ran the identical command on the same tree (red-on-fork-point: a second 4527-test run, about 4m38s). Before running, `prusik gate capture` now looks for a green entry another phase of the same feature recorded with the same command, kind and exec dir, at the tree hash the requested phase would stamp now (so `conventions`, which also judges `CLAUDE.md`, never matches a suite run). On a match it copies the entry into the requested phase's file with `reused_from`, appends `reviewer_execution_verified` with `reused_from` (the full-suite check credits it), prints that the command was not re-run, and exits 0. A red source, a `--junit`/`--baseline-*`/`--reset` request, a source entry with `junit_files` or `baseline`, the phase's own earlier entries and an unreadable file never reuse. A fresh run and a reuse share one record path (`_record_capture`). The regression-sentinel spec says so.
