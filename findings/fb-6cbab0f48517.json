@@ -1,0 +1,16 @@
+{
+  "id": "fb-6cbab0f48517",
+  "created_at": "2026-11-20T18:58:59.204014+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "capture re-runs the full suite when the same phase already holds a green entry at the current tree",
+  "detail": "engine-agents-linked: operator captured the full suite --phase regression from the solo worktree (exit 0, 4559). regression-sentinel then ran the same capture command, same phase, same tree; reuse (0.262.0) excludes the phase's own earlier entries, so it re-ran the identical suite (~300s) for an identical result. Either a same-phase same-tree green entry short-circuits, or the trivial-lane flow should capture under solo_execute so the sentinel reuses.",
+  "feature": "engine-agents-linked",
+  "content_hash": "6cbab0f48517",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
