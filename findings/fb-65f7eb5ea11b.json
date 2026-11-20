@@ -1,0 +1,16 @@
+{
+  "id": "fb-65f7eb5ea11b",
+  "created_at": "2026-11-20T19:17:08.806693+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "pin-refusal hint says run scripts/release.sh, which dies when the bump is staged but uncommitted",
+  "detail": "0.264.0 release: operator bumped prusik/__init__.py + README by hand (staged, not committed). Every hook then refused (installed 0.263.0 behind pin) and the refusal said to run '! scripts/release.sh'. With current==VERSION the script skips the bump step, then dies at 'the last commit touching prusik/__init__.py is not the 0.264.0 bump'. Needed: '! git checkout HEAD -- README.md prusik/__init__.py && scripts/release.sh'. The refusal (or release.sh) should detect an uncommitted bump and say so / handle it.",
+  "feature": null,
+  "content_hash": "65f7eb5ea11b",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
