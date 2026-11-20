@@ -5162,6 +5162,8 @@ def capture(args) -> int:
         reused = _reusable_capture(root, args.feature, args.phase, args.kind, cmd_str,
                                    exec_rel, wt_hash)
         if reused is not None:
+            if reused["reused_from"]["phase"] == args.phase:
+                return _record_repeat(args, reused)
             return _record_capture(root, args, reused, wt_hash)
     since = _ev_run_start() if junit is not None else 0
     try:
@@ -5385,22 +5387,37 @@ def _record_capture(root: Path, args, entry: dict, wt_hash: str) -> int:
                               reason=sk["reason"], cites=sk["cites"])
     return exit_code
 
+def _record_repeat(args, entry: dict) -> int:
+    """A capture whose green entry is already in the phase's own evidence file at this tree
+    (fb-6cbab0f48517): the file is left as it is, the run is not repeated, and the ledger
+    records the confirmation. Returns 0."""
+    np = entry["nonempty_primitive"]
+    ledger.append("reviewer_execution_verified", feature=args.feature, phase=args.phase,
+                   exit_code=0, nonempty=np["value"], kind=np["kind"], ok=True,
+                   reused_from=args.phase)
+    print(f"[prusik-gate] evidence already recorded: {args.phase} holds a green capture of "
+          f"this command (exit=0 {np['kind']}={np['value']}) at tree {entry['worktree_hash']}; "
+          f"the command was not re-run (--reset forces a fresh run)")
+    return 0
+
+
 def _reusable_capture(root: Path, feature: str, phase: str, kind: str, command: str,
                       exec_rel: str, wt_hash: str) -> dict | None:
     """A green capture another phase of `feature` already recorded for this exact run, or
     None (fb-d39ef32820e4). Evidence is identified by command, kind, exec dir and the judged
     tree hash (computed with the REQUESTED phase's reviewer inputs), not by the phase it was
     filed under, so re-running it under a second phase measures nothing new. The phase's own
-    file is never a source: a same-phase re-capture is deliberate. A red, junit-read or
-    baseline-declaring entry is never reused; an unreadable file is skipped."""
+    file is searched first: a green entry there is the same run already recorded, and the
+    returned entry's `reused_from` names the phase itself (fb-6cbab0f48517); `--reset` is
+    the forced re-run. A red, junit-read or baseline-declaring entry is never reused; an
+    unreadable file is skipped."""
     from prusik import schema
     reports_dir = root / "reports" / feature
     if not reports_dir.is_dir():
         return None
     own = schema.evidence_path_for(reports_dir, phase).name
-    for path in sorted(reports_dir.glob("*.evidence.json")):
-        if path.name == own:
-            continue
+    paths = sorted(reports_dir.glob("*.evidence.json"), key=lambda q: (q.name != own, q.name))
+    for path in paths:
         try:
             ok, _ = schema.validate_evidence_file(path)
             entries = schema.load_evidence(path) if ok else []
@@ -5417,6 +5434,8 @@ def _reusable_capture(root: Path, feature: str, phase: str, kind: str, command: 
                     and e.get("exit_code") == 0
                     and (kind == "policy" or (isinstance(value, int) and value > 0))
                     and "junit_files" not in e and "baseline" not in e):
+                if path.name == own:
+                    return {**e, "reused_from": {"phase": phase}}
                 source = (e.get("reused_from") or {}).get("phase") or _evidence_phase(path.name)
                 return {**e, "phase": phase, "reused_from": {"phase": source}}
     return None

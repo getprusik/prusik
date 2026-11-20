@@ -3,6 +3,11 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.265.0] — A green capture is not re-run under its own phase
+
+- **A same-phase repeat reuses the phase's own entry (fb-6cbab0f48517).** Capture reuse (0.262.0) skipped the requested phase's own evidence file, so a second identical capture under one phase re-ran the suite: the operator captured `--phase regression`, then regression-sentinel ran the same capture on the same tree for an identical result (~300s). The phase's own file is now searched first. A green entry there with the same command, kind, exec dir and judged tree hash is the run already recorded: the command is not re-run, the evidence file is left as it is, `reviewer_execution_verified` is appended with `reused_from` naming the phase itself, and the output says so and names `--reset`, which still forces a fresh run. A red own entry, changed code, a `--junit` or `--baseline-*` request and `--reset` still run the command. The regression-sentinel spec says so.
+- **Closure manifest.** `fb-6cbab0f48517` joins `_closures.json`, pinned at 0.265.0.
+
 ## [0.264.0] — The engine repo registers the packaged role library
 
 - **Role dispatch resolves in the engine repo (fb-d0717082827b).** `/sprint-start` and `/sprint-run` dispatch roles with `Agent(subagent_type=<role>)`, which Claude Code resolves from `.claude/agents/`. The engine repo had none (adopters get it from `prusik init`), so every manual dispatch failed with "Agent type not found" and the operator stood in a `general-purpose` agent without the role's tool limits at roughly ten times the spec's token budget. The engine's `.claude/agents` is now a relative symlink to `prusik/templates/.claude/agents`, so the shipped specs remain the one source of truth and each worktree resolves its own checkout's specs. A moat test rejects a copied directory.

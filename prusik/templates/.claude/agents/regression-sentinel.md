@@ -150,7 +150,9 @@ judgement is unchanged), and writes `reports/{feature}/regression.evidence.json`
 Call it once per suite — entries accumulate. When this sprint already captured the same
 command green under another phase (e.g. `solo_execute`), with the same kind, exec dir and
 tree, capture reuses that entry instead of re-running it, and its output says so
-(fb-d39ef32820e4). The reviewing gate will **reject a
+(fb-d39ef32820e4). The same holds under this phase: when `regression.evidence.json`
+already holds that green capture at this tree, capture does not re-run it and says the
+evidence is already recorded (fb-6cbab0f48517). `--reset` forces a fresh run. The reviewing gate will **reject a
 PASS** whose evidence shows a nonzero exit or **zero executed tests** (an
 all-skip / auto-skipped / nothing-collected phase can no longer be greenlit).
 The numbers come from the tool, not from you — you cannot hand-write this file
