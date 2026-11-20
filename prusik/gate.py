@@ -667,6 +667,163 @@ def _stage_name(stage, bindings: dict[str, tuple[int, str]]) -> str:
     return os.path.basename(_expand(stage.words[0].text, stage.pos, bindings)) if stage.words else ""
 
 
+class _Wrapper:
+    """How a wrapper's words read before the command it runs: the flags that take the next word
+    (short as one letter, long as `--name`), the flags that stand alone, whether `NAME=value`
+    words set the command's environment, and how many operands precede the command."""
+    __slots__ = ("short_value", "short_lone", "long_value", "long_lone", "assigns", "operands")
+
+    def __init__(self, short_value: str = "", short_lone: str = "",
+                 long_value: frozenset[str] = frozenset(), long_lone: frozenset[str] = frozenset(),
+                 assigns: bool = False, operands: int = 0) -> None:
+        self.short_value, self.short_lone = short_value, short_lone
+        self.long_value, self.long_lone = long_value, long_lone
+        self.assigns, self.operands = assigns, operands
+
+
+_WRAPPERS: dict[str, _Wrapper] = {
+    "command": _Wrapper(short_lone="p"),
+    "builtin": _Wrapper(),
+    "exec": _Wrapper(short_value="a", short_lone="cl"),
+    "nohup": _Wrapper(),
+    "time": _Wrapper(short_value="of", short_lone="pav",
+                     long_value=frozenset(("--output", "--format")),
+                     long_lone=frozenset(("--append", "--verbose", "--portability"))),
+    "env": _Wrapper(short_value="uCS", short_lone="i0v", assigns=True,
+                    long_value=frozenset(("--unset", "--chdir", "--split-string")),
+                    long_lone=frozenset(("--ignore-environment", "--null", "--debug"))),
+    "sudo": _Wrapper(short_value="ugpCDrtUTR", short_lone="AbEeHiKklnPSsVv", assigns=True,
+                     long_value=frozenset(("--user", "--group", "--host", "--prompt",
+                                           "--close-from", "--chdir", "--role", "--type",
+                                           "--other-user", "--command-timeout", "--chroot")),
+                     long_lone=frozenset(("--askpass", "--background", "--preserve-env",
+                                          "--set-home", "--login", "--non-interactive",
+                                          "--shell", "--stdin", "--reset-timestamp",
+                                          "--remove-timestamp", "--validate"))),
+    "doas": _Wrapper(short_value="uC", short_lone="nsL"),
+    "nice": _Wrapper(short_value="n", long_value=frozenset(("--adjustment",))),
+    "timeout": _Wrapper(short_value="sk", short_lone="v", operands=1,
+                        long_value=frozenset(("--signal", "--kill-after")),
+                        long_lone=frozenset(("--preserve-status", "--foreground", "--verbose"))),
+    "stdbuf": _Wrapper(short_value="ioe",
+                       long_value=frozenset(("--input", "--output", "--error"))),
+    "xargs": _Wrapper(short_value="adEILnPs", short_lone="0oprtxeil",
+                      long_value=frozenset(("--arg-file", "--delimiter", "--max-args",
+                                            "--max-procs", "--max-chars",
+                                            "--process-slot-var")),
+                      long_lone=frozenset(("--null", "--open-tty", "--interactive",
+                                           "--no-run-if-empty", "--verbose", "--exit",
+                                           "--show-limits", "--eof", "--replace",
+                                           "--max-lines"))),
+}
+_FIND_EXECS = frozenset(("-exec", "-execdir", "-ok", "-okdir"))
+_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_NICE_NUMBER_RE = re.compile(r"-\d+")
+
+
+def _flag_skips(spec: _Wrapper, word: str) -> tuple[int, ...]:
+    """How many words a wrapper flag consumes, itself included: (1,) alone, (2,) with its value,
+    and (1, 2) for a flag the table doesn't know, so it is read both ways."""
+    if word.startswith("--"):
+        name, has_value, _ = word.partition("=")
+        if has_value or name in spec.long_lone:
+            return (1,)
+        return (2,) if name in spec.long_value else (1, 2)
+    for at, letter in enumerate(word[1:], 1):
+        if letter in spec.short_value:
+            return (1,) if at < len(word) - 1 else (2,)
+        if letter not in spec.short_lone:
+            return (1, 2)
+    return (1,)
+
+
+def _command_spans(stage, bindings: dict[str, tuple[int, str]]) -> list[tuple[int, int]]:
+    """Each `(start, end)` word span of a simple stage where a command begins: the whole stage,
+    then the command past each wrapper in `_WRAPPERS` (`env git push`, `sudo -u me git push`,
+    `builtin command git push`), and the command after each `find -exec`, `-execdir`, `-ok` and
+    `-okdir`, ending at its `;` or `{} +`. `command -v` and `-V` run nothing.
+
+    A flag the wrapper's table doesn't know, or a word the command line never set (`env $X git`),
+    is read both ways, alone and as taking the next word, so a wrapper the reader can't fully
+    parse over-reads and never under-reads. Spans come in word order, each once."""
+    words = [_expand(w.text, stage.pos, bindings) for w in stage.words]
+    unset = [bool(w.scripts) or "$" in text or "`" in text
+             for w, text in zip(stage.words, words)]
+    todo = [(0, len(words))] if words else []
+    seen: set[tuple[int, int]] = set()
+    while todo:
+        start, end = todo.pop()
+        if start >= end or (start, end) in seen:
+            continue
+        seen.add((start, end))
+        name = os.path.basename(words[start])
+        if name == "find":
+            todo += _find_execs(words, start, end)
+        spec = _WRAPPERS.get(name)
+        if spec is None:
+            continue
+        # States in the wrapper's words: (word index, operands still to come, flags still read).
+        at = [(start + 1, spec.operands, True)]
+        visited: set[tuple[int, int, bool]] = set()
+        while at:
+            state = at.pop()
+            i, operands, flags = state
+            if i >= end or state in visited:
+                continue
+            visited.add(state)
+            word = words[i]
+            if unset[i]:
+                at += [(i + 1, operands, flags), (i + 2, operands, flags)]
+                if operands:
+                    at.append((i + 1, operands - 1, flags))
+                todo.append((i, end))
+            elif flags and word == "--":
+                at.append((i + 1, operands, False))
+            elif flags and name == "env" and word == "-":
+                at.append((i + 1, operands, flags))
+            elif flags and word.startswith("-") and len(word) > 1:
+                if name == "command" and not word.startswith("--") \
+                        and ("v" in word or "V" in word):
+                    continue                    # `command -v git` names, runs nothing
+                if name == "nice" and _NICE_NUMBER_RE.fullmatch(word):
+                    at.append((i + 1, operands, flags))
+                    continue
+                at += [(i + skip, operands, flags) for skip in _flag_skips(spec, word)]
+            elif spec.assigns and _ASSIGNMENT_RE.match(word):
+                at.append((i + 1, operands, flags))
+            elif operands:
+                at.append((i + 1, operands - 1, flags))
+            else:
+                todo.append((i, end))
+    return sorted(seen, key=lambda span: (span[0], -span[1]))
+
+
+def _find_execs(words: list[str], start: int, end: int) -> list[tuple[int, int]]:
+    """The command span after each `-exec`-like action of the `find` at `start`, up to its `;`,
+    or its `+` right after a `{}`; an unterminated one runs to `end`."""
+    found: list[tuple[int, int]] = []
+    i = start + 1
+    while i < end:
+        if words[i] in _FIND_EXECS:
+            j = i + 1
+            while j < end and not (words[j] == ";" or (words[j] == "+" and words[j - 1] == "{}")):
+                j += 1
+            found.append((i + 1, j))
+            i = j
+        i += 1
+    return found
+
+
+def _argv_at(stage, span: tuple[int, int], bindings: dict[str, tuple[int, str]]) -> list[str]:
+    """The expanded argv of the command at `span` in `stage`, its process substitutions left out
+    as `_arguments` does."""
+    start, end = span
+    words = stage.words[start:end]
+    return [_expand(w.text, stage.pos, bindings)
+            for w in (words[0], *(w for w in words[1:]
+                                  if not (w.bare and w.text[:2] in ("<(", ">("))))]
+
+
 def _arguments(simple: bash_reader.Simple, after: int = 1) -> list[bash_reader.Word]:
     """The words of `simple` from index `after` on, leaving out each process substitution
     (`>(cat)`): it is a file the shell opens, no argument a command's flags or operands are read
@@ -710,12 +867,10 @@ def _nested_heredocs(stage) -> list[bash_reader.Heredoc]:
 
 
 def _simple_runs_shell(simple: bash_reader.Simple) -> bool:
-    words = simple.words
-    if not words:
-        return False
-    name = os.path.basename(words[0].text)
-    return name in _SHELLS or (
-        name == "xargs" and any(os.path.basename(w.text) in _SHELLS for w in words[1:]))
+    """True if a command `simple` runs, past any wrapper (`xargs sh`, `env bash`), is a shell."""
+    words = [_expand(w.text, simple.pos, {}) for w in simple.words]
+    return any(os.path.basename(words[start]) in _SHELLS
+               for start, _end in _command_spans(simple, {}))
 
 
 def _runs_shell(stage) -> bool:
@@ -744,17 +899,18 @@ def _code_items(stage, pipeline: bash_reader.Pipeline, index: int,
     bindings = bindings if bindings is not None else {}
     code: list[tuple[str, str | None, bash_reader.Heredoc | None]] = []
     if isinstance(stage, bash_reader.Simple):
-        if stage.words:
-            name = _stage_name(stage, bindings)
+        reads_stdin = False
+        for span in _command_spans(stage, bindings):
+            argv = _argv_at(stage, span, bindings)
+            name = os.path.basename(argv[0])
             if name in _SHELLS or name in _CODE_RUNNERS:
-                argv = [_expand(w.text, stage.pos, bindings)
-                        for w in (stage.words[0], *_arguments(stage))]
                 payload = _shell_code(name, argv)
                 if payload:
                     code.append((payload, _DEFERRED if name == "trap" else None, None))
-            if name in _SHELLS or name in _SOURCERS or name == "eval":
-                code += _stdin_code(stage, bindings)
-                code += [(h.body, None, h) for h in _nested_heredocs(stage)]
+            reads_stdin = reads_stdin or name in _SHELLS or name in _SOURCERS or name == "eval"
+        if reads_stdin:
+            code += _stdin_code(stage, bindings)
+            code += [(h.body, None, h) for h in _nested_heredocs(stage)]
     elif any(r.op in ("<<", "<<-", "<<<") for r in stage.redirects) and _runs_shell(stage):
         code += _stdin_code(stage, bindings)
     if _shell_after(pipeline)[index]:
@@ -1038,14 +1194,16 @@ def _named_commands(cmd: str, names: frozenset[str], start: str = "") -> list[tu
 
     A name the command line never set stays unread: `$G push` could be anything, and refusing it
     would refuse `$PYTHON -m pytest`. The same goes for a substitution before the command word.
-    `sudo`, `env` and the like hide a command from this reading. Code nested past
+    A command behind a wrapper is read too; see `_command_spans`. Code nested past
     `_MAX_CODE_DEPTH` raises, which `pre_tool` turns into a refusal."""
     found: list[tuple[list[str], str]] = []
     for stage, cwd, bindings in _stages(cmd, start):
-        if isinstance(stage, bash_reader.Simple) and _stage_name(stage, bindings) in names:
-            argv = [_expand(w.text, stage.pos, bindings)
-                    for w in (stage.words[0], *_arguments(stage))]
-            found.append((argv, cwd))
+        if not isinstance(stage, bash_reader.Simple):
+            continue
+        for span in _command_spans(stage, bindings):
+            argv = _argv_at(stage, span, bindings)
+            if os.path.basename(argv[0]) in names:
+                found.append((argv, cwd))
     return found
 
 
