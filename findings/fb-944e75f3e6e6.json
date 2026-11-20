@@ -10,7 +10,22 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": ".venv/bin/python -m pytest tests/test_brief_release_owned.py -q -p no:cacheprovider",
+    "fixed_in": "0.261.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-20T07:23:33.661849+00:00",
+      "exit": 0,
+      "executed_count": 7,
+      "verdict": true,
+      "why": "7 test(s) executed, exit 0",
+      "worktree_hash": "52eb557-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
