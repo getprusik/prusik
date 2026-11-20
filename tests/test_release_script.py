@@ -119,3 +119,82 @@ def test_closures_stamp_the_pending_changelog_version_before_the_bump(tmp_path):
     assert changelog.development_version(tmp_path) == "1.1.0"
     (tmp_path / "CHANGELOG.md").write_text("## [0.9.0] — older\n")              # never lower
     assert changelog.development_version(tmp_path) == "1.1.0"
+
+
+# ── an uncommitted hand-bump is finished, never swallowed (fb-65f7eb5ea11b) ───────────────
+# moat-finding: fb-65f7eb5ea11b
+
+_BUMPED_INIT = '__version__ = "1.1.0"\n'
+_BUMPED_README = "pinned to 1 findings\n- uses: getprusik/prusik@v1.1.0\n"
+
+
+def _stop_at_network(env: dict) -> None:
+    gh = Path(env["PATH"].split(os.pathsep)[0]) / "gh"
+    gh.write_text("#!/usr/bin/env bash\nexit 7\n")
+    gh.chmod(0o755)
+
+
+def _assert_bump_committed(co: Path) -> None:
+    assert _git(co, "log", "-1", "--format=%s") == "1.1.0: a thing"
+    assert sorted(_git(co, "show", "--name-only", "--format=", "HEAD").split()) == \
+        ["README.md", "prusik/__init__.py"]
+    assert _git(co, "show", "HEAD:prusik/__init__.py") + "\n" == _BUMPED_INIT
+    assert _git(co, "show", "HEAD:README.md") + "\n" == _BUMPED_README
+    assert _git(co, "status", "--porcelain") == ""
+    assert _git(co, "rev-parse", "origin/main") == _git(co, "rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize("staged", [False, True])
+def test_an_uncommitted_bump_is_released_from_head(checkout, staged):
+    co, env = checkout
+    _suite(co, 0)
+    _stop_at_network(env)
+    (co / "prusik" / "__init__.py").write_text(_BUMPED_INIT)
+    (co / "README.md").write_text(_BUMPED_README)
+    if staged:
+        _git(co, "add", "prusik/__init__.py", "README.md")
+    p = _release(co, env)
+    assert "is not the 1.1.0 bump" not in p.stderr, p.stderr
+    _assert_bump_committed(co)
+
+
+def test_a_partial_hand_bump_is_completed(checkout):
+    co, env = checkout
+    _suite(co, 0)
+    _stop_at_network(env)
+    (co / "prusik" / "__init__.py").write_text(_BUMPED_INIT)
+    _git(co, "add", "prusik/__init__.py")
+    _release(co, env)
+    _assert_bump_committed(co)
+
+
+@pytest.mark.parametrize("where", ["README.md", "CHANGELOG.md"])
+def test_an_edit_beyond_the_bump_is_refused_and_preserved(checkout, where):
+    co, env = checkout
+    _suite(co, 0)
+    head = _git(co, "rev-parse", "HEAD")
+    (co / "prusik" / "__init__.py").write_text(_BUMPED_INIT)
+    if where == "README.md":                            # the bump plus one more line
+        (co / where).write_text(_BUMPED_README + "an operator's own line\n")
+    else:                                               # another path dirty
+        (co / where).write_text((co / where).read_text() + "an operator's own line\n")
+    before = {f: (co / f).read_bytes() for f in ("prusik/__init__.py", "README.md", "CHANGELOG.md")}
+    p = _release(co, env)
+    assert p.returncode != 0 and "not clean" in p.stderr
+    assert "bump " not in p.stderr                      # refused before any bump
+    assert {f: (co / f).read_bytes() for f in before} == before
+    assert _git(co, "rev-parse", "HEAD") == head
+
+
+def test_a_red_suite_reverts_a_staged_bump_to_head(checkout):
+    co, env = checkout
+    _suite(co, 1)
+    head = _git(co, "rev-parse", "HEAD")
+    (co / "prusik" / "__init__.py").write_text(_BUMPED_INIT)
+    (co / "README.md").write_text(_BUMPED_README)
+    _git(co, "add", "prusik/__init__.py", "README.md")
+    p = _release(co, env)
+    assert p.returncode != 0 and "bump reverted" in p.stderr, p.stderr
+    assert (co / "prusik" / "__init__.py").read_text() == '__version__ = "1.0.0"\n'
+    assert _git(co, "show", ":prusik/__init__.py") + "\n" == '__version__ = "1.0.0"\n'
+    assert _git(co, "rev-parse", "HEAD") == head and _git(co, "status", "--porcelain") == ""

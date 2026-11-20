@@ -11,9 +11,10 @@
 # Version and title come from the top `## [X.Y.Z] — title` heading of CHANGELOG.md, and the
 # release notes are that section. Everything else in the release (CHANGELOG, closed findings,
 # moat tags, closure rows from scripts/regen_closures.py, which stamps that same pending
-# version, and the README findings count) must already be committed: the tree must be clean.
+# version, and the README findings count) must already be committed: the tree must be clean,
+# except for an uncommitted hand-bump of the two bump files, which is redone from HEAD.
 #
-# Rerunning resumes. Each step is skipped when its result already exists (version bumped, HEAD
+# Rerunning resumes. Each step is skipped when its result already exists (bump committed, HEAD
 # on origin, release created, publish run green, wheel on PyPI, installed). If a step fails
 # after the bump, the hooks refuse and the refusal says to run `! scripts/release.sh`; the `!`
 # prefix does not go through hooks.
@@ -32,8 +33,10 @@ heading=$(grep -m1 -E '^## \[[0-9]+\.[0-9]+\.[0-9]+\] — ' CHANGELOG.md) \
 VERSION=$(sed -E 's/^## \[([0-9.]+)\] — .*/\1/' <<<"$heading")
 TITLE=$(sed -E 's/^## \[[0-9.]+\] — //' <<<"$heading")
 TAG="v$VERSION"
-current=$(sed -nE 's/^__version__ = "([^"]+)"/\1/p' prusik/__init__.py)
-[ -n "$current" ] || die "no __version__ in prusik/__init__.py."
+# Whether the bump happened is a fact about HEAD, not the working tree: an operator's
+# uncommitted hand-bump is not a bump (fb-65f7eb5ea11b).
+current=$(git show HEAD:prusik/__init__.py | sed -nE 's/^__version__ = "([^"]+)"/\1/p')
+[ -n "$current" ] || die "no __version__ in HEAD's prusik/__init__.py."
 
 newer() {  # newer A B: A > B as X.Y.Z
   [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" = "$1" ]
@@ -45,18 +48,51 @@ bin=$(command -v prusik) || die "no prusik on PATH."
 PY=$(head -1 "$bin" | sed -nE 's/^#!([^ ]+python[0-9.]*)$/\1/p')
 [ -n "$PY" ] && [ -x "$PY" ] || die "cannot read the interpreter from $bin's shebang."
 
+# The bump: the one definition of what the release changes in each of its two files, used both
+# to make it and to recognise it.
+BUMPED=(prusik/__init__.py README.md)
+bump() {  # bump FILE: stdin is FILE's content, stdout is that content bumped to $VERSION
+  case "$1" in
+    prusik/__init__.py) sed -E "s/^__version__ = \"[^\"]+\"/__version__ = \"$VERSION\"/" ;;
+    README.md) sed -E "s#getprusik/prusik@v[0-9]+\.[0-9]+\.[0-9]+#getprusik/prusik@$TAG#g" ;;
+    *) return 1 ;;
+  esac
+}
+
+# only_bump: every dirty path is a bump file whose index and working-tree content are each
+# HEAD's content or HEAD's content bumped. Anything else is the operator's and is never touched.
+only_bump() (  # a subshell, so its EXIT trap removes the scratch dir on every return
+  t=$(mktemp -d)
+  trap 'rm -rf "$t"' EXIT
+  while IFS= read -r f; do
+    case " ${BUMPED[*]} " in *" $f "*) ;; *) exit 1 ;; esac
+  done < <(git status --porcelain --untracked-files=all | cut -c4-)
+  for f in "${BUMPED[@]}"; do
+    git show "HEAD:$f" >"$t/head"
+    bump "$f" <"$t/head" >"$t/bumped"
+    git show ":$f" >"$t/index"
+    for c in "$t/index" "$f"; do
+      cmp -s "$c" "$t/head" || cmp -s "$c" "$t/bumped" || exit 1
+    done
+  done
+)
+
 # 1. bump + suite + commit
 if [ "$current" != "$VERSION" ]; then
   newer "$VERSION" "$current" || die "CHANGELOG's $VERSION is not newer than $current."
-  [ -z "$(git status --porcelain)" ] || die "the tree is not clean; commit the release content first."
+  if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+    only_bump || die "the tree is not clean; commit the release content first."
+    say "the tree holds an uncommitted bump to $VERSION; redoing it from HEAD"
+    git checkout -q HEAD -- "${BUMPED[@]}"
+  fi
   git fetch -q origin main
   git merge-base --is-ancestor origin/main HEAD || die "HEAD does not contain origin/main."
   say "bump $current -> $VERSION"
-  BUMPED=(prusik/__init__.py README.md)
-  sed -i '' -E "s/^__version__ = \"[^\"]+\"/__version__ = \"$VERSION\"/" prusik/__init__.py
-  sed -i '' -E "s#getprusik/prusik@v[0-9]+\.[0-9]+\.[0-9]+#getprusik/prusik@$TAG#g" README.md
+  for f in "${BUMPED[@]}"; do
+    git show "HEAD:$f" | bump "$f" >"$f"
+  done
   if ! scripts/suite.sh; then
-    git checkout -- "${BUMPED[@]}"
+    git checkout -q HEAD -- "${BUMPED[@]}"
     die "suite failed on the bumped tree; bump reverted, nothing committed."
   fi
   git add "${BUMPED[@]}"
