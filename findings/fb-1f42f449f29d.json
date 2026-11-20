@@ -1,0 +1,16 @@
+{
+  "id": "fb-1f42f449f29d",
+  "created_at": "2026-11-20T07:44:16.466799+00:00",
+  "kind": "friction",
+  "severity": null,
+  "title": "Full-suite check at reviewing exit ignores a green capture of the same tree taken in the previous phase",
+  "detail": "capture-reuse-across-phases (2026-11-20): the green full-suite capture (4539, --phase regression) ran in solo_execute at tree 77e737d43cbb9e24; reviewers reused it, so no run happened inside reviewing. _full_suite_gate (gate.py) counts reviewer_execution_verified/prove_run records only since the current phase was entered, so reviewing->integrating printed 'no green full-suite tests run ... recorded this reviewing phase' for a tree that was proven green. Same class as fb-d39ef32820e4, keyed on the ledger window: proof should be credited by tree hash, not by phase window.",
+  "feature": null,
+  "content_hash": "1f42f449f29d",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
