@@ -3,6 +3,11 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.264.0] — The engine repo registers the packaged role library
+
+- **Role dispatch resolves in the engine repo (fb-d0717082827b).** `/sprint-start` and `/sprint-run` dispatch roles with `Agent(subagent_type=<role>)`, which Claude Code resolves from `.claude/agents/`. The engine repo had none (adopters get it from `prusik init`), so every manual dispatch failed with "Agent type not found" and the operator stood in a `general-purpose` agent without the role's tool limits at roughly ten times the spec's token budget. The engine's `.claude/agents` is now a relative symlink to `prusik/templates/.claude/agents`, so the shipped specs remain the one source of truth and each worktree resolves its own checkout's specs. A moat test rejects a copied directory.
+- **Closure manifest.** `fb-d0717082827b` joins `_closures.json`, pinned at 0.264.0.
+
 ## [0.263.0] — The full-suite check credits a green capture of the tree it judges
 
 - **Capture proof is keyed by tree, not by phase window (fb-1f42f449f29d).** The full-suite check at building and reviewing exit counted a capture only when its ledger record fell inside the current phase, so a full suite captured green in `solo_execute` and reused by the reviewers drew "no green full-suite tests run ... this reviewing phase" for a proven tree, while an in-window capture stayed credited after the code changed. It now reads the feature's evidence entries: a prusik-captured tests entry with exit 0 and a positive count counts when its `worktree_hash` is the current hash for its phase's reviewer inputs, whichever phase took it. A proven `prove_run`, which records no tree hash, is still credited inside the phase window. The subset rule, the shared-test-infra block and the texts are unchanged.
