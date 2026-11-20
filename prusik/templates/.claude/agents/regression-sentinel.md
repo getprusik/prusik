@@ -147,7 +147,10 @@ evidence: run it bare and report what it printed.
 
 It streams the real output, exits with the suite's own code (so your PASS/FAIL
 judgement is unchanged), and writes `reports/{feature}/regression.evidence.json`.
-Call it once per suite — entries accumulate. The reviewing gate will **reject a
+Call it once per suite — entries accumulate. When this sprint already captured the same
+command green under another phase (e.g. `solo_execute`), with the same kind, exec dir and
+tree, capture reuses that entry instead of re-running it, and its output says so
+(fb-d39ef32820e4). The reviewing gate will **reject a
 PASS** whose evidence shows a nonzero exit or **zero executed tests** (an
 all-skip / auto-skipped / nothing-collected phase can no longer be greenlit).
 The numbers come from the tool, not from you — you cannot hand-write this file
