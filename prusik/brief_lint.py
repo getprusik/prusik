@@ -367,8 +367,43 @@ def _prove_red_warning(brief_text: str, criteria_path: Path) -> str | None:
             f"none declare prove_red — an acceptance test that was never RED proves "
             f"nothing (vacuous-green). Mark the criteria that assert NEW behavior "
             f"`prove_red: true` and capture the baseline (`prusik gate prove-red "
-            f"--feature <feature>`) BEFORE implementing, so the test is load-bearing. "
+            f"--feature <feature>`, which runs the sprint's tests on the fork point) "
+            f"once the tests are written, so the test is load-bearing. "
             f"Leave regression/existing-behavior criteria as-is.")
+
+
+_DIGIT_VERSION = re.compile(r"\b\d+\.\d+\.\d+\b")
+
+
+def _release_owned_issues(brief_text: str, root: Path) -> list[str]:
+    """A `## Success criteria` line that asks the sprint to set or bump the project's version
+    pin (fb-944e75f3e6e6): it names the pin (`__version__` for a source pin, the pin file's
+    path for a manifest pin) and a digit version. The solo_execute→reviewing pin gate
+    refuses such a change, so it is caught here, at scoping. A project with no readable pin
+    has nothing to flag; the pin gate reports an unreadable one."""
+    from prusik import pin
+    try:
+        _, source, kind = pin.resolve(root)
+    except pin.PinUnreadable:
+        return []
+    if source is None or kind is None:
+        return []
+    names: tuple[str, ...]
+    if kind == "source":
+        names = ("__version__",)
+    else:
+        try:
+            names = (source.relative_to(root).as_posix(), source.name)
+        except ValueError:
+            names = (source.name,)
+    section = schema.parse_sections(brief_text).get("## Success criteria", "")
+    issues = []
+    for line in section.splitlines():
+        if any(n in line for n in names) and _DIGIT_VERSION.search(line):
+            issues.append(f"a success criterion asks to change the version pin; "
+                          f"{pin.RELEASE_OWNS_BUMP}. Drop it from the brief: "
+                          f"{line.strip()[:160]}")
+    return issues
 
 
 def lint(brief_path: str | Path | None = None,
@@ -438,6 +473,11 @@ def lint(brief_path: str | Path | None = None,
         if (pr_warn := _prove_red_warning(brief_text, criteria_path)):
             print(f"  [prove-red-warn] {pr_warn}")
 
+        release_owned = _release_owned_issues(brief_text, root)
+        for issue in release_owned:
+            print(f"  [release-owned] {issue}")
+        total_issues += len(release_owned)
+
         candidates = _extract_candidates(brief_text)
         # v0.4.4: per-brief allow-list for proposed-new-IDs. Tokens declared
         # in an optional `## Proposed new IDs` (or similar) section are
@@ -475,7 +515,7 @@ def lint(brief_path: str | Path | None = None,
                     print(f"    '{cand}'  did you mean: {matches}")
                 total_issues += len(misses)
 
-        if ok and not misses:
+        if ok and not misses and not release_owned:
             print("  [ok]")
 
     return 1 if total_issues else 0

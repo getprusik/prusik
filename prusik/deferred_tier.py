@@ -33,12 +33,12 @@ import sys
 from pathlib import Path
 
 from prusik import gate_class, ledger, phases, schema
+from prusik.testfiles import is_test_path
 
 
-def _is_test_file(rel: str) -> bool:
-    name = rel.rsplit("/", 1)[-1]
-    return (name.startswith("test_") or name.endswith("_test.py")
-            or name == "conftest.py")
+def _is_test_file(rel: str, root: Path | None = None) -> bool:
+    """A Python test file by the one rule, `testfiles.is_test_path`."""
+    return rel.endswith(".py") and is_test_path(rel, root)
 
 
 _PRUNE_DIRS = frozenset((".git", ".hg", ".svn", ".venv", "venv", "node_modules",
@@ -57,7 +57,7 @@ def _test_files(root: Path) -> tuple[list[Path], str]:
                               capture_output=True, text=True, check=False, timeout=60)
         if proc.returncode == 0:
             return ([root / rel for rel in proc.stdout.split("\0")
-                     if rel and _is_test_file(rel) and not rel.startswith("worktrees/")],
+                     if rel and _is_test_file(rel, root) and not rel.startswith("worktrees/")],
                     "git index")
         why = (proc.stderr or "").strip().splitlines()[:1]
         source = ("working tree (git ls-files: "
@@ -68,7 +68,7 @@ def _test_files(root: Path) -> tuple[list[Path], str]:
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in _PRUNE_DIRS]
         files.extend(Path(dirpath) / n for n in filenames
-                     if n.endswith(".py") and _is_test_file(n))
+                     if _is_test_file((Path(dirpath) / n).relative_to(root).as_posix(), root))
     return files, source
 
 

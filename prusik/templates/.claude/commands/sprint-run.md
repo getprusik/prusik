@@ -144,7 +144,7 @@ When it exits, the user (or a fresh session) picks up from what it left:
 
 - **rc 0** — the sprint is complete and `gate sprint-complete` has run. Continue at Step 8, skipping its `sprint-complete` command.
 - **rc 3** — drive stopped at a judgement point and released its writer lease. Read `reports/$ARGUMENTS/drive-escalation.json` and act on that file only: report its `kind`, `reason` and `evidence` to the user, then do what its `next` says. When `resume` is a command, the user runs it from a plain terminal once `next` is done; when it is null, stop: only the user decides. A fresh session is told about a pending stop by the SessionStart banner.
-- **rc 2** — the sprint is not drivable yet (including the trivial lane: write `design/$ARGUMENTS/trivial.md`, run `prusik gate prove-red --feature $ARGUMENTS`, create the solo worktree with `prusik gate worktree-add --feature $ARGUMENTS --role solo`, implement in `worktrees/solo/`, re-run from reviewing). Show the message.
+- **rc 2** — the sprint is not drivable yet (including the trivial lane: write `design/$ARGUMENTS/trivial.md`, create the solo worktree with `prusik gate worktree-add --feature $ARGUMENTS --role solo`, implement in `worktrees/solo/` with its tests, run `prusik gate prove-red --feature $ARGUMENTS`, re-run from reviewing). Show the message.
 
 ---
 
@@ -193,15 +193,13 @@ Read `decisions/$ARGUMENTS.json`'s `mode`:
 
 ### Manual step 5a — solo build (if mode=solo)
 
-Read `design/$ARGUMENTS/scope.md`'s Modules touched. Before writing any code, capture the RED baselines (skip if drive's `solo_execute` step already did; leaving `solo_execute` is refused without them):
-
-    prusik gate prove-red --feature $ARGUMENTS
-
-Create the solo worktree unless drive's `solo_execute` step already did (`worktrees/solo/` exists). It records the fork point the reviewing checks measure the change set from; a worktree made any other way is refused at the boundary check:
+Read `design/$ARGUMENTS/scope.md`'s Modules touched. Create the solo worktree unless drive's `solo_execute` step already did (`worktrees/solo/` exists). It records the fork point the reviewing checks measure the change set from, and the one `prove-red` runs on; a worktree made any other way is refused at the boundary check:
 
     prusik gate worktree-add --feature $ARGUMENTS --role solo
 
-Implement the feature in `worktrees/solo/` and commit there (in a project without git it is a plain directory: mirror the repo structure for files you touch). Respect the writable gate (nothing outside worktrees/solo/**).
+Implement the feature in `worktrees/solo/` with its tests and commit there (in a project without git it is a plain directory: mirror the repo structure for files you touch). Respect the writable gate (nothing outside worktrees/solo/**). Once the tests are written, capture the RED baselines (skip if drive's `solo_execute` step already did; leaving `solo_execute` is refused without them). prove-red runs the sprint's changed test files on the fork point, so the implementation already being in the worktree does not matter:
+
+    prusik gate prove-red --feature $ARGUMENTS
 
 Run the project's smoke/unit tests. If passing, advance:
 

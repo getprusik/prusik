@@ -744,8 +744,8 @@ def reconciliation_summary(project_root: Path, feature: str) -> dict | None:
 
 def red_baselines_captured(project_root: Path, feature: str) -> list[str]:
     """Every local prove_red criterion has a captured RED baseline before the build
-    phase is left (fb-221b8b5df7e6). Until integrating, the shared tree is still
-    pre-change, so `prove-red` here is honest; at sprint-complete it no longer is.
+    phase is left (fb-221b8b5df7e6). Until integrating, the worktrees still record the
+    fork point `prove-red` runs the sprint's tests on; at sprint-complete they are gone.
     Covers every lane into the build: team building, triage→solo, trivial."""
     from prusik import gate
     try:
@@ -755,8 +755,8 @@ def red_baselines_captured(project_root: Path, feature: str) -> list[str]:
     if not missing:
         return []
     return [f"No captured RED baseline for prove_red criteria: {', '.join(missing)}",
-            f"  FIX NOW: `prusik gate prove-red --feature {feature}` (the shared tree is "
-            f"still pre-change until integrating), then advance again."]
+            f"  FIX NOW: `prusik gate prove-red --feature {feature}` (it runs the sprint's "
+            f"tests on the worktrees' fork point), then advance again."]
 
 
 # Registry: phase_leaving → [check_fn, ...]

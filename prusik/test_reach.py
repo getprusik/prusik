@@ -46,8 +46,8 @@ territory (mission boundary). Reviewer/operator decides.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
+from prusik.testfiles import is_test_path
 from prusik.binding_detect import (
     extract_fastapi_routes, extract_router_prefixes,
     extract_handler_form_keys, extract_form_names,
@@ -65,20 +65,15 @@ from prusik.binding_detect_js import (
 # for reach analysis. Mirrors the existing prusik conventions (tests/, test_,
 # *_test.*).
 _TEST_DIRS = ("tests", "test")
-_TEST_FILE_RE = re.compile(r"(?:^|/)(?:test_|.*_test\.)\w+$")
 
 
 def _is_test_file(p: Path, root: Path) -> bool:
-    """A file is 'test' if it's under tests/ or test/ dirs OR has a
-    test_*.py / *_test.py shape."""
+    """`p` is a test file under `root` by the one rule, `testfiles.is_test_path`."""
     try:
         rel = p.relative_to(root)
     except ValueError:
         return False
-    parts = rel.parts
-    if any(d in parts for d in _TEST_DIRS):
-        return True
-    return bool(_TEST_FILE_RE.search(str(rel)))
+    return is_test_path(rel.as_posix(), root)
 
 
 def _extract_touched_contracts(touched_files: list[Path],
