@@ -58,7 +58,7 @@ The verdict counts tests **executed** (passed + failed), not tests *discovered* 
 The repo doubles as a composite Action — `prove` as a PR gate with no workflow scripting:
 
 ```yaml
-- uses: getprusik/prusik@v0.260.0
+- uses: getprusik/prusik@v0.260.1
   with:
     source: prove
     command: "pytest -q"
