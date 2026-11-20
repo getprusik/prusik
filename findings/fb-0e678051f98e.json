@@ -26,7 +26,22 @@
       "body": "Narrowed 2026-11-19 (post 0.260.0): the WRITE half is covered by the observed-writes tree diff. Probed through the real hooks in building: find -exec rm, xargs rm, env rm, nohup rm, command rm and exec rm all report README.md. Still open is the deny_commands half: 'env git push origin main' and 'command git push origin main' pass pre-tool while a bare 'git push origin main' is denied. No tree state shows a push, so this needs the wrapper reading in _command_starts/_prefix_end for _named_commands (and _shell_reads_body for wrapped heredoc shells)."
     }
   ],
-  "resolution": null,
-  "verify_history": [],
-  "status": "acknowledged"
+  "resolution": {
+    "type": "fix",
+    "verify": ".venv/bin/python -m pytest -q tests/test_wrapped_command_naming.py tests/test_gate_reads_commands.py tests/test_heredocs_read_as_bash.py tests/test_one_bash_lexer.py",
+    "fixed_in": "0.260.1",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-20T05:54:22.542249+00:00",
+      "exit": 0,
+      "executed_count": 1066,
+      "verdict": true,
+      "why": "1066 test(s) executed, exit 0",
+      "worktree_hash": "b21c59a-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
