@@ -3,6 +3,13 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.260.1] — Commands behind a wrapper are named
+
+- **A wrapper no longer hides a command (fb-0e678051f98e).** `deny_commands` and the shared-tree git check read the command past `command`, `builtin`, `exec`, `nohup`, `time`, `env`, `sudo`, `doas`, `nice`, `timeout`, `stdbuf` and `xargs`, through a chain of them, and the command after each `find -exec`, `-execdir`, `-ok` and `-okdir`. A phase that denies `git push` now denies `env git push`, `sudo -u me git push` and `find . -exec git push \;`; `env git commit` in the shared tree counts as a shared-tree mutation. Each wrapper's value flags, `NAME=value` words and `timeout`'s duration are read as such, so `sudo -u git ls` names no `git`; `command -v git` runs nothing. A flag the reader doesn't know, or a word the command line never set (`env $X git push`), is read both ways, so the reader over-reads and never under-reads.
+- **A wrapped shell's heredoc is code.** `sudo bash <<EOF`, `env sh -c '...'`, and `cat <<EOF | env bash` read the body as the code it is.
+- **Closure manifest.** `fb-331f8487c548`, `fb-9b48baaee117` and `fb-a0dd3c924838` (fixed in 0.259.0, moat tests tagged after it) join `_closures.json`, pinned at 0.260.1.
+- **Out of scope.** Write targets behind a wrapper stay with the observed-writes tree diff; `builtin cd` does not move the tracked directory; `chroot`, `ssh` and `watch` are not read.
+
 ## [0.260.0] — The writer lease follows its holder's life and hands off to drive
 
 - **A dead holder no longer holds the lease (fb-702c70a3971f).** The lease records the holder's host process (Claude Code's `CLAUDE_PID`, plus its start time so a reused pid is not mistaken for it). A lease whose host process is gone is taken over at the next acquire, without waiting out the 30-minute TTL, with ledger `writer_lease_stolen_dead`. `foreign_holder` and `live_owner` use the same rule. An unreadable start time or a permission error counts as alive; a lease with no recorded process keeps the TTL rule.
