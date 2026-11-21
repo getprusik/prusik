@@ -1,0 +1,16 @@
+{
+  "id": "fb-78e2394070e5",
+  "created_at": "2026-11-21T20:37:05.023836+00:00",
+  "kind": "bug",
+  "severity": null,
+  "title": "release.sh reports a publish FAILED when GitHub's jobs API returns HTTP 500",
+  "detail": "0.270.0 release: '[release] watch publish run 44944316054' then 'failed to get jobs: HTTP 500 (api.github.com/.../runs/44944316054/jobs)' and '[release] FAILED: publish run 44944316054 failed'. The run had succeeded: the resume watched the same run green and installed. An unreadable run is not a failed run: retry the read, and when it stays unreadable say the state is unknown, never FAILED.",
+  "feature": null,
+  "content_hash": "78e2394070e5",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
