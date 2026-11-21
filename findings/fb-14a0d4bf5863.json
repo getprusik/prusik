@@ -10,7 +10,22 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": ".venv/bin/python -m pytest tests/test_retire_charter_freshness.py -q",
+    "fixed_in": "0.270.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-21T20:38:13.780972+00:00",
+      "exit": 0,
+      "executed_count": 7,
+      "verdict": true,
+      "why": "7 test(s) executed, exit 0",
+      "worktree_hash": "a74685c-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
