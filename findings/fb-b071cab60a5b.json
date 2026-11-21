@@ -10,7 +10,22 @@
   "repro": "",
   "duplicate_of": null,
   "thread": [],
-  "resolution": null,
-  "verify_history": [],
-  "status": "open"
+  "resolution": {
+    "type": "fix",
+    "verify": ".venv/bin/python -m pytest tests/test_pinned_engine.py -q -k release_resume",
+    "fixed_in": "0.271.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-21T21:21:36.121535+00:00",
+      "exit": 0,
+      "executed_count": 4,
+      "verdict": true,
+      "why": "4 test(s) executed, exit 0",
+      "worktree_hash": "4a9f179-dirty"
+    }
+  ],
+  "status": "verified-closed"
 }
