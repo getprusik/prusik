@@ -1,0 +1,31 @@
+{
+  "id": "fb-44c3b9054134",
+  "created_at": "2026-11-21T02:56:05.628462+00:00",
+  "kind": "bug",
+  "severity": "med",
+  "title": "prusik update never closes a legacy finding that has no ticket, even when its fix shipped",
+  "detail": "feedback.jsonl records filed before tickets existed (or whose ticket write failed) have no findings/fb-<id>.json. update_cmd._close_shipped_findings and feedback_store.close_shipped iterate tickets only, so those findings stay open forever. One adopter on 2026-11-20: 5 of its 12 open findings (fb-91c75e51c214, fb-9f107742fe4d, fb-b4eb142e5740, fb-bc87bb8520dc, fb-d4d401114c19) are in _closures.json and shipped in its pinned 0.254.0, but have no ticket. HQ loop_closure reads findings/ too, so they are invisible there as well. prusik feedback migrate exists, but nothing runs it.",
+  "feature": null,
+  "content_hash": "44c3b9054134",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": {
+    "type": "fix",
+    "verify": ".venv/bin/python -m pytest tests/test_update_backfills_tickets.py -q",
+    "fixed_in": "0.268.0",
+    "reason": "",
+    "verify_kind": "tests"
+  },
+  "verify_history": [
+    {
+      "at": "2026-11-21T03:11:12.409048+00:00",
+      "exit": 0,
+      "executed_count": 8,
+      "verdict": true,
+      "why": "8 test(s) executed, exit 0",
+      "worktree_hash": "ab79458-dirty"
+    }
+  ],
+  "status": "verified-closed"
+}
