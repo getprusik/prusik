@@ -68,6 +68,7 @@ _GATE_OF = {
     "product_fit_omission_fired":  ("product_fit_omission", "medium"),
     "criterion_evidence_fired":    ("criterion_evidence", "high"),
     "criterion_prove_red_fired":   ("criterion_prove_red", "high"),
+    # retired v0.270.0 (fb-14a0d4bf5863): no longer fires; kept so past fires + labels render.
     "charter_freshness_fired":     ("charter_freshness", "low"),
     # residual-red adjudication layers (v0.197.22–.23) — per-layer telemetry for the
     # two new build/review-exit gates so HQ sees whether they CATCH or are ceremony.
@@ -83,7 +84,7 @@ _GATE_OF = {
 # ones that happened to fire.
 PRODUCT_FIT_LAYERS = [
     "product_fit_form", "product_fit_substance", "product_fit_omission",
-    "criterion_evidence", "criterion_prove_red", "charter_freshness",
+    "criterion_evidence", "criterion_prove_red",
 ]
 
 _BLOCK_EVENTS = {"gate_blocked", "advance_blocked",

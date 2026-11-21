@@ -361,9 +361,9 @@ def test_install_bsd_suffix_flag_takes_its_value():
                                    lambda n: "echo x > f; " * n])
 def test_cost_grows_linearly_with_the_command(build):
     def cost(n):
-        began = time.perf_counter()
+        began = time.process_time()
         gate._bash_write_targets(build(n))
-        return time.perf_counter() - began
+        return time.process_time() - began
 
     small = max(cost(4000), 0.005)
     assert cost(16000) < small * 4 * 3          # four times the text, at most three times linear
@@ -375,9 +375,9 @@ def test_cost_grows_linearly_with_the_command(build):
     "rm \\\n" * 40000 + "a",
 ])
 def test_one_long_statement_stays_linear(cmd):
-    began = time.perf_counter()
+    began = time.process_time()
     gate._bash_write_targets(cmd)
-    assert time.perf_counter() - began < 5.0        # minutes if it turns quadratic
+    assert time.process_time() - began < 5.0        # minutes if it turns quadratic
 
 
 @pytest.mark.parametrize("cmd,expected", [

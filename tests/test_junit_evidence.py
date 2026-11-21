@@ -85,9 +85,9 @@ def test_doctype_fails_closed_naming_file(tmp_path):
             '<!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">]>'
             '<testsuite><testcase name="&c;"/></testsuite>')
     _write(tmp_path / "evil.xml", bomb)
-    t0 = time.monotonic()
+    t0 = time.process_time()
     r = evidence.read_junit("evil.xml", tmp_path, 0)
-    assert time.monotonic() - t0 < 1
+    assert time.process_time() - t0 < 1
     assert r.error == ("evil.xml: carries a DOCTYPE, which JUnit reports never need; "
                        "report rejected")
     assert r.executed == 0 and r.testcases == 0

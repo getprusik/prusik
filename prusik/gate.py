@@ -2753,18 +2753,6 @@ def sprint_start(args) -> int:
     _take_phase_baseline(feature, "scoping")   # after the entry event that stamps it
     clear_briefing(feature)   # fb-1e3ecda9d011: a later re-brief opens a fresh window
 
-    # Charter freshness — ADVISORY, never blocks (a stale vision is a smell, not a
-    # defect; blocking a sprint because the human hasn't revisited the north-star
-    # would be user-hostile). A WHAT-layer that ossifies while features ship
-    # enforces a fiction, so warn once the charter has gone untouched for many
-    # completed sprints. Dormant without a charter.
-    _cf = (config.get("charter_freshness") or {})
-    if _cf.get("enabled", True):
-        from prusik import product_fit as _pf
-        _w = _pf.freshness_warning(root, int(_cf.get("max_sprints_stale", 8)))
-        if _w:
-            ledger.append("charter_freshness_fired", feature=feature, reason=_w)
-            print(f"[prusik-gate] ⚠ {_w}")
     print(f"[prusik-gate] Sprint started: {feature}"
           + ("  [TRIVIAL LANE]" if state.get("lane") == "trivial" else ""))
     print("Phase: scoping")

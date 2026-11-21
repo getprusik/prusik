@@ -489,6 +489,91 @@ def retire_budget_defaults(text: str) -> tuple[str, list[str], list[str]]:
     return out, sorted(drop.values()), sorted(unretirable)
 
 
+# Top-level config blocks the engine no longer reads, each with its last shipped default value
+# and the exact comment runs the template shipped about it (fb-14a0d4bf5863: charter_freshness
+# fired 0 true of 7 at an adopter and was retired in v0.270.0).
+RETIRED_TOP_LEVEL: dict[str, tuple[Any, tuple[tuple[str, ...], ...]]] = {
+    "charter_freshness": (
+        {"enabled": True, "max_sprints_stale": 8},
+        (
+            ("# Charter freshness (advisory). Warns at sprint-start — NEVER blocks — when the",
+             "# product charter (design/product.md) has gone untouched for >= max_sprints_stale",
+             "# completed sprints, so a living WHAT-layer doesn't ossify into a fiction while",
+             "# features ship. Dormant when there's no charter."),
+            ("    # charter_freshness (top-level block below) warns — never blocks — when the",
+             "    # charter has gone untouched for many completed sprints."),
+        ),
+    ),
+}
+
+
+def retire_top_level_defaults(text: str) -> tuple[str, list[str], list[str]]:
+    """Remove each RETIRED_TOP_LEVEL key whose value is its last shipped default, plus the
+    template's comment runs about it. Returns (text, retired, kept_custom): a key set to
+    anything else is the operator's — left in place and named, never deleted.
+
+    Textual, like retire_budget_defaults: the key's line (located with ruamel's line info)
+    and its indented children are deleted, and each shipped comment run is deleted only where
+    it appears as an exact, consecutive line match — never a fuzzy or single-line match. A
+    kept_custom key keeps its comments. One blank line is dropped where the removal would
+    leave two in a row. The result is re-parsed and must equal the input minus exactly the
+    retired keys, else this raises (refresh then fails closed, never writes)."""
+    import yaml as _y
+    doc = _yaml_rt().load(text)
+    if not isinstance(doc, dict):
+        return text, [], []
+    lines = text.splitlines(keepends=True)
+    bare = [ln.rstrip("\r\n") for ln in lines]
+    drop: set[int] = set()
+    retired: list[str] = []
+    kept_custom: list[str] = []
+    plain = _y.safe_load(text) or {}
+    for key, (default, comment_runs) in RETIRED_TOP_LEVEL.items():
+        if key in plain:
+            if plain[key] != default:
+                kept_custom.append(key)
+                continue
+            rt: Any = doc
+            try:
+                start = rt.lc.key(key)[0]
+            except (KeyError, AttributeError, TypeError):
+                kept_custom.append(key)        # no own line (merge key): can't edit safely
+                continue
+            if not bare[start].startswith(f"{key}:"):
+                kept_custom.append(key)
+                continue
+            end = start + 1
+            while end < len(bare) and bare[end].strip() and bare[end][:1] in (" ", "\t"):
+                end += 1
+            drop.update(range(start, end))
+            retired.append(key)
+        for run in comment_runs:
+            n = len(run)
+            for i in range(len(bare) - n + 1):
+                if tuple(bare[i:i + n]) == run:
+                    drop.update(range(i, i + n))
+    if not drop:
+        return text, [], sorted(kept_custom)
+    # Collapse a blank line the removal would double: drop a blank line that follows a removed
+    # span when the nearest kept line before the span is blank too.
+    for i in sorted(drop):
+        j = i + 1
+        if j in drop or j >= len(bare) or bare[j].strip():
+            continue
+        k = i - 1
+        while k >= 0 and k in drop:
+            k -= 1
+        if k >= 0 and not bare[k].strip():
+            drop.add(j)
+    out = "".join(line for i, line in enumerate(lines) if i not in drop)
+    after = _y.safe_load(out) or {}
+    for key in retired:
+        plain.pop(key, None)
+    if plain != after:
+        raise ValueError("retiring a no-longer-read config block would change more than it")
+    return out, sorted(retired), sorted(kept_custom)
+
+
 def leftover_budget_tokens(text: str) -> list[str]:
     """Every `budget_tokens` / `session_budget_tokens` still in a sprint config, as
     "<drive|phase>.<key>=<value>" labels. After retirement these are values the operator set

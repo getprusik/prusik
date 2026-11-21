@@ -133,7 +133,8 @@ def _config_regressions(old: Any, new: Any, path: str = "") -> list[str]:
     return out
 
 
-def _user_content_loss(rel_path: str, old_text: str, new_text: str) -> str | None:
+def _user_content_loss(rel_path: str, old_text: str, new_text: str,
+                       allowed_drops: frozenset[str] = frozenset()) -> str | None:
     """v0.14.2 backstop invariant. Refuse to write a merge-eligible config
     if the new content would DROP a top-level key (or, for sprint-config, a
     phase) the user currently has. Independent of root cause — it would
@@ -142,7 +143,10 @@ def _user_content_loss(rel_path: str, old_text: str, new_text: str) -> str | Non
     rather than trusting it (prusik's own thesis applied to its own
     refresh: nothing advances on 'should be correct', only on evidence).
     Unparseable old → cannot certify no-loss → treated as loss (fail
-    closed; never write unverified). Returns a reason or None."""
+    closed; never write unverified). `allowed_drops` names sprint-config top-level keys
+    this refresh retired on purpose (refresh_merge.retire_top_level_defaults); only an
+    allowed key that is actually gone is exempt — every other drop still fails. Returns a
+    reason or None."""
     try:
         if rel_path == ".claude/settings.json":
             old = json.loads(old_text)
@@ -165,6 +169,9 @@ def _user_content_loss(rel_path: str, old_text: str, new_text: str) -> str | Non
             import yaml as _y
             old = _y.safe_load(old_text) or {}
             new = _y.safe_load(new_text) or {}
+            for k in allowed_drops:
+                if k not in new:
+                    old.pop(k, None)
             dropped = [k for k in old if k not in new]
             if dropped:
                 return f"top-level key(s) {dropped} present before, absent after"
@@ -234,6 +241,7 @@ def run(force: bool = False, no_auto_adopt: bool = False,
     merge_failed: list[tuple[str, str]] = []  # v0.14.0: hard fail-closed (path, reason)
     unretirable: list[str] = []  # fb-a1b7db140a5e: retired budgets a layout can't drop
     custom_tokens: list[str] = []  # fb-1d6f8de5b8d3: operator token caps, now refused
+    no_longer_read: list[str] = []  # fb-14a0d4bf5863: customised retired blocks, kept
 
     # Walk every template file
     template_src_roots = [
@@ -392,6 +400,10 @@ def run(force: bool = False, no_auto_adopt: bool = False,
                     merged_text, summary["retired_budgets"], _unret = (
                         refresh_merge.retire_budget_defaults(merged_text))
                     unretirable.extend(_unret)
+                    # fb-14a0d4bf5863: drop shipped-default blocks the engine no longer reads.
+                    merged_text, summary["retired_top_level"], _kept = (
+                        refresh_merge.retire_top_level_defaults(merged_text))
+                    no_longer_read.extend(_kept)
                     custom_tokens.extend(
                         lb for lb in refresh_merge.leftover_budget_tokens(merged_text)
                         if lb not in _unret)
@@ -407,7 +419,8 @@ def run(force: bool = False, no_auto_adopt: bool = False,
                     new_manifest_entries.append(
                         {"path": dest_rel_str, "hash": manifest_hash})
                 elif (_cl := _user_content_loss(
-                        dest_rel_str, dest.read_text(), merged_text)):
+                        dest_rel_str, dest.read_text(), merged_text,
+                        allowed_drops=frozenset(summary["retired_top_level"]))):
                     # Backstop: merge is additive-by-construction; if a
                     # regression ever drops user content, fail closed.
                     merge_failed.append(
@@ -480,6 +493,8 @@ def run(force: bool = False, no_auto_adopt: bool = False,
                 bits.append(f"+top-level: {top_adds}")
             for rb in summary.get("retired_budgets") or []:
                 bits.append(f"-{rb} (retired default; budgets are now USD)")
+            for rk in summary.get("retired_top_level") or []:
+                bits.append(f"-{rk} (retired; no longer read)")
             print(f"    ⊕ {path}  ({', '.join(bits) if bits else 'no-op'})")
         print("  (pass --no-merge-additions to skip surgical merge instead)")
     print(f"  unchanged:{len(unchanged)}")
@@ -488,6 +503,8 @@ def run(force: bool = False, no_auto_adopt: bool = False,
     for rb in unretirable:
         print(f"  ! {rb} is a retired shipped default this file's layout can't remove "
               f"safely — delete it by hand (budgets are now in USD)")
+    for rk in no_longer_read:
+        print(f"  ! {rk} is no longer read — delete it by hand")
     for cb in custom_tokens:
         owner, rest = cb.split(".", 1)
         old = rest.split("=", 1)[0]

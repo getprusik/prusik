@@ -208,18 +208,18 @@ def test_an_unclosed_subscript_past_the_bound_counts_as_a_mutation():
     "rm x; " + "bash -c " * 7_000,
 ])
 def test_a_long_command_stays_linear(cmd):
-    begin = time.perf_counter()
+    begin = time.process_time()
     gate._may_write(cmd)
     _targets(cmd)
-    assert time.perf_counter() - begin < 1.0
+    assert time.process_time() - begin < 1.0
 
 
 def test_many_operands_stay_linear():
     for cmd in ("rm " + " ".join(f"f{i}.txt" for i in range(16_000)),
                 'S="a b"; cp ' + "$S " * 24_000 + "d"):
-        begin = time.perf_counter()
+        begin = time.process_time()
         _targets(cmd)
-        assert time.perf_counter() - begin < 1.0
+        assert time.process_time() - begin < 1.0
 
 
 def test_interpreter_payloads_are_still_stripped():

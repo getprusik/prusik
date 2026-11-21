@@ -209,16 +209,37 @@ def test_the_write_check_reads_a_backtick_body(tmp_path, cmd, expected, bash):
     "if true; then true; fi " * 2000, "git status; " * 4000,
 ])
 def test_a_long_command_stays_fast(cmd):
-    begun = time.perf_counter()
+    begun = time.process_time()
     gate._command_denied(cmd, "git push")
     gate._shared_tree_git_mutation(cmd)
-    assert time.perf_counter() - begun < 1
+    assert time.process_time() - begun < 1
+
+
+def test_a_work_bound_holds_while_the_machine_is_loaded():
+    """An in-process work bound counts this process's CPU, not the wall clock, so a busy machine
+    cannot fail it (fb-6dcd2bec99ad: 1.51s vs < 1 in a full-suite run, 0.1s alone).
+
+    moat-finding: fb-6dcd2bec99ad
+    """
+    burn = "import time\nend = time.time() + 3\nwhile time.time() < end: pass\n"
+    burners = [subprocess.Popen([sys.executable, "-c", burn])
+               for _ in range(2 * (os.cpu_count() or 2))]
+    try:
+        cmd = "if true; then true; fi " * 2000
+        begun = time.process_time()
+        gate._command_denied(cmd, "git push")
+        gate._shared_tree_git_mutation(cmd)
+        assert time.process_time() - begun < 1
+    finally:
+        for b in burners:
+            b.kill()
+            b.wait()
 
 
 def test_a_word_read_only_when_named():
-    begun = time.perf_counter()
+    begun = time.process_time()
     assert not gate._command_denied("do " * 16000, "git push")
-    assert time.perf_counter() - begun < 1
+    assert time.process_time() - begun < 1
 
 
 def _building_project(path):
