@@ -37,9 +37,13 @@ _HOOK_HELP = {"pre-tool": "PreToolUse hook",
 PIN_EXEMPT = ("--version", "-h", "--help", "init", "refresh", "doctor", "uninstall",
               "feedback")
 # Commands that move the pin themselves before acting, so the entrypoint lets them through
-# when the engine is AHEAD of the pin (never BEHIND); each re-checks after its own sync and
-# refuses if the pin still mismatches.
-PIN_SYNCS_WHEN_AHEAD = (("gate", "sprint-start"),)
+# when the engine is AHEAD of the pin (never BEHIND); each re-checks after its own sync
+# (`refresh.sync_pin`) and refuses if the pin still mismatches. Matched as argv prefixes.
+PIN_SYNCS_WHEN_AHEAD = (("gate", "sprint-start"), ("update",))
+# Reports that write nothing: a newer engine reading an older project's ledger acts on
+# nothing, so they run when the engine is AHEAD (never BEHIND, where an older engine would
+# read data a newer one wrote). fb-1d621fced521.
+PIN_READS_WHEN_AHEAD = ("metrics", "catches")
 
 
 def _pin_exempt(argv: list[str]) -> bool:
@@ -47,6 +51,12 @@ def _pin_exempt(argv: list[str]) -> bool:
         return True
     head = argv[:argv.index("--")] if "--" in argv else argv
     return "-h" in head or "--help" in head
+
+
+def _allowed_when_ahead(argv: list[str]) -> bool:
+    if argv and argv[0] in PIN_READS_WHEN_AHEAD:
+        return True
+    return any(tuple(argv[:len(c)]) == c for c in PIN_SYNCS_WHEN_AHEAD)
 
 
 def _pin_refusal(argv: list[str], hook: str | None) -> int | None:
@@ -61,7 +71,7 @@ def _pin_refusal(argv: list[str], hook: str | None) -> int | None:
     if verdict.status != pin.FOREIGN:
         if _pin_exempt(argv):
             return None
-        if verdict.status == pin.AHEAD and tuple(argv[:2]) in PIN_SYNCS_WHEN_AHEAD:
+        if verdict.status == pin.AHEAD and _allowed_when_ahead(argv):
             return None
     if hook == "stop":
         import json

@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,26 @@ def auto_sync_if_skewed(root: Path, config: dict) -> bool:
           f"— auto-syncing so you don't run a sprint on stale agents:")
     run(force=False)
     return True
+
+
+def sync_pin(root: Path, config: dict) -> bool:
+    """The one sync-then-recheck rule for a command that moves the pin before it acts
+    (`gate sprint-start`, `update`): when the engine is AHEAD of the pin, auto-sync, then
+    re-check. True when the pin now matches (or there is none); otherwise print the
+    entrypoint's refusal and return False, so an opted-out or failed sync never acts on a
+    mismatched pin."""
+    from prusik import pin
+    verdict = pin.check(root)
+    if verdict.status in (pin.AHEAD, pin.AHEAD_OPTED_OUT):
+        try:
+            auto_sync_if_skewed(root, config)
+        except Exception as e:  # noqa: BLE001 — a failed sync is reported, then re-checked
+            print(f"[prusik] template auto-sync failed: {e}", file=sys.stderr)
+        verdict = pin.check(root)
+    if verdict.status in (pin.UNPINNED, pin.EQUAL):
+        return True
+    print(pin.refusal(verdict), file=sys.stderr)
+    return False
 
 
 def skew_banner(root: Path) -> str | None:

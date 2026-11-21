@@ -175,7 +175,7 @@ def test_exempt_commands_run_while_mismatched(tmp_path):
 def test_exempt_list_is_declared_once_next_to_the_hook_commands():
     assert set(cli.PIN_EXEMPT) == {"--version", "-h", "--help", "init", "refresh", "doctor",
                                    "uninstall", "feedback"}
-    assert cli.PIN_SYNCS_WHEN_AHEAD == (("gate", "sprint-start"),)
+    assert cli.PIN_SYNCS_WHEN_AHEAD == (("gate", "sprint-start"), ("update",))
     src = (_REPO / "prusik" / "__main__.py").read_text()
     assert src.index("PIN_EXEMPT = ") - src.index("HOOK_COMMANDS = ") < 800
 

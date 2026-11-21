@@ -2690,7 +2690,8 @@ def sprint_start(args) -> int:
     # engine is AHEAD of the pin, so it can move the pin itself. Last of the refusals, because
     # the sync writes the template surface: sync, re-check, and refuse with the entrypoint's
     # own message if the pin still mismatches (opted out of auto-refresh, or the sync failed).
-    if not _pin_synced(root, config):
+    from prusik import refresh as _refresh
+    if not _refresh.sync_pin(root, config):
         ledger.append("sprint_start_blocked", feature=feature, unmet=["pin_mismatch"],
                       gate_class=gate_class.SPRINT_START_GATE)
         return 2
@@ -2780,24 +2781,6 @@ def sprint_start(args) -> int:
     if size_line is not None:
         print(size_line)
     return 0
-
-
-def _pin_synced(root: Path, config: dict) -> bool:
-    """True when the running engine matches the project's pin, after an auto-sync when it was
-    ahead. Prints the refusal and returns False otherwise."""
-    from prusik import pin
-    verdict = pin.check(root)
-    if verdict.status in (pin.AHEAD, pin.AHEAD_OPTED_OUT):
-        from prusik import refresh as _refresh
-        try:
-            _refresh.auto_sync_if_skewed(root, config)
-        except Exception as e:  # noqa: BLE001 — a failed sync is reported, then re-checked
-            print(f"[prusik-gate] template auto-sync failed: {e}", file=sys.stderr)
-        verdict = pin.check(root)
-    if verdict.status in (pin.UNPINNED, pin.EQUAL):
-        return True
-    print(pin.refusal(verdict), file=sys.stderr)
-    return False
 
 
 def product_fit(args) -> int:

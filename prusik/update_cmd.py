@@ -83,6 +83,18 @@ def run(timeout: float = 3.0) -> int:
     kind, upgrade = _install_kind()
     print(f"[prusik update] installed {installed} ({kind} install)")
 
+    # fb-1d621fced521: a project pinned behind this engine is brought up to it FIRST, so
+    # nothing below (the closer included) runs against a lagging pin. The entrypoint lets
+    # update through only when the engine is AHEAD; a sync that leaves the pin mismatched
+    # refuses here, with the entrypoint's message.
+    from prusik import ledger, phases, pin, refresh
+    root = ledger.project_root()
+    synced = False
+    if pin.check(root).status == pin.AHEAD:
+        if not refresh.sync_pin(root, phases.load_sprint_config(root) or {}):
+            return 2
+        synced = True
+
     # Close the loop FIRST, independent of whether a newer release exists: a finding
     # whose fix is ALREADY in THIS engine can drain now. Gating the drain on "is this
     # the latest release?" (the old early-return below) deferred already-shipped fixes
@@ -97,7 +109,6 @@ def run(timeout: float = 3.0) -> int:
         try:
             cl = version_check.changelog_text(timeout)
             if cl:
-                from prusik import ledger
                 new, resolved = _whats_new(cl, installed, latest,
                                            ledger.project_root())
                 if new:
@@ -126,9 +137,12 @@ def run(timeout: float = 3.0) -> int:
 
     # Package is current (or unknown) → bring THIS project's templates up to the
     # installed package, then the only part prusik can't do for you.
-    print("  syncing project templates…")
-    from prusik import refresh
-    rc = refresh.run()
+    if synced:
+        rc = 0
+        print("  ✓ project templates synced to the installed engine above.")
+    else:
+        print("  syncing project templates…")
+        rc = refresh.run()
     print("  → restart your Claude Code session to pick up agent/command changes "
           "(`/agents` only reloads the interactive picker, not Agent-tool dispatch).")
     return rc if isinstance(rc, int) else 0

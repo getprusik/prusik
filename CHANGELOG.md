@@ -3,6 +3,12 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.269.0] — Update brings a lagging pin current instead of being refused by it
+
+- **`prusik update` syncs a pin the engine is ahead of (fb-1d621fced521).** In an adopter pinned at 0.254.0 with 0.268.0 installed, the entrypoint's pin check refused `update` and said to run `prusik refresh` first, though update runs refresh itself. The refusal blocked the one command whose job is to fix the lag. `update` now gets through when the engine is AHEAD of the pin, and never when it is BEHIND. It syncs the pin before it does anything else, so the shipped-fix closer never runs against a lagging pin. Then it re-checks, and refuses with the entrypoint's message if the pin still mismatches. `gate sprint-start` and `update` share one sync-then-recheck rule, `refresh.sync_pin`. After its own sync, update does not refresh a second time.
+- **`prusik metrics` and `prusik catches` run when the engine is ahead of the pin.** They write nothing, so a newer engine reading an older project's ledger acts on nothing. `prusik catch`, which appends to the ledger, still refuses. When the engine is BEHIND the pin, every one of these commands refuses as before.
+- **Closure manifest.** `fb-1d621fced521` joins `_closures.json`, pinned at 0.269.0.
+
 ## [0.268.0] — Update closes shipped findings that never had a ticket; filing says where feedback goes
 
 - **`prusik update` backfills missing tickets before it closes shipped fixes (fb-44c3b9054134).** A `.sprint/feedback.jsonl` record filed before per-finding tickets existed has no `findings/fb-<id>.json`. The closer read tickets only, so such a finding stayed open after its fix shipped. On 2026-11-20 one adopter carried 5 of them, all fixed in its pinned 0.254.0. The closer now runs the same idempotent create as `prusik feedback migrate` first, and says how many tickets it created. An existing ticket is returned untouched, never rewritten. A backfilled finding whose fix has not shipped stays open.
