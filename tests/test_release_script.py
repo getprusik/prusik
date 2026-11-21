@@ -198,3 +198,61 @@ def test_a_red_suite_reverts_a_staged_bump_to_head(checkout):
     assert (co / "prusik" / "__init__.py").read_text() == '__version__ = "1.0.0"\n'
     assert _git(co, "show", ":prusik/__init__.py") + "\n" == '__version__ = "1.0.0"\n'
     assert _git(co, "rev-parse", "HEAD") == head and _git(co, "status", "--porcelain") == ""
+
+
+# ── the publish watch reads the run's conclusion (fb-78e2394070e5) ──────────────────────
+# moat-finding: fb-78e2394070e5
+# `gh run watch --exit-status` exits non-zero both when the run fails and when gh cannot read
+# it (a jobs-API HTTP 500 in the 0.270.0 release), so an unreadable run was reported FAILED.
+
+_FAKE_GH = """#!/usr/bin/env bash
+case "$1 $2" in
+  "release view") exit 0 ;;
+  "run list") echo 42 ;;
+  "run view")
+    n=$(( $(cat "$GH_READS" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$GH_READS"
+    case "$GH_MODE" in
+      transient) case "$n" in
+                   1|3) echo "failed to get run: HTTP 500" >&2; exit 1 ;;
+                   2) echo "in_progress " ;;
+                   *) echo "completed success" ;;
+                 esac ;;
+      failure) echo "completed failure" ;;
+      *) echo "failed to get run: HTTP 500" >&2; exit 1 ;;
+    esac ;;
+  *) exit 9 ;;
+esac
+"""
+
+
+def _watch(checkout, tmp_path, mode: str) -> subprocess.CompletedProcess:
+    co, env = checkout
+    _suite(co, 0)
+    bindir = Path(env["PATH"].split(os.pathsep)[0])
+    for name, body in (("gh", _FAKE_GH), ("curl", "#!/usr/bin/env bash\necho 200\n"),
+                       ("prusik", f"#!{sys.executable}\nprint('prusik 1.1.0')\n")):
+        (bindir / name).write_text(body)
+        (bindir / name).chmod(0o755)
+    env = {**env, "GH_MODE": mode, "GH_READS": str(tmp_path / "reads"),
+           "RELEASE_POLL_SECONDS": "0"}
+    return _release(co, env)
+
+
+def test_watch_an_unreadable_read_then_success_passes(checkout, tmp_path):
+    p = _watch(checkout, tmp_path, "transient")
+    assert p.returncode == 0, p.stderr
+    assert "FAILED" not in p.stderr and "released v1.1.0" in p.stderr
+
+
+def test_watch_a_failed_conclusion_fails(checkout, tmp_path):
+    p = _watch(checkout, tmp_path, "failure")
+    assert p.returncode != 0
+    assert "FAILED: publish run 42 failed (conclusion failure;" in p.stderr, p.stderr
+
+
+def test_watch_a_run_that_stays_unreadable_is_unknown_not_failed(checkout, tmp_path):
+    p = _watch(checkout, tmp_path, "unreadable")
+    assert p.returncode != 0
+    assert "publish run 42: state unknown" in p.stderr and "rerun" in p.stderr, p.stderr
+    assert "failed (" not in p.stderr and "run 42 failed" not in p.stderr
+    assert (tmp_path / "reads").read_text().strip() == "10"       # bounded: 10 reads, no more

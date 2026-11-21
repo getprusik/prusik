@@ -16,8 +16,9 @@
 #
 # Rerunning resumes. Each step is skipped when its result already exists (bump committed, HEAD
 # on origin, release created, publish run green, wheel on PyPI, installed). If a step fails
-# after the bump, the hooks refuse and the refusal says to run `! scripts/release.sh`; the `!`
-# prefix does not go through hooks.
+# after the bump, the hooks refuse every tool call except this script: the pre-tool hook lets
+# a Bash call that is exactly scripts/release.sh through (fb-b071cab60a5b), so the releasing
+# session resumes the release itself.
 set -euo pipefail
 REPO=$(git rev-parse --show-toplevel)
 cd "$REPO"
@@ -125,8 +126,24 @@ for _ in $(seq 60); do
   sleep 5
 done
 [ -n "$run" ] || die "no publish run appeared for $TAG within 5 minutes."
+# The run's own status and conclusion decide, never gh's exit code: `gh run watch
+# --exit-status` also exits non-zero when gh cannot read the run (a jobs-API HTTP 500 in the
+# 0.270.0 release), and an unreadable run is not a failed one (fb-78e2394070e5).
 say "watch publish run $run"
-gh run watch "$run" --exit-status >/dev/null || die "publish run $run failed (gh run view $run --log-failed)."
+unread=0
+while :; do
+  if state=$(gh run view "$run" --json status,conclusion -q '.status+" "+.conclusion' 2>/dev/null); then
+    unread=0
+    case "$state" in
+      "completed success") break ;;
+      completed*) die "publish run $run failed (conclusion ${state#completed }; gh run view $run --log-failed)." ;;
+    esac
+  else
+    unread=$((unread + 1))
+    [ "$unread" -lt 10 ] || die "publish run $run: state unknown (gh could not read it $unread times in a row); rerun scripts/release.sh to resume."
+  fi
+  sleep "${RELEASE_POLL_SECONDS:-15}"
+done
 
 # 5. PyPI has the version (the JSON API lags the upload by up to a few minutes)
 for i in $(seq 90); do

@@ -416,3 +416,75 @@ def test_doctor_fails_on_a_path_prusik_that_is_not_the_pin(tmp_path):
     ok = _run(root, "doctor", env=_fake_prusik(tmp_path / "ok", _RUNNING))
     assert ok.returncode == 0 and "✗" not in ok.stdout, ok.stdout
     assert "the running and the PATH prusik match the pin" in ok.stdout
+
+
+# ── the release resume command is let through (fb-b071cab60a5b) ─────────────────────────
+# moat-finding: fb-b071cab60a5b
+# A release that stops after its bump leaves the source pin ahead of the installed engine, so
+# every hook refused every Bash call, including scripts/release.sh, the fix the refusal names.
+
+def _source_repo(tmp_path: Path, version: str) -> Path:
+    root = tmp_path / "src"
+    (root / "prusik").mkdir(parents=True)
+    (root / ".claude").mkdir()
+    (root / "scripts").mkdir()
+    (root / "scripts" / "release.sh").write_text("#!/usr/bin/env bash\n")
+    (root / "pyproject.toml").write_text('[project]\nname = "prusik"\ndynamic = ["version"]\n')
+    (root / "prusik" / "__init__.py").write_text(f'__version__ = "{version}"\n')
+    return root
+
+
+def _bash(root: Path, command: str, cwd: Path | None = None, tool: str = "Bash") -> dict:
+    return {"session_id": "t", "hook_event_name": "PreToolUse", "tool_name": tool,
+            "cwd": str(cwd or root), "tool_input": {"command": command}}
+
+
+def _hook(root: Path, tmp_path: Path, payload: dict, hook: str = "pre-tool"):
+    elsewhere = tmp_path / "elsewhere"          # never import the fake package from the cwd
+    elsewhere.mkdir(exist_ok=True)
+    return _run(root, "gate", hook, payload=payload, cwd=elsewhere)
+
+
+def test_release_resume_is_let_through_relative_or_absolute(tmp_path):
+    root = _source_repo(tmp_path, _BEHIND_PIN)
+    for cmd, cwd in (("scripts/release.sh", root), ("./scripts/release.sh", root),
+                     ("  scripts/release.sh\n", root), (str(root / "scripts/release.sh"), root),
+                     ("release.sh", root / "scripts"), (str(root / "scripts/release.sh"), tmp_path)):
+        p = _hook(root, tmp_path, _bash(root, cmd, cwd))
+        assert p.returncode == 0, (cmd, p.stderr)
+        assert "refusing" not in p.stderr
+
+
+def test_release_resume_lets_nothing_else_through(tmp_path):
+    root = _source_repo(tmp_path, _BEHIND_PIN)
+    other = tmp_path / "other" / "scripts"
+    other.mkdir(parents=True)
+    (other / "release.sh").write_text("#!/usr/bin/env bash\n")
+    for cmd in ("scripts/release.sh; rm -rf x", "scripts/release.sh && echo", "scripts/release.sh || true",
+                "scripts/release.sh | cat", "scripts/release.sh &", "echo $(scripts/release.sh)",
+                "`scripts/release.sh`", "scripts/release.sh\nrm x", "scripts/release.sh --force",
+                "scripts/release.sh > prusik/__init__.py", "scripts/release.sh 2>&1",
+                "bash scripts/release.sh", "scripts/release.sh.bak", str(other / "release.sh"),
+                "scripts/../scripts/release.sh x", "rm -rf /", ""):
+        _assert_refused(_hook(root, tmp_path, _bash(root, cmd)), _BEHIND_PIN)
+    _assert_refused(_hook(root, tmp_path, _bash(root, "scripts/release.sh", tool="Write")),
+                    _BEHIND_PIN)
+    post = {**_bash(root, "scripts/release.sh"), "hook_event_name": "PostToolUse"}
+    _assert_refused(_hook(root, tmp_path, post, hook="post-tool"), _BEHIND_PIN)
+
+
+def test_release_resume_only_in_the_source_repo_and_only_behind(tmp_path):
+    adopter = _project(tmp_path / "a", _BEHIND_PIN)      # a manifest pin ahead of the engine
+    (adopter / "scripts").mkdir()
+    (adopter / "scripts" / "release.sh").write_text("#!/usr/bin/env bash\n")
+    _assert_refused(_hook(adopter, tmp_path, _bash(adopter, "scripts/release.sh")), _BEHIND_PIN)
+    root = _source_repo(tmp_path / "b", _AHEAD_PIN)      # the engine is newer than the source
+    _assert_refused(_hook(root, tmp_path, _bash(root, "scripts/release.sh")), _AHEAD_PIN)
+
+
+def test_release_resume_refusal_names_the_command_without_bang(tmp_path):
+    root = _source_repo(tmp_path, _BEHIND_PIN)
+    p = _hook(root, tmp_path, _bash(root, "git status"))
+    _assert_refused(p, _BEHIND_PIN)
+    assert f"`{root}/scripts/release.sh`" in p.stderr, p.stderr
+    assert "! " + str(root) not in p.stderr

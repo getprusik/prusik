@@ -220,8 +220,9 @@ def install_fix(v: Verdict) -> str:
         repo = v.source.parent.parent
         if v.status == BEHIND:
             return (f"this checkout is bumped to {v.pin} ahead of the installed engine. A "
-                    f"release in progress resumes with `! {repo}/scripts/release.sh` (push, "
-                    f"release, publish, install); a published {v.pin} installs with "
+                    f"release in progress resumes with `{repo}/scripts/release.sh` (push, "
+                    f"release, publish, install); the pre-tool hook lets exactly that command "
+                    f"through, alone on its line. A published {v.pin} installs with "
                     f"`! <the python on bare prusik's shebang> -m pip install prusik=={v.pin}`.")
         return (f"the installed engine is newer than this checkout; update it "
                 f"(`! git -C {repo} pull`).")
@@ -230,6 +231,31 @@ def install_fix(v: Verdict) -> str:
                 "Code), then restart Claude Code.")
     return (f"install the pinned version so bare `prusik` resolves to it "
             f"(`! uv tool install prusik=={v.pin}` or `! pipx install prusik=={v.pin}`).")
+
+
+# A bare path: no shell metacharacter, quote, space or expansion can appear in it, so the
+# command runs exactly that file and nothing else.
+_BARE_PATH_RE = re.compile(r"[A-Za-z0-9_./-]+")
+
+
+def release_resume(v: Verdict, payload: object) -> bool:
+    """True when this PreToolUse payload is the one call a refused source repo lets through:
+    a Bash command that is exactly the repo's scripts/release.sh, relative to the payload's
+    cwd or absolute, with nothing before or after it. Only while the source pin is ahead of
+    the installed engine, the state a release that stopped after its bump leaves behind
+    (fb-b071cab60a5b); anything else would run unreleased code's tools on an older engine."""
+    if v.status != BEHIND or v.kind != "source" or v.source is None:
+        return False
+    if not isinstance(payload, dict) or payload.get("tool_name") != "Bash":
+        return False
+    tool_input = payload.get("tool_input")
+    cmd = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if not isinstance(cmd, str) or not _BARE_PATH_RE.fullmatch(cmd.strip()):
+        return False
+    cwd = payload.get("cwd")
+    base = cwd if isinstance(cwd, str) and os.path.isabs(cwd) else str(v.source.parent.parent)
+    script = v.source.parent.parent / "scripts" / "release.sh"
+    return os.path.realpath(os.path.join(base, cmd.strip())) == os.path.realpath(script)
 
 
 # ── a sprint never moves the pin (fb-dc6e3239ce99) ────────────────────────────────────

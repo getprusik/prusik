@@ -73,6 +73,14 @@ def _pin_refusal(argv: list[str], hook: str | None) -> int | None:
             return None
         if verdict.status == pin.AHEAD and _allowed_when_ahead(argv):
             return None
+    if hook == "pre-tool" and verdict.status == pin.BEHIND and verdict.kind == "source":
+        import json
+        try:
+            payload = json.loads(sys.stdin.read() or "{}")
+        except ValueError:
+            payload = None
+        if pin.release_resume(verdict, payload):
+            return 0                 # the release resumes itself; no gate runs on this engine
     if hook == "stop":
         import json
         try:
