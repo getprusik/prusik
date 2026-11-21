@@ -1,0 +1,16 @@
+{
+  "id": "fb-1d621fced521",
+  "created_at": "2026-11-21T04:00:49.438876+00:00",
+  "kind": "friction",
+  "severity": "med",
+  "title": "prusik update is pin-refused in a project behind the installed engine, though bringing it current is update's job",
+  "detail": "In an adopter pinned at 0.254.0 with 0.268.0 installed, 'prusik update' exits 2 with the pin refusal and says to run 'prusik refresh' first. update itself runs refresh after closing the loop, so the refusal blocks the one command that would fix the lag. Read-only reporting commands (metrics, catches) are refused the same way. Seen 2026-11-20.",
+  "feature": null,
+  "content_hash": "1d621fced521",
+  "repro": "",
+  "duplicate_of": null,
+  "thread": [],
+  "resolution": null,
+  "verify_history": [],
+  "status": "open"
+}
