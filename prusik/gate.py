@@ -2397,9 +2397,10 @@ def session_start(args=None) -> int:
             pass
     # fb-392958c3076a: name the feedback channel on the one prusik surface the agent always
     # reads — a harness insight/bug/friction otherwise gets parked where prusik can't see it.
-    ctx += ("\n[prusik] Bug, friction, or idea about prusik itself? File it (rides to the "
-            "maintainers): `prusik feedback \"<one line>\" --kind bug|friction|request "
-            "--detail \"<what happened>\"`")
+    # fb-3f863869d9bb: say where the finding goes; nothing is transmitted on its own.
+    ctx += ("\n[prusik] Bug, friction, or idea about prusik itself? File it: `prusik "
+            "feedback \"<one line>\" --kind bug|friction|request --detail \"<what "
+            "happened>\"` (saved in this repo; `prusik report --export` shares it)")
     # v0.86.0 — surface engine↔template skew at session start so a restart-needed
     # state is impossible to miss (CC can't be force-restarted; this makes it loud).
     try:

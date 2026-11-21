@@ -3,6 +3,12 @@
 All notable changes to **Prusik** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and versions are `MAJOR.MINOR.PATCH`.
 
+## [0.268.0] — Update closes shipped findings that never had a ticket; filing says where feedback goes
+
+- **`prusik update` backfills missing tickets before it closes shipped fixes (fb-44c3b9054134).** A `.sprint/feedback.jsonl` record filed before per-finding tickets existed has no `findings/fb-<id>.json`. The closer read tickets only, so such a finding stayed open after its fix shipped. On 2026-11-20 one adopter carried 5 of them, all fixed in its pinned 0.254.0. The closer now runs the same idempotent create as `prusik feedback migrate` first, and says how many tickets it created. An existing ticket is returned untouched, never rewritten. A backfilled finding whose fix has not shipped stays open.
+- **No message claims feedback was delivered when it was not (fb-3f863869d9bb).** The session banner said a filed finding "rides to the maintainers", and filing and `--list` said it "rides the next export to HQ". Telemetry is pull-only: nothing leaves the repo unless the adopter shares `prusik report --export` or has set `feedback_sink`. The banner now says the finding is saved in this repo and that an export shares it. Filing prints the sink drop path it wrote, or, with no sink, that nothing leaves the repo until an export is shared.
+- **Closure manifest.** `fb-44c3b9054134` and `fb-3f863869d9bb` join `_closures.json`, pinned at 0.268.0.
+
 ## [0.267.0] — The release script finishes an uncommitted hand-bump
 
 - **`scripts/release.sh` reads the bump from HEAD (fb-65f7eb5ea11b).** In the 0.264.0 release the operator bumped `prusik/__init__.py` and README.md by hand and staged them without committing. The pin refusal said to run `! scripts/release.sh`, but the script read the version from the working tree, took the bump as done and skipped step 1, then died at "the last commit touching prusik/__init__.py is not the 0.264.0 bump". Whether the bump happened is now read from HEAD. A dirty tree is accepted only when every dirty path is one of the two bump files and both its index and working-tree content are HEAD's or HEAD's bumped, by the same `bump` definition the script applies. In that case the files are reset to HEAD and the normal path runs: bump, suite, commit. Any other dirty content, including an operator's extra line in a bump file, is refused with "not clean" before anything is touched. The red-suite revert restores from HEAD, so a staged bump is reverted too.

@@ -189,8 +189,8 @@ def file_feedback(root: Path, kind: str, title: str, *, detail: str = "",
         print(f"[prusik] warning: finding {rec['id']} was filed but its durable ticket "
               f"could not be written ({e!r}) — it may not track or auto-close on update. "
               f"Check findings/ and re-file if it is missing.", file=sys.stderr)
-    _push_to_sink(root, rec)
-    return rec
+    drop = _push_to_sink(root, rec)
+    return {**rec, "delivered_to": drop} if drop else rec
 
 
 def _push_to_sink(root: Path, rec: dict) -> str | None:
@@ -227,6 +227,20 @@ def _push_to_sink(root: Path, rec: dict) -> str | None:
         return str(drop)
     except Exception:  # noqa: BLE001 — delivery is best-effort, never fatal
         return None
+
+
+def where_it_goes(root: Path) -> str:
+    """What happens to a filed finding after it is saved, said without overclaiming
+    (fb-3f863869d9bb). Telemetry is pull-only: nothing leaves the repo unless the
+    adopter sends an export, or has opted into a `feedback_sink`."""
+    try:
+        from prusik import phases
+        sink = (phases.load_sprint_config(root) or {}).get("feedback_sink")
+    except Exception:  # noqa: BLE001 — an unreadable config means no sink is in effect
+        sink = None
+    if sink:
+        return f"each one is also delivered to the feedback sink {sink}"
+    return "nothing leaves it until you share `prusik report --export`"
 
 
 _TICKET_VERBS = {"show", "reply", "resolve", "verify", "migrate", "harvest"}
@@ -266,13 +280,14 @@ def run(args) -> int:
         if not recs:
             print("[prusik-feedback] no findings filed yet.")
             return 0
+        from prusik import feedback_store as _fs
+        croot = canonical_root(root)
         # fb-56ee9ebcf4e6: state comes from the TICKET lattice (derive_state) —
         # the legacy jsonl `status` field is a second source of truth that goes
         # stale the moment the loop closes a finding, so `--list` showed 'open'
         # on verified-closed tickets. Legacy status only for pre-ticket records.
-        from prusik import feedback_store as _fs
-        croot = canonical_root(root)
-        print(f"[prusik-feedback] {len(recs)} finding(s) (ride the next export to HQ):")
+        print(f"[prusik-feedback] {len(recs)} finding(s) saved in this repo "
+              f"({where_it_goes(croot)}):")
         for r in recs:
             sev = f" [{r['severity']}]" if r.get("severity") else ""
             ticket = _fs.load(croot, r["id"])
@@ -302,8 +317,12 @@ def run(args) -> int:
                         detail=detail,
                         severity=getattr(args, "severity", None),
                         repro=repro)
-    print(f"[prusik-feedback] filed {rec['id']} ({rec['kind']}) — "
-          f"ticket findings/{rec['id']}.json opened; rides the next export to HQ.")
+    if rec.get("delivered_to"):
+        sent = f"delivered to the feedback sink: {rec['delivered_to']}"
+    else:
+        sent = where_it_goes(canonical_root(root))
+    print(f"[prusik-feedback] filed {rec['id']} ({rec['kind']}) — saved "
+          f"findings/{rec['id']}.json in this repo; {sent}.")
     return 0
 
 

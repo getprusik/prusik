@@ -140,8 +140,16 @@ def _close_shipped_findings(timeout: float) -> None:
     that shipped but carry no verify command (so they can be resolved). Best-effort —
     a nicety, never breaks update; a red verify leaves the finding open (honest)."""
     try:
-        from prusik import changelog, feedback_store, ledger
-        root = ledger.project_root()
+        from prusik import changelog, feedback, feedback_store, ledger
+        root = feedback.canonical_root(ledger.project_root())
+        # fb-44c3b9054134: a `feedback.jsonl` record from before per-finding tickets has no
+        # findings/ ticket, and the loop below reads tickets only, so its shipped fix could
+        # never close it. Backfill first, with migrate's idempotent create: an existing
+        # ticket is returned untouched, never rewritten.
+        created, _ = feedback.migrate_to_tickets(root)
+        if created:
+            print(f"  backfilled {created} ticket(s) in findings/ for findings filed "
+                  f"before tickets existed.")
         local = {f["id"] for f in feedback_store.load_all(root)}
         if not local:
             return
